@@ -1,102 +1,394 @@
-# Simulator PLTN v1.0 (Pembangkit Listrik Tenaga Nuklir)
+# 🏭 PLTN Simulator v2.0 - Nuclear Power Plant Training Simulator
 
-Dokumentasi ini menjelaskan arsitektur, fungsi, dan alur kerja dari proyek simulasi PLTN yang dibangun menggunakan beberapa mikrokontroler ESP32.
+**Version 2.0** - Full I2C Architecture with Raspberry Pi Central Control
 
-## Gambaran Umum
-
-Proyek ini adalah simulator **Pembangkit Listrik Tenaga Nuklir tipe PWR (Pressurized Water Reactor)** yang terdistribusi. Setiap modul ESP32 merepresentasikan komponen atau subsistem yang berbeda dari sebuah PLTN, dan mereka berkomunikasi satu sama lain untuk menciptakan simulasi proses yang saling bergantung, mulai dari kontrol reaktor hingga pembangkitan listrik.
-
-## Arsitektur Sistem & Alur Komunikasi
-
-Sistem ini menggunakan komunikasi serial (UART) berantai untuk mengalirkan data dari satu modul ke modul lainnya.
-
-```
-                               +-> [ESP-E: Visualizer Aliran Primer]
-                               |
-                               +-> [ESP-F: Visualizer Aliran Sekunder]
-[ESP-A: Panel Kontrol Utama] --+
-(Broadcast Status Sistem)      |
-                               +-> [ESP-G: Visualizer Aliran Tersier]
-                               |
-                               +-> [ESP-B: Inti Reaktor & Batang Kendali] --(Data Posisi Batang)--> [ESP-C: Turbin & Generator]
-```
-
-1.  **ESP-A** bertindak sebagai **Master** yang menyiarkan (broadcast) status sistem (tekanan & status pompa) ke semua modul lain.
-2.  **ESP-E, F, dan G** mendengarkan siaran dari ESP-A dan bertindak secara independen sebagai visualizer.
-3.  **ESP-B** mendengarkan siaran dari ESP-A untuk logika pengaman (*interlock*), kemudian mengirimkan datanya sendiri (posisi batang kendali) secara spesifik ke **ESP-C**.
-4.  **ESP-C** menerima data dari ESP-B untuk mensimulasikan pembangkitan listrik.
+[![Status](https://img.shields.io/badge/status-production%20ready-brightgreen)]()
+[![Python](https://img.shields.io/badge/python-3.7%2B-blue)]()
+[![ESP32](https://img.shields.io/badge/ESP32-Arduino-orange)]()
+[![License](https://img.shields.io/badge/license-MIT-blue)]()
 
 ---
 
-## Rincian Fungsi per Modul
+## 📋 Project Overview
 
-### 1. `ESP_A_Rev_1` (Panel Kontrol Utama)
+Simulator pembangkit listrik tenaga nuklir (PLTN) tipe PWR (Pressurized Water Reactor) yang menggunakan **Raspberry Pi sebagai master controller** dan **5 ESP32 sebagai I2C slaves** untuk mengontrol berbagai komponen simulator.
 
--   **Folder:** `ESP_A_Rev_1/`
--   **Fungsi Utama:** Antarmuka utama bagi operator untuk mengontrol dan memonitor kondisi dasar reaktor.
--   **Input:** 8 tombol untuk mengatur tekanan *pressurizer* dan menyalakan/mematikan 3 pompa sirkuit pendingin.
--   **Output:**
-    -   4x Layar OLED untuk menampilkan status tekanan dan pompa.
-    -   Buzzer sebagai alarm peringatan tekanan tinggi.
-    -   Sinyal PWM untuk menggerakkan motor fisik pompa.
--   **Komunikasi:** Menyebarkan (broadcast) data `{tekanan, status_pompa1, status_pompa2, status_pompa3}` ke semua ESP lain melalui UART.
+### 🎯 Key Features
 
-### 2. `ESP_B_Rev_1` (Inti Reaktor & Batang Kendali)
-
--   **Folder:** `ESP_B_Rev_1/`
--   **Fungsi Utama:** Mensimulasikan inti reaktor, kontrol daya melalui batang kendali, dan logika keamanan utama.
--   **Input:**
-    -   Menerima data status dari ESP-A.
-    -   Tombol-tombol lokal untuk menggerakkan 3 batang kendali (servo).
-    -   Tombol darurat (SCRAM) untuk menurunkan semua batang kendali.
--   **Output:**
-    -   Menggerakkan motor servo yang merepresentasikan batang kendali.
-    -   Menampilkan posisi batang dan daya termal (`kwThermal`) yang dihasilkan di 4x OLED.
--   **Logika Kunci:** Batang kendali **hanya bisa dioperasikan** jika semua pompa aktif dan tekanan sistem sudah mencukupi (fitur *interlock*).
--   **Komunikasi:** Mengirim data `{posisi_batang1, posisi_batang2, posisi_batang3}` ke ESP-C.
-
-### 3. `esp_c` (Sistem Pembangkit Listrik)
-
--   **Folder:** `esp_c/`
--   **Fungsi Utama:** Mensimulasikan proses konversi energi panas menjadi energi listrik (siklus sekunder).
--   **Input:** Menerima data posisi batang kendali dari ESP-B.
--   **Output:** Mengontrol relay dan kecepatan motor/kipas untuk komponen seperti:
-    -   Generator Uap (*Steam Generator*)
-    -   Turbin
-    -   Kondensor
-    -   Menara Pendingin (*Cooling Tower*)
--   **Logika Kunci:** Menggunakan *State Machine* (IDLE, STARTING_UP, RUNNING, SHUTTING_DOWN) berdasarkan level daya yang diterima dari ESP-B untuk menjalankan sekuens operasi secara bertahap.
--   **Komunikasi:** Mengirim data "Level Daya" final ke modul selanjutnya (ESP-D, jika ada).
-
-### 4. `ESP_E`, `ESP_F`, `ESP_G` (Visualizer Aliran Pendingin)
-
--   **Folder:** `ESP_E_Aliran_Primer/`, `ESP_F_Aliran_Sekunder/`, `ESP_G_Aliran_Tersier/`
--   **Fungsi Utama:** Memberikan representasi visual dari aliran fluida di tiga sirkuit pendingin yang berbeda.
-    -   `ESP-E`: Sirkuit Primer (dari reaktor).
-    -   `ESP-F`: Sirkuit Sekunder (uap ke turbin).
-    -   `ESP-G`: Sirkuit Tersier (pendinginan kondensor).
--   **Input:** Menerima data broadcast dari ESP-A.
--   **Output:** Animasi "aliran" menggunakan 16 LED. Kecepatan animasi disesuaikan dengan status pompa yang relevan (`OFF`, `STARTING`, `ON`, `SHUTTING_DOWN`).
+- ✅ **Centralized Control** - Raspberry Pi sebagai I2C Master
+- ✅ **Multi-threaded Architecture** - Non-blocking I2C communication
+- ✅ **Real-time Monitoring** - 4 OLED displays + data logging
+- ✅ **Safety Systems** - Interlock logic + emergency shutdown
+- ✅ **Flow Visualization** - 48 LED animation (3 pumps)
+- ✅ **State Machine** - Automated startup/shutdown sequence
+- ✅ **Data Logging** - CSV export untuk analysis
 
 ---
 
-## Alur Kerja Simulasi (Cara Menggunakan)
+## 🏗️ System Architecture
 
-1.  **Inisialisasi:** Nyalakan semua sistem ESP.
-2.  **Kontrol Awal (di ESP-A):**
-    -   Gunakan tombol di **ESP-A** untuk menaikkan tekanan *pressurizer* hingga mencapai level operasi normal (misal: 150 bar).
-    -   Nyalakan Pompa Primer, Sekunder, dan Tersier secara berurutan menggunakan tombol di **ESP-A**.
-3.  **Visualisasi Aliran (di ESP-E, F, G):**
-    -   Amati modul **ESP-E, F, dan G**. Animasi LED akan mulai bergerak, menandakan bahwa sirkuit pendingin sudah aktif.
-4.  **Aktivasi Reaktor (di ESP-B):**
-    -   Pindah ke **ESP-B**. Sistem sekarang sudah tidak terkunci (*interlock* terbuka).
-    -   Gunakan tombol di **ESP-B** untuk mulai menaikkan (menarik keluar) batang kendali secara perlahan.
-    -   Amati nilai `kwThermal` di layar OLED ESP-B yang mulai meningkat.
-5.  **Pembangkitan Listrik (di ESP-C):**
-    -   Amati modul **ESP-C**. Setelah batang kendali di ESP-B mencapai posisi tertentu, ESP-C akan memulai sekuens startup secara otomatis. Anda akan melihat motor dan kipas mulai berputar secara bertahap.
-6.  **Shutdown Normal:**
-    -   Turunkan kembali semua batang kendali di **ESP-B** ke posisi 0%.
-    -   Modul **ESP-C** akan memulai sekuens shutdown.
-    -   Matikan ketiga pompa melalui **ESP-A**.
-7.  **Shutdown Darurat:**
-    -   Tekan tombol **Emergency** di **ESP-B**. Semua batang kendali akan langsung turun ke 0%, dan sistem pembangkitan di ESP-C akan mati.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Raspberry Pi 4                            │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │          Main Control Program (Python)               │  │
+│  │  - Button Input (8 buttons)                          │  │
+│  │  - Pump Control (3 motors PWM)                       │  │
+│  │  - Alarm System (buzzer)                             │  │
+│  │  - Data Logging (CSV)                                │  │
+│  └─────┬────────────────────┬───────────────────────────┘  │
+│        │                    │                               │
+│  ┌─────▼─────┐       ┌─────▼─────┐                        │
+│  │  I2C Bus  │       │  I2C Bus  │                        │
+│  │   #0      │       │   #1      │                        │
+│  └─────┬─────┘       └─────┬─────┘                        │
+└────────┼───────────────────┼─────────────────────────────┘
+         │                   │
+   ┌─────▼──────┐      ┌─────▼──────┐
+   │ TCA9548A   │      │ TCA9548A   │
+   │  (0x70)    │      │  (0x71)    │
+   │ 4x OLEDs   │      │ 5x ESP32   │
+   └────────────┘      └─────┬──────┘
+                             │
+         ┌───────────────────┼─────────────────┐
+         │           │       │        │        │
+      ESP-B       ESP-C   ESP-E   ESP-F    ESP-G
+      (0x08)      (0x09)  (0x0A)  (0x0B)   (0x0C)
+```
+
+---
+
+## 📦 Components
+
+### 1. Raspberry Pi Central Control
+**Folder:** `raspi_central_control/`
+
+**Role:** Master controller dengan I2C Master protocol
+
+**Features:**
+- 8x Button input (pressure & pump control)
+- 3x Motor PWM output (pump simulation)
+- 1x Buzzer (alarm system)
+- 4x OLED display manager (via TCA9548A #1)
+- CSV data logging
+- Multi-threaded communication
+
+**Files:**
+- `raspi_main.py` - Main control program
+- `raspi_config.py` - Configuration
+- `raspi_i2c_master.py` - I2C Master
+- `raspi_oled_manager.py` - Display manager
+- `raspi_tca9548a.py` - Multiplexer driver
+
+### 2. ESP-B - Control Rod Controller
+**Folder:** `ESP_B_Rev_1/`  
+**I2C Address:** `0x08`
+
+**Role:** Control rod & reactor core simulation
+
+**Features:**
+- 3x Servo motors (control rods)
+- 4x OLED displays (rod positions + thermal power)
+- Interlock safety system
+- Emergency shutdown button
+- kwThermal calculation
+
+### 3. ESP-C - Turbine & Generator
+**Folder:** `esp_c/`  
+**I2C Address:** `0x09`
+
+**Role:** Power generation system
+
+**Features:**
+- 4x Relay (Steam Gen, Turbine, Condenser, Cooling)
+- 4x Motor/Fan PWM control
+- State machine (IDLE → STARTING → RUNNING → SHUTTING_DOWN)
+- Power level calculation
+
+### 4. ESP-E - Primary Flow Visualizer
+**Folder:** `ESP_E_Aliran_Primer/`  
+**I2C Address:** `0x0A`
+
+**Role:** Primary coolant loop visualization
+
+**Features:**
+- 16x LED animation
+- Speed based on Primary pump status
+
+### 5. ESP-F - Secondary Flow Visualizer
+**Folder:** `ESP_F_Aliran_Sekunder/`  
+**I2C Address:** `0x0B`
+
+**Role:** Secondary coolant loop visualization
+
+**Features:**
+- 16x LED animation
+- Speed based on Secondary pump status
+
+### 6. ESP-G - Tertiary Flow Visualizer
+**Folder:** `ESP_G_Aliran_Tersier/`  
+**I2C Address:** `0x0C`
+
+**Role:** Tertiary coolant loop visualization
+
+**Features:**
+- 16x LED animation
+- Speed based on Tertiary pump status
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+**Hardware:**
+- 1x Raspberry Pi 4 (or 3B+)
+- 5x ESP32 DevKit
+- 2x TCA9548A I2C Multiplexer
+- 4x OLED 128x32 (SSD1306)
+- Various sensors, buttons, motors, LEDs
+
+**Software:**
+- Raspbian OS (Bookworm/Bullseye)
+- Python 3.7+
+- Arduino IDE (for ESP32)
+
+### Installation
+
+#### 1. Upload ESP Modules
+
+```bash
+# For each ESP:
+1. Open Arduino IDE
+2. Open ESP_X_I2C.ino from respective folder
+3. Select Board: ESP32 Dev Module
+4. Upload
+5. Verify Serial Monitor shows "Ready!"
+```
+
+#### 2. Setup Raspberry Pi
+
+```bash
+# Clone repository
+cd ~
+git clone <your-repo-url>
+cd pkm-simulator-PLTN/raspi_central_control
+
+# Install dependencies
+pip3 install -r raspi_requirements.txt
+
+# Enable I2C
+sudo raspi-config
+# Interface Options → I2C → Enable
+
+# Reboot
+sudo reboot
+```
+
+#### 3. Test I2C Communication
+
+```bash
+# Check if all devices detected
+sudo i2cdetect -y 1
+
+# Expected:
+#      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+# 00:          -- -- -- -- -- 08 09 0a 0b 0c -- -- -- 
+# 70: 70 71 -- -- -- -- -- --
+```
+
+#### 4. Run System
+
+```bash
+cd raspi_central_control
+python3 raspi_main.py
+```
+
+---
+
+## 🎮 Operation Guide
+
+### Normal Startup Sequence
+
+1. **Increase Pressure** (ESP-A buttons)
+   - Press BTN_PRES_UP until pressure reaches 150 bar
+
+2. **Start Pumps** (ESP-A buttons)
+   - Press BTN_PUMP_PRIM_ON → wait for status "ON"
+   - Press BTN_PUMP_SEC_ON → wait for status "ON"
+   - Press BTN_PUMP_TER_ON → wait for status "ON"
+
+3. **Check Visualizers** (ESP-E/F/G)
+   - LED animations should be running fast
+
+4. **Operate Control Rods** (ESP-B buttons)
+   - Interlock released, rods can now move
+   - Press UP buttons to withdraw rods
+   - Monitor kwThermal on OLED
+
+5. **Monitor Power Generation** (ESP-C)
+   - State machine: STARTING_UP → RUNNING
+   - Turbine and generator activate
+   - Power level increases
+
+### Emergency Shutdown
+
+- Press **Emergency Button** on ESP-B
+- All rods drop to 0%
+- Buzzer sounds for 1 second
+- Turbine shuts down automatically
+
+### Normal Shutdown
+
+1. Lower all control rods to 0% (ESP-B)
+2. Wait for turbine shutdown (ESP-C)
+3. Stop all pumps (Raspberry Pi)
+4. Lower pressure to 0 bar
+
+---
+
+## 📊 Data Logging
+
+### CSV Log
+**File:** `pltn_data.csv`
+
+**Columns:**
+- Timestamp
+- Pressure (bar)
+- Pump statuses
+- Rod positions
+- Thermal power
+- Generated power
+
+**Update Rate:** 1 Hz (every second)
+
+### Application Log
+**File:** `pltn_control.log`
+
+**Contains:**
+- System events
+- I2C communication status
+- Error messages
+- State transitions
+
+---
+
+## 📚 Documentation
+
+| Document | Description |
+|----------|-------------|
+| `PROJECT_COMPLETE.md` | Complete project summary |
+| `MIGRATION_PLAN.md` | Architecture & I2C protocol |
+| `I2C_MIGRATION_QUICKGUIDE.md` | Quick implementation guide |
+| `FOLDER_STRUCTURE.md` | Project organization |
+| `RASPI_PACKAGE_SUMMARY.md` | Raspberry Pi details |
+| `ESP_MODULES_SUMMARY.md` | ESP modules details |
+| `CLEANUP_GUIDE.md` | How to clean old files |
+| `raspi_central_control/README.md` | RasPi installation |
+| `ESP_*/README.md` | Individual ESP guides |
+
+---
+
+## 🔧 Maintenance
+
+### Check System Health
+```bash
+# View logs
+tail -f raspi_central_control/pltn_control.log
+
+# Monitor I2C
+sudo i2cdetect -y 1
+
+# View data
+cat raspi_central_control/pltn_data.csv
+```
+
+### Backup Data
+```bash
+tar -czf pltn_backup_$(date +%Y%m%d).tar.gz \
+    raspi_central_control/*.csv \
+    raspi_central_control/*.log
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### ESP Not Detected
+```bash
+sudo i2cdetect -y 1
+```
+- Check wiring (SDA/SCL)
+- Verify I2C address in code
+- Check pull-up resistors (4.7kΩ)
+
+### Communication Timeout
+- Shorten I2C cables (<20cm)
+- Reduce I2C clock speed
+- Check power supply stability
+
+### Display Issues
+- Verify OLED address (0x3C)
+- Check TCA9548A channel
+- Test OLED separately
+
+---
+
+## 🎯 Future Enhancements
+
+- [ ] Web dashboard (Flask/Django)
+- [ ] Database integration (InfluxDB)
+- [ ] Real-time graphs (Grafana)
+- [ ] Mobile app
+- [ ] AI predictive maintenance
+- [ ] Cloud data sync
+
+---
+
+## 📝 Version History
+
+### v2.0 (2024-11)
+- ✅ Complete I2C architecture
+- ✅ Raspberry Pi central control
+- ✅ Multi-threaded communication
+- ✅ All ESP modules converted to I2C Slave
+
+### v1.0 (2024-10)
+- Original UART-based system
+- ESP-A as master controller
+
+---
+
+## 👥 Contributors
+
+- Your Name - Initial work & v2.0 migration
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see LICENSE file for details.
+
+---
+
+## 🙏 Acknowledgments
+
+- ESP32 Arduino Framework
+- Raspberry Pi Foundation
+- Adafruit Libraries
+
+---
+
+## 📞 Contact & Support
+
+For questions or issues:
+1. Check documentation in `docs/` folder
+2. Review `PROJECT_COMPLETE.md`
+3. Check logs: `pltn_control.log`
+
+---
+
+**Status:** ✅ **Production Ready**  
+**Last Updated:** 2024-11-11
+
+🎉 **Ready to simulate nuclear power!** 🏭⚡
