@@ -356,7 +356,7 @@ sudo i2cdetect -y 1
 
 ## 👥 Contributors
 
-- Your Name - Initial work & v2.0 migration
+- Nur Ihsanudin - Initial work & v2.0 migration
 
 ---
 
