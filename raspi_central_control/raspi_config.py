@@ -1,0 +1,111 @@
+"""
+Raspberry Pi Central Control - Configuration
+PLTN Simulator v2.0 with Full I2C Architecture
+"""
+
+# ============================================
+# I2C Configuration
+# ============================================
+# TCA9548A Multiplexer Addresses
+TCA9548A_DISPLAY_ADDRESS = 0x70  # For OLED displays
+TCA9548A_ESP_ADDRESS = 0x71      # For ESP32 slaves
+
+# I2C Bus Configuration
+I2C_BUS_DISPLAY = 0  # I2C Bus 0 for displays (GPIO 0/1)
+I2C_BUS_ESP = 1      # I2C Bus 1 for ESP slaves (GPIO 2/3)
+
+# OLED Configuration
+OLED_ADDRESS = 0x3C
+OLED_CHANNEL_PRESSURIZER = 0
+OLED_CHANNEL_PUMP_PRIMARY = 1
+OLED_CHANNEL_PUMP_SECONDARY = 2
+OLED_CHANNEL_PUMP_TERTIARY = 3
+SCREEN_WIDTH = 128
+SCREEN_HEIGHT = 32
+
+# ESP32 Slave Addresses
+ESP_B_ADDRESS = 0x08  # Batang Kendali & Reaktor
+ESP_C_ADDRESS = 0x09  # Turbin & Generator
+ESP_E_ADDRESS = 0x0A  # Visualizer Aliran Primer
+ESP_F_ADDRESS = 0x0B  # Visualizer Aliran Sekunder
+ESP_G_ADDRESS = 0x0C  # Visualizer Aliran Tersier
+
+# TCA9548A Channel Mapping for ESP
+ESP_B_CHANNEL = 0
+ESP_C_CHANNEL = 1
+ESP_E_CHANNEL = 2
+ESP_F_CHANNEL = 3
+ESP_G_CHANNEL = 4
+
+# ============================================
+# GPIO Pin Configuration
+# ============================================
+# Button Pins (Input with Pull-up)
+BTN_PRES_UP = 5          # Naik tekanan pressurizer
+BTN_PRES_DOWN = 6        # Turun tekanan pressurizer
+BTN_PUMP_PRIM_ON = 4     # Pompa Primer ON
+BTN_PUMP_PRIM_OFF = 17   # Pompa Primer OFF
+BTN_PUMP_SEC_ON = 27     # Pompa Sekunder ON
+BTN_PUMP_SEC_OFF = 22    # Pompa Sekunder OFF
+BTN_PUMP_TER_ON = 10     # Pompa Tersier ON
+BTN_PUMP_TER_OFF = 9     # Pompa Tersier OFF
+
+# Output Pins
+BUZZER_PIN = 18          # Hardware PWM untuk alarm
+MOTOR_PRIM_PWM = 12      # Hardware PWM Pompa Primer
+MOTOR_SEC_PWM = 13       # Hardware PWM Pompa Sekunder
+MOTOR_TER_PWM = 19       # Hardware PWM Pompa Tersier
+
+# ============================================
+# System Parameters
+# ============================================
+# Pressurizer Settings
+PRESS_MIN = 0.0
+PRESS_MAX = 200.0
+PRESS_MIN_ACTIVATE_PUMP1 = 40.0
+PRESS_NORMAL_OPERATION = 150.0
+PRESS_WARNING_ABOVE = 160.0
+PRESS_CRITICAL_HIGH = 180.0
+PRESS_INCREMENT_FAST = 5.0
+PRESS_INCREMENT_SLOW = 1.0
+
+# Pump Status Enum
+PUMP_OFF = 0
+PUMP_STARTING = 1
+PUMP_ON = 2
+PUMP_SHUTTING_DOWN = 3
+
+# PWM Settings
+PWM_FREQUENCY = 1000     # 1kHz
+PWM_MIN = 0
+PWM_MAX = 100            # Percentage
+PWM_STARTUP_STEP = 10
+PWM_SHUTDOWN_STEP = 5
+
+# ============================================
+# Timing Configuration (seconds)
+# ============================================
+DEBOUNCE_DELAY = 0.1
+PWM_UPDATE_INTERVAL = 0.1
+I2C_UPDATE_INTERVAL_FAST = 0.05    # ESP-B (critical)
+I2C_UPDATE_INTERVAL_NORMAL = 0.1   # ESP-C
+I2C_UPDATE_INTERVAL_SLOW = 0.2     # ESP-E/F/G
+OLED_UPDATE_INTERVAL = 0.2
+BLINK_INTERVAL = 0.25
+
+# I2C Timeout
+I2C_TIMEOUT = 1.0
+I2C_RETRY_COUNT = 3
+
+# ============================================
+# Logging Configuration
+# ============================================
+LOG_FILE = "pltn_control.log"
+LOG_LEVEL = "INFO"
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_DATA_INTERVAL = 5.0  # Log data setiap 5 detik
+
+# Data Logging
+ENABLE_CSV_LOGGING = True
+CSV_LOG_FILE = "pltn_data.csv"
+CSV_LOG_INTERVAL = 1.0   # Log setiap 1 detik

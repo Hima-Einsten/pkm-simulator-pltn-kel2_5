@@ -1,0 +1,20 @@
+# Python Dependencies for Raspberry Pi Central Control
+# PLTN Simulator v2.0
+
+# I2C Communication
+smbus2==0.4.2
+
+# GPIO Control (Raspberry Pi specific)
+RPi.GPIO==0.7.1
+
+# OLED Display (Adafruit)
+adafruit-circuitpython-ssd1306==2.12.15
+adafruit-blinka==8.20.0
+
+# Image processing for OLED
+Pillow==10.0.0
+
+# Optional: Data visualization (if web dashboard needed)
+# flask==2.3.2
+# matplotlib==3.7.2
+# pandas==2.0.3
