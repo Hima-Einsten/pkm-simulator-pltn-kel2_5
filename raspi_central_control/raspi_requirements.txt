@@ -14,6 +14,9 @@ adafruit-blinka==8.20.0
 # Image processing for OLED
 Pillow==10.0.0
 
+# Optional: Video player support (for testing only)
+# opencv-python==4.8.0.76
+
 # Optional: Data visualization (if web dashboard needed)
 # flask==2.3.2
 # matplotlib==3.7.2
