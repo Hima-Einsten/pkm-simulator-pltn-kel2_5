@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test script untuk PCA9548A + ESP32 multiple modules
-Tes komunikasi I2C dengan ESP-B dan ESP-C melalui multiplexer
+Auto-detect dan test semua ESP modules yang terhubung
 """
 
 import smbus2
@@ -12,13 +12,49 @@ import struct
 I2C_BUS = 1
 PCA9548A_ADDR = 0x70
 
-# ESP-B Configuration
-ESP_B_CHANNEL = 0
-ESP_B_ADDR = 0x08
-
-# ESP-C Configuration
-ESP_C_CHANNEL = 1
-ESP_C_ADDR = 0x09
+# ESP Modules Configuration
+ESP_MODULES = {
+    'ESP-B': {
+        'name': 'ESP-B (Reactor Control)',
+        'channel': 0,
+        'address': 0x08,
+        'write_size': 10,
+        'read_size': 16,
+        'protocol': 'reactor'
+    },
+    'ESP-C': {
+        'name': 'ESP-C (Turbine & Generator)',
+        'channel': 1,
+        'address': 0x09,
+        'write_size': 3,
+        'read_size': 10,
+        'protocol': 'turbine'
+    },
+    'ESP-E': {
+        'name': 'ESP-E (Primary Flow Visualizer)',
+        'channel': 2,
+        'address': 0x0A,
+        'write_size': 5,
+        'read_size': 2,
+        'protocol': 'visualizer'
+    },
+    'ESP-F': {
+        'name': 'ESP-F (Secondary Flow Visualizer)',
+        'channel': 3,
+        'address': 0x0B,
+        'write_size': 5,
+        'read_size': 2,
+        'protocol': 'visualizer'
+    },
+    'ESP-G': {
+        'name': 'ESP-G (Tertiary Flow Visualizer)',
+        'channel': 4,
+        'address': 0x0C,
+        'write_size': 5,
+        'read_size': 2,
+        'protocol': 'visualizer'
+    }
+}
 
 def select_pca9548a_channel(bus, pca_addr, channel):
     """
@@ -38,18 +74,61 @@ def select_pca9548a_channel(bus, pca_addr, channel):
         print(f"❌ Failed to select channel: {e}")
         return False
 
-def scan_i2c_devices(bus):
+def scan_i2c_devices(bus, silent=False):
     """Scan semua device di I2C bus"""
-    print("\n🔍 Scanning I2C bus...")
+    if not silent:
+        print("\n🔍 Scanning I2C bus...")
     devices = []
     for addr in range(0x03, 0x78):
         try:
             bus.read_byte(addr)
             devices.append(addr)
-            print(f"  Found device: 0x{addr:02X}")
+            if not silent:
+                print(f"  Found device: 0x{addr:02X}")
         except:
             pass
     return devices
+
+def detect_connected_modules(bus, pca_addr, modules):
+    """
+    Auto-detect which ESP modules are connected
+    Returns list of connected module IDs
+    """
+    print("\n" + "="*60)
+    print("  AUTO-DETECTING CONNECTED ESP MODULES")
+    print("="*60)
+    
+    connected = []
+    
+    for module_id, config in modules.items():
+        channel = config['channel']
+        esp_addr = config['address']
+        name = config['name']
+        
+        # Select channel
+        try:
+            if not select_pca9548a_channel(bus, pca_addr, channel):
+                continue
+            
+            time.sleep(0.05)
+            
+            # Scan for device on this channel
+            devices = scan_i2c_devices(bus, silent=True)
+            
+            if esp_addr in devices:
+                connected.append(module_id)
+                print(f"✅ {name} DETECTED on Channel {channel} @ 0x{esp_addr:02X}")
+            else:
+                print(f"❌ {name} NOT FOUND on Channel {channel} @ 0x{esp_addr:02X}")
+                
+        except Exception as e:
+            print(f"⚠️  Error detecting {name}: {e}")
+    
+    print("="*60)
+    print(f"  Total modules detected: {len(connected)}/{len(modules)}")
+    print("="*60)
+    
+    return connected
 
 def test_esp_b_communication(bus, esp_addr):
     """
@@ -93,7 +172,8 @@ def test_esp_c_communication(bus, esp_addr):
     
     try:
         # Baca 10 bytes dari ESP-C
-        # Protokol: turbineRPM (float), kwElectric (float), generatorTemp (uint16)
+        # Protokol: powerLevel (float, 4 bytes), state (uint32, 4 bytes), 
+        #           generatorStatus (byte), turbineStatus (byte)
         data = bus.read_i2c_block_data(esp_addr, 0x00, 10)
         
         print(f"✅ Received {len(data)} bytes from ESP-C:")
@@ -101,20 +181,25 @@ def test_esp_c_communication(bus, esp_addr):
         
         # Parse data ESP-C
         if len(data) >= 10:
-            # turbineRPM float di byte 0-3
-            turbine_rpm_bytes = bytes(data[0:4])
-            turbine_rpm = struct.unpack('f', turbine_rpm_bytes)[0]
+            # powerLevel float di byte 0-3
+            power_level_bytes = bytes(data[0:4])
+            power_level = struct.unpack('f', power_level_bytes)[0]
             
-            # kwElectric float di byte 4-7
-            kw_electric_bytes = bytes(data[4:8])
-            kw_electric = struct.unpack('f', kw_electric_bytes)[0]
+            # state uint32 di byte 4-7
+            state_bytes = bytes(data[4:8])
+            state = struct.unpack('I', state_bytes)[0]
             
-            # generatorTemp uint16 di byte 8-9
-            gen_temp = (data[9] << 8) | data[8]
+            # generatorStatus byte 8, turbineStatus byte 9
+            generator_status = data[8]
+            turbine_status = data[9]
             
-            print(f"   Turbine RPM: {turbine_rpm:.2f} RPM")
-            print(f"   kW Electric: {kw_electric:.2f} kW")
-            print(f"   Generator Temp: {gen_temp}°C")
+            state_names = {0: "IDLE", 1: "STARTING_UP", 2: "RUNNING", 3: "SHUTTING_DOWN"}
+            state_name = state_names.get(state, "UNKNOWN")
+            
+            print(f"   Power Level: {power_level:.2f}%")
+            print(f"   State: {state} ({state_name})")
+            print(f"   Generator Status: {generator_status}")
+            print(f"   Turbine Status: {turbine_status}")
         
         return True
         
@@ -155,20 +240,20 @@ def test_write_to_esp_b(bus, esp_addr):
 def test_write_to_esp_c(bus, esp_addr):
     """
     Test menulis data ke ESP-C
-    Kirim dummy turbine control & pump status
+    Kirim dummy rod positions (protocol: 3 bytes)
     """
     print(f"\n📤 Testing write to ESP-C at 0x{esp_addr:02X}...")
     
     try:
-        # Protokol ESP-C: steamPressure (float) + pump2Status (byte) + pump3Status (byte)
-        steam_pressure = 75.0  # bar
-        pump2_status = 1  # ON
-        pump3_status = 1  # ON
+        # Protokol ESP-C: rod1 (byte) + rod2 (byte) + rod3 (byte)
+        rod1 = 50  # 50%
+        rod2 = 50  # 50%
+        rod3 = 50  # 50%
         
-        # Pack data (6 bytes total)
-        data = struct.pack('fBB', steam_pressure, pump2_status, pump3_status)
+        # Pack data (3 bytes total)
+        data = struct.pack('BBB', rod1, rod2, rod3)
         
-        print(f"   Sending: steam_pressure={steam_pressure} bar, pump2={pump2_status}, pump3={pump3_status}")
+        print(f"   Sending: rod1={rod1}%, rod2={rod2}%, rod3={rod3}%")
         print(f"   Raw bytes: {' '.join([f'{b:02X}' for b in data])}")
         
         # Write data
@@ -181,48 +266,116 @@ def test_write_to_esp_c(bus, esp_addr):
         print(f"❌ Failed to write to ESP-C: {e}")
         return False
 
-def test_esp_module(bus, pca_addr, esp_name, channel, esp_addr, write_func, read_func):
+def test_write_to_esp_visualizer(bus, esp_addr, pump_num):
     """
-    Test single ESP module
+    Test menulis data ke ESP Visualizer (E/F/G)
+    Kirim dummy pressure & pump status
     """
+    print(f"\n📤 Testing write to Visualizer at 0x{esp_addr:02X}...")
+    
+    try:
+        # Protokol Visualizer: pressure (float, 4 bytes) + pumpStatus (byte, 1 byte)
+        pressure = 150.0  # bar
+        pump_status = 2   # RUNNING
+        
+        # Pack data (5 bytes total)
+        data = struct.pack('fB', pressure, pump_status)
+        
+        print(f"   Sending: pressure={pressure} bar, pump{pump_num}_status={pump_status}")
+        print(f"   Raw bytes: {' '.join([f'{b:02X}' for b in data])}")
+        
+        # Write data
+        bus.write_i2c_block_data(esp_addr, 0x00, list(data))
+        
+        print(f"✅ Data sent successfully!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to write: {e}")
+        return False
+
+def test_read_from_esp_visualizer(bus, esp_addr):
+    """
+    Test membaca data dari ESP Visualizer (E/F/G)
+    """
+    print(f"\n📡 Testing read from Visualizer at 0x{esp_addr:02X}...")
+    
+    try:
+        # Baca 2 bytes: animationSpeed + LED_COUNT
+        data = bus.read_i2c_block_data(esp_addr, 0x00, 2)
+        
+        print(f"✅ Received {len(data)} bytes:")
+        print(f"   Raw data: {' '.join([f'{b:02X}' for b in data])}")
+        
+        if len(data) >= 2:
+            animation_speed = data[0]
+            led_count = data[1]
+            
+            print(f"   Animation Speed: {animation_speed}")
+            print(f"   LED Count: {led_count}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to read: {e}")
+        return False
+
+def test_esp_module(bus, pca_addr, module_id, config):
+    """
+    Test single ESP module with auto protocol selection
+    """
+    name = config['name']
+    channel = config['channel']
+    esp_addr = config['address']
+    protocol = config['protocol']
+    
     print(f"\n{'='*60}")
-    print(f"  Testing {esp_name}")
+    print(f"  Testing {name}")
     print(f"{'='*60}")
     
     # Select channel
-    print(f"\n--- Select Channel {channel} for {esp_name} ---")
+    print(f"\n--- Select Channel {channel} ---")
     if not select_pca9548a_channel(bus, pca_addr, channel):
         return False
     
     time.sleep(0.1)  # Wait for channel switch
     
-    # Scan devices di channel
-    print(f"\n--- Scan Channel {channel} ---")
-    channel_devices = scan_i2c_devices(bus)
+    # Test communication based on protocol
+    print(f"\n--- Test {name} Communication ---")
     
-    if esp_addr not in channel_devices:
-        print(f"❌ {esp_name} not found at 0x{esp_addr:02X}")
-        print(f"   Make sure {esp_name} is connected to Channel {channel}")
+    write_success = False
+    read_success = False
+    
+    try:
+        if protocol == 'reactor':
+            # ESP-B protocol
+            write_success = test_write_to_esp_b(bus, esp_addr)
+            time.sleep(0.2)
+            read_success = test_esp_b_communication(bus, esp_addr)
+            
+        elif protocol == 'turbine':
+            # ESP-C protocol
+            write_success = test_write_to_esp_c(bus, esp_addr)
+            time.sleep(0.2)
+            read_success = test_esp_c_communication(bus, esp_addr)
+            
+        elif protocol == 'visualizer':
+            # ESP-E/F/G protocol
+            pump_num = {'ESP-E': 1, 'ESP-F': 2, 'ESP-G': 3}.get(module_id, 1)
+            write_success = test_write_to_esp_visualizer(bus, esp_addr, pump_num)
+            time.sleep(0.2)
+            read_success = test_read_from_esp_visualizer(bus, esp_addr)
+    
+    except Exception as e:
+        print(f"❌ Test failed: {e}")
         return False
-    
-    print(f"✅ {esp_name} found at 0x{esp_addr:02X}")
-    
-    # Test communication
-    print(f"\n--- Test {esp_name} Communication ---")
-    
-    # Test write
-    write_success = write_func(bus, esp_addr)
-    time.sleep(0.2)
-    
-    # Test read
-    read_success = read_func(bus, esp_addr)
     
     return write_success and read_success
 
 def main():
     print("=" * 60)
-    print("  PCA9548A + ESP32 Multi-Module I2C Test")
-    print("  Testing ESP-B and ESP-C")
+    print("  PCA9548A + ESP32 Auto-Detection & Test")
+    print("  Supports: ESP-B, ESP-C, ESP-E, ESP-F, ESP-G")
     print("=" * 60)
     
     try:
@@ -230,8 +383,8 @@ def main():
         bus = smbus2.SMBus(I2C_BUS)
         print(f"✅ I2C Bus {I2C_BUS} initialized")
         
-        # Step 1: Scan I2C bus untuk cek PCA9548A
-        print("\n--- Step 1: Check PCA9548A ---")
+        # Step 1: Check PCA9548A
+        print("\n--- Step 1: Check PCA9548A Multiplexer ---")
         devices = scan_i2c_devices(bus)
         
         if PCA9548A_ADDR not in devices:
@@ -241,35 +394,58 @@ def main():
         
         print(f"✅ PCA9548A found at 0x{PCA9548A_ADDR:02X}")
         
-        # Test ESP-B
-        esp_b_success = test_esp_module(
-            bus, PCA9548A_ADDR, 
-            "ESP-B (Reactor Control)", 
-            ESP_B_CHANNEL, ESP_B_ADDR,
-            test_write_to_esp_b, test_esp_b_communication
-        )
+        # Step 2: Auto-detect connected ESP modules
+        print("\n--- Step 2: Auto-Detect ESP Modules ---")
+        connected_modules = detect_connected_modules(bus, PCA9548A_ADDR, ESP_MODULES)
         
-        time.sleep(0.5)
+        if not connected_modules:
+            print("\n❌ No ESP modules detected!")
+            print("   Check ESP module connections and I2C addresses")
+            return
         
-        # Test ESP-C
-        esp_c_success = test_esp_module(
-            bus, PCA9548A_ADDR,
-            "ESP-C (Turbine & Generator)",
-            ESP_C_CHANNEL, ESP_C_ADDR,
-            test_write_to_esp_c, test_esp_c_communication
-        )
+        print(f"\n✅ Found {len(connected_modules)} module(s): {', '.join(connected_modules)}")
         
-        # Summary
+        # Step 3: Test each connected module
+        print("\n--- Step 3: Test Each Module ---")
+        test_results = {}
+        
+        for module_id in connected_modules:
+            config = ESP_MODULES[module_id]
+            
+            print(f"\n{'='*60}")
+            print(f"  Testing {config['name']}")
+            print(f"{'='*60}")
+            
+            success = test_esp_module(bus, PCA9548A_ADDR, module_id, config)
+            test_results[module_id] = success
+            
+            time.sleep(0.5)
+        
+        # Step 4: Summary
         print("\n" + "=" * 60)
-        print("  TEST SUMMARY")
-        print("=" * 60)
-        print(f"  ESP-B (Channel {ESP_B_CHANNEL}, 0x{ESP_B_ADDR:02X}): {'✅ PASS' if esp_b_success else '❌ FAIL'}")
-        print(f"  ESP-C (Channel {ESP_C_CHANNEL}, 0x{ESP_C_ADDR:02X}): {'✅ PASS' if esp_c_success else '❌ FAIL'}")
+        print("  FINAL TEST SUMMARY")
         print("=" * 60)
         
-        if esp_b_success and esp_c_success:
+        passed = 0
+        failed = 0
+        
+        for module_id in connected_modules:
+            config = ESP_MODULES[module_id]
+            status = "✅ PASS" if test_results[module_id] else "❌ FAIL"
+            print(f"  {config['name']:<40} {status}")
+            
+            if test_results[module_id]:
+                passed += 1
+            else:
+                failed += 1
+        
+        print("=" * 60)
+        print(f"  Total: {passed} PASSED, {failed} FAILED")
+        print("=" * 60)
+        
+        if failed == 0:
             print("  ✅ ALL TESTS PASSED!")
-            print("  Both ESP modules are communicating correctly!")
+            print("  All connected ESP modules are communicating correctly!")
         else:
             print("  ⚠️  Some tests failed. Check ESP code and wiring.")
         print("=" * 60)
@@ -282,6 +458,8 @@ def main():
         print("\n\n⚠️  Test interrupted by user")
     except Exception as e:
         print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()

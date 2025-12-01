@@ -20,19 +20,16 @@
 // I2C Slave Configuration
 // ============================================
 #define I2C_SLAVE_ADDRESS 0x0C
-#define I2C_SDA_PIN 21
-#define I2C_SCL_PIN 22
 
 // I2C Data Buffers
-#define RECEIVE_BUFFER_SIZE 32
-#define SEND_BUFFER_SIZE 32
+#define RECEIVE_SIZE 5
+#define SEND_SIZE 2
 
-volatile uint8_t receiveBuffer[RECEIVE_BUFFER_SIZE];
+volatile uint8_t receiveBuffer[RECEIVE_SIZE];
 volatile uint8_t receiveLength = 0;
-volatile bool newDataFromMaster = false;
+volatile bool newDataFlag = false;
 
-uint8_t sendBuffer[SEND_BUFFER_SIZE];
-uint8_t sendLength = 0;
+uint8_t sendBuffer[SEND_SIZE];
 
 // ============================================
 // LED Configuration
@@ -59,36 +56,30 @@ uint8_t animationSpeed = 0;
 const uint8_t LED_COUNT = NUM_LEDS;
 
 // ============================================
-// I2C Callback Functions
+// I2C Callback Functions (ISR - Keep Simple!)
 // ============================================
 
 void onReceiveData(int numBytes) {
-    receiveLength = 0;
-    while (Wire.available() && receiveLength < RECEIVE_BUFFER_SIZE) {
-        receiveBuffer[receiveLength++] = Wire.read();
+    if (numBytes <= 0 || numBytes > RECEIVE_SIZE) return;
+    
+    for (int i = 0; i < numBytes; i++) {
+        receiveBuffer[i] = Wire.read();
     }
-    newDataFromMaster = true;
+    receiveLength = numBytes;
+    newDataFlag = true;
 }
 
 void onRequestData() {
-    Wire.write(sendBuffer, sendLength);
+    Wire.write(sendBuffer, SEND_SIZE);
 }
 
 // ============================================
 // Data Processing
 // ============================================
 
-void parseReceivedData() {
-    if (receiveLength >= 5) {
-        memcpy(&masterData.pressure, &receiveBuffer[0], 4);
-        masterData.pumpStatus = receiveBuffer[4];
-    }
-}
-
 void prepareSendData() {
-    sendLength = 0;
-    sendBuffer[sendLength++] = animationSpeed;
-    sendBuffer[sendLength++] = LED_COUNT;
+    sendBuffer[0] = animationSpeed;
+    sendBuffer[1] = LED_COUNT;
 }
 
 // ============================================
@@ -143,9 +134,11 @@ void updateAnimation() {
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("ESP-G (Tertiary Flow Visualizer) I2C Slave Starting...");
+    delay(300);
     
-    Wire.begin(I2C_SLAVE_ADDRESS, I2C_SDA_PIN, I2C_SCL_PIN);
+    Serial.println("\nESP-G (Tertiary Flow Visualizer) I2C Slave Starting...");
+    
+    Wire.begin(I2C_SLAVE_ADDRESS);
     Wire.onReceive(onReceiveData);
     Wire.onRequest(onRequestData);
     Serial.printf("I2C Slave initialized at address 0x%02X\n", I2C_SLAVE_ADDRESS);
@@ -162,7 +155,10 @@ void setup() {
         digitalWrite(ledPins[i], LOW);
     }
     
-    Serial.println("ESP-G Ready!");
+    // Prepare initial send buffer
+    prepareSendData();
+    
+    Serial.println("I2C Ready. Waiting for Raspberry Pi...");
 }
 
 // ============================================
@@ -170,11 +166,17 @@ void setup() {
 // ============================================
 
 void loop() {
-    if (newDataFromMaster) {
-        noInterrupts();
-        parseReceivedData();
-        newDataFromMaster = false;
-        interrupts();
+    // Process received data from Raspberry Pi
+    if (newDataFlag) {
+        newDataFlag = false;
+        
+        // Copy to local buffer to avoid volatile issues
+        uint8_t buf[RECEIVE_SIZE];
+        memcpy(buf, (const void*)receiveBuffer, RECEIVE_SIZE);
+        
+        // Parse received data
+        memcpy(&masterData.pressure, &buf[0], 4);
+        masterData.pumpStatus = buf[4];
         
         Serial.printf("Pressure: %.1f bar | Pump Status: %d\n",
                       masterData.pressure, masterData.pumpStatus);
@@ -182,4 +184,7 @@ void loop() {
     
     updateAnimation();
     prepareSendData();
+    
+    // Prevent watchdog reset
+    delay(2);
 }
