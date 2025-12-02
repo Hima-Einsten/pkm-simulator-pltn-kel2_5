@@ -23,19 +23,15 @@ OLED_CHANNEL_PUMP_TERTIARY = 3
 SCREEN_WIDTH = 128
 SCREEN_HEIGHT = 32
 
-# ESP32 Slave Addresses
+# ESP32 Slave Addresses (SIMPLIFIED - Only 3 ESP needed)
 ESP_B_ADDRESS = 0x08  # Batang Kendali & Reaktor
 ESP_C_ADDRESS = 0x09  # Turbin & Generator
-ESP_E_ADDRESS = 0x0A  # Visualizer Aliran Primer
-ESP_F_ADDRESS = 0x0B  # Visualizer Aliran Sekunder
-ESP_G_ADDRESS = 0x0C  # Visualizer Aliran Tersier
+ESP_E_ADDRESS = 0x0A  # 3-Flow Visualizer (Primer, Sekunder, Tersier)
 
 # TCA9548A Channel Mapping for ESP
 ESP_B_CHANNEL = 0
 ESP_C_CHANNEL = 1
-ESP_E_CHANNEL = 2
-ESP_F_CHANNEL = 3
-ESP_G_CHANNEL = 4
+ESP_E_CHANNEL = 2  # Single ESP for all 3 flow visualizers
 
 # ============================================
 # GPIO Pin Configuration
@@ -88,8 +84,7 @@ PWM_SHUTDOWN_STEP = 5
 DEBOUNCE_DELAY = 0.1
 PWM_UPDATE_INTERVAL = 0.1
 I2C_UPDATE_INTERVAL_FAST = 0.05    # ESP-B (critical)
-I2C_UPDATE_INTERVAL_NORMAL = 0.1   # ESP-C
-I2C_UPDATE_INTERVAL_SLOW = 0.2     # ESP-E/F/G
+I2C_UPDATE_INTERVAL_NORMAL = 0.1   # ESP-C, ESP-E
 OLED_UPDATE_INTERVAL = 0.2
 BLINK_INTERVAL = 0.25
 

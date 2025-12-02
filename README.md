@@ -11,7 +11,9 @@
 
 ## 📋 Project Overview
 
-Simulator pembangkit listrik tenaga nuklir (PLTN) tipe PWR (Pressurized Water Reactor) yang menggunakan **Raspberry Pi sebagai master controller** dan **5 ESP32 sebagai I2C slaves** untuk mengontrol berbagai komponen simulator.
+Simulator pembangkit listrik tenaga nuklir (PLTN) tipe PWR (Pressurized Water Reactor) yang menggunakan **Raspberry Pi sebagai master controller** dan **3 ESP32 sebagai I2C slaves** untuk mengontrol berbagai komponen simulator.
+
+> **V2.0 Update:** Sistem disederhanakan dari 5 ESP menjadi 3 ESP dengan menggunakan multiplexer untuk kontrol LED yang lebih efisien!
 
 ### 🎯 Key Features
 
@@ -105,35 +107,30 @@ Simulator pembangkit listrik tenaga nuklir (PLTN) tipe PWR (Pressurized Water Re
 - State machine (IDLE → STARTING → RUNNING → SHUTTING_DOWN)
 - Power level calculation
 
-### 4. ESP-E - Primary Flow Visualizer
+### 4. ESP-E - 3-Flow Visualizer ⭐ NEW IN V2.0
 **Folder:** `ESP_E_Aliran_Primer/`  
 **I2C Address:** `0x0A`
 
-**Role:** Primary coolant loop visualization
+**Role:** All 3 coolant loops visualization (Primary, Secondary, Tertiary)
 
 **Features:**
-- 16x LED animation
-- Speed based on Primary pump status
+- **48x LED** total (16 per flow)
+- **3x CD74HC4067 multiplexers** for efficient control
+- **Independent animations** for each flow
+- **Multi-wave effect** - looks like real flowing water!
+- **12 GPIO pins** only (was 48 with direct control)
+- Speed based on each pump status independently
 
-### 5. ESP-F - Secondary Flow Visualizer
-**Folder:** `ESP_F_Aliran_Sekunder/`  
-**I2C Address:** `0x0B`
+**Hardware:**
+- Shared selector pins (S0-S3) for all multiplexers
+- Individual EN & SIG per flow
+- PWM brightness control for smooth animation
 
-**Role:** Secondary coolant loop visualization
-
-**Features:**
-- 16x LED animation
-- Speed based on Secondary pump status
-
-### 6. ESP-G - Tertiary Flow Visualizer
-**Folder:** `ESP_G_Aliran_Tersier/`  
-**I2C Address:** `0x0C`
-
-**Role:** Tertiary coolant loop visualization
-
-**Features:**
-- 16x LED animation
-- Speed based on Tertiary pump status
+**What happened to ESP-F and ESP-G?**
+> ❌ **REMOVED** - Merged into ESP-E for better efficiency
+> - ESP-F (Secondary) → Now multiplexer #2 in ESP-E
+> - ESP-G (Tertiary) → Now multiplexer #3 in ESP-E
+> - See `DEPRECATED_FILES.md` for details
 
 ---
 
