@@ -69,6 +69,12 @@ def select_pca9548a_channel(bus, pca_addr, channel):
         channel_mask = 1 << channel
         bus.write_byte(pca_addr, channel_mask)
         print(f"✅ PCA9548A Channel {channel} selected (mask: 0x{channel_mask:02X})")
+        
+        # Verify channel selection
+        time.sleep(0.05)
+        current_channel = bus.read_byte(pca_addr)
+        print(f"   Channel verification: 0x{current_channel:02X} (expected: 0x{channel_mask:02X})")
+        
         return True
     except Exception as e:
         print(f"❌ Failed to select channel: {e}")
@@ -269,30 +275,41 @@ def test_write_to_esp_c(bus, esp_addr):
 def test_write_to_esp_visualizer(bus, esp_addr, pump_num):
     """
     Test menulis data ke ESP Visualizer (E/F/G)
-    Kirim dummy pressure & pump status
+    Kirim dummy pressure & pump status dengan cycle
     """
     print(f"\n📤 Testing write to Visualizer at 0x{esp_addr:02X}...")
     
-    try:
-        # Protokol Visualizer: pressure (float, 4 bytes) + pumpStatus (byte, 1 byte)
-        pressure = 150.0  # bar
-        pump_status = 2   # RUNNING
-        
-        # Pack data (5 bytes total)
-        data = struct.pack('fB', pressure, pump_status)
-        
-        print(f"   Sending: pressure={pressure} bar, pump{pump_num}_status={pump_status}")
-        print(f"   Raw bytes: {' '.join([f'{b:02X}' for b in data])}")
-        
-        # Write data
-        bus.write_i2c_block_data(esp_addr, 0x00, list(data))
-        
-        print(f"✅ Data sent successfully!")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Failed to write: {e}")
-        return False
+    pump_statuses = [
+        (0, "OFF - All LEDs should turn off"),
+        (1, "STARTING - Slow animation (300ms)"),
+        (2, "ON - Fast animation (100ms)"),
+        (3, "SHUTTING_DOWN - Very slow animation (500ms)")
+    ]
+    
+    for pump_status, desc in pump_statuses:
+        try:
+            # Protokol Visualizer: pressure (float, 4 bytes) + pumpStatus (byte, 1 byte)
+            pressure = 150.0  # bar
+            
+            # Pack data (5 bytes total)
+            data = struct.pack('fB', pressure, pump_status)
+            
+            print(f"\n   Testing Status {pump_status}: {desc}")
+            print(f"   Sending: pressure={pressure} bar, pump{pump_num}_status={pump_status}")
+            print(f"   Raw bytes: {' '.join([f'{b:02X}' for b in data])}")
+            
+            # Write data
+            bus.write_i2c_block_data(esp_addr, 0x00, list(data))
+            
+            print(f"   ✅ Data sent successfully!")
+            print(f"   💡 Watch the LEDs for 5 seconds...")
+            time.sleep(5)  # Observe animation
+            
+        except Exception as e:
+            print(f"   ❌ Failed to write: {e}")
+            return False
+    
+    return True
 
 def test_read_from_esp_visualizer(bus, esp_addr):
     """
@@ -304,7 +321,7 @@ def test_read_from_esp_visualizer(bus, esp_addr):
         # Baca 2 bytes: animationSpeed + LED_COUNT
         data = bus.read_i2c_block_data(esp_addr, 0x00, 2)
         
-        print(f"✅ Received {len(data)} bytes:")
+        print(f"   ✅ Received {len(data)} bytes:")
         print(f"   Raw data: {' '.join([f'{b:02X}' for b in data])}")
         
         if len(data) >= 2:
@@ -313,11 +330,21 @@ def test_read_from_esp_visualizer(bus, esp_addr):
             
             print(f"   Animation Speed: {animation_speed}")
             print(f"   LED Count: {led_count}")
+            
+            # Interpretasi status
+            if animation_speed == 0:
+                print(f"   Status: OFF (no animation)")
+            elif animation_speed == 33:
+                print(f"   Status: STARTING (slow)")
+            elif animation_speed == 100:
+                print(f"   Status: ON (fast)")
+            elif animation_speed == 20:
+                print(f"   Status: SHUTTING_DOWN (very slow)")
         
         return True
         
     except Exception as e:
-        print(f"❌ Failed to read: {e}")
+        print(f"   ❌ Failed to read: {e}")
         return False
 
 def test_esp_module(bus, pca_addr, module_id, config):
@@ -372,6 +399,94 @@ def test_esp_module(bus, pca_addr, module_id, config):
     
     return write_success and read_success
 
+def test_esp_e_detailed(bus, pca_addr):
+    """
+    Detailed test khusus untuk ESP-E dengan debugging lengkap
+    """
+    print("\n" + "="*70)
+    print("  DETAILED TEST: ESP-E (Primary Flow Visualizer)")
+    print("="*70)
+    
+    esp_addr = 0x0A
+    channel = 2
+    
+    # Step 1: Select channel
+    print("\n--- Step 1: Select PCA9548A Channel 2 ---")
+    if not select_pca9548a_channel(bus, pca_addr, channel):
+        return False
+    time.sleep(0.1)
+    
+    # Step 2: Scan for ESP-E
+    print("\n--- Step 2: Scan for ESP-E at 0x0A ---")
+    devices = scan_i2c_devices(bus, silent=False)
+    
+    if esp_addr not in devices:
+        print(f"\n❌ ESP-E not found at 0x{esp_addr:02X}")
+        print("   Possible issues:")
+        print("   1. ESP-E not powered or not running")
+        print("   2. I2C address in code != 0x0A")
+        print("   3. SDA/SCL not connected to ESP32 GPIO 21/22")
+        print("   4. PCA9548A channel 2 wiring issue")
+        return False
+    
+    print(f"\n✅ ESP-E found at 0x{esp_addr:02X}")
+    
+    # Step 3: Test each pump status with LED observation
+    print("\n--- Step 3: Test Animation with Different Pump Status ---")
+    
+    pump_tests = [
+        (2, "ON", "Fast animation (100ms)", 8),
+        (1, "STARTING", "Slow animation (300ms)", 8),
+        (3, "SHUTTING_DOWN", "Very slow animation (500ms)", 8),
+        (0, "OFF", "All LEDs should turn OFF", 3),
+    ]
+    
+    for pump_status, name, desc, duration in pump_tests:
+        print(f"\n>>> Test Pump Status {pump_status}: {name}")
+        print(f"    Expected: {desc}")
+        
+        try:
+            # Send data
+            pressure = 150.0
+            data = struct.pack('fB', pressure, pump_status)
+            print(f"    Sending: pressure={pressure} bar, status={pump_status}")
+            print(f"    Raw bytes: {' '.join([f'{b:02X}' for b in data])}")
+            
+            bus.write_i2c_block_data(esp_addr, 0x00, list(data))
+            print(f"    ✅ Data sent successfully!")
+            
+            time.sleep(0.2)
+            
+            # Read response
+            response = bus.read_i2c_block_data(esp_addr, 0x00, 2)
+            anim_speed = response[0]
+            led_count = response[1]
+            
+            print(f"    Response: animation_speed={anim_speed}, led_count={led_count}")
+            
+            # Verify expected animation speed
+            expected_speeds = {0: 0, 1: 33, 2: 100, 3: 20}
+            if anim_speed == expected_speeds[pump_status]:
+                print(f"    ✅ Animation speed correct!")
+            else:
+                print(f"    ⚠️  Animation speed mismatch! Expected: {expected_speeds[pump_status]}")
+            
+            # Observe animation
+            print(f"    💡 WATCH THE LEDs for {duration} seconds...")
+            for i in range(duration):
+                print(f"       {i+1}/{duration}s", end='\r')
+                time.sleep(1)
+            print()
+            
+        except Exception as e:
+            print(f"    ❌ Error: {e}")
+            return False
+    
+    print("\n" + "="*70)
+    print("  ESP-E TEST COMPLETED")
+    print("="*70)
+    return True
+
 def main():
     print("=" * 60)
     print("  PCA9548A + ESP32 Auto-Detection & Test")
@@ -405,8 +520,27 @@ def main():
         
         print(f"\n✅ Found {len(connected_modules)} module(s): {', '.join(connected_modules)}")
         
-        # Step 3: Test each connected module
-        print("\n--- Step 3: Test Each Module ---")
+        # Step 3: Special detailed test for ESP-E if detected
+        if 'ESP-E' in connected_modules:
+            print("\n" + "="*60)
+            print("  ESP-E DETECTED - Run detailed test? (y/n)")
+            print("="*60)
+            choice = input("Run detailed ESP-E test? [y/n]: ").strip().lower()
+            
+            if choice == 'y':
+                test_esp_e_detailed(bus, PCA9548A_ADDR)
+                
+                # Ask to continue with other modules
+                print("\n" + "="*60)
+                choice = input("Continue testing other modules? [y/n]: ").strip().lower()
+                if choice != 'y':
+                    print("\nTest completed. Exiting...")
+                    bus.write_byte(PCA9548A_ADDR, 0x00)
+                    bus.close()
+                    return
+        
+        # Step 4: Test each connected module
+        print("\n--- Step 4: Test Each Module ---")
         test_results = {}
         
         for module_id in connected_modules:
@@ -421,7 +555,7 @@ def main():
             
             time.sleep(0.5)
         
-        # Step 4: Summary
+        # Step 5: Summary
         print("\n" + "=" * 60)
         print("  FINAL TEST SUMMARY")
         print("=" * 60)
