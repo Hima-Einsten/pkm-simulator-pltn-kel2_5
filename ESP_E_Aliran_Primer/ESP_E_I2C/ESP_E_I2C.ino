@@ -32,13 +32,37 @@ volatile bool newDataFlag = false;
 uint8_t sendBuffer[SEND_SIZE];
 
 // ============================================
-// LED Configuration
+// LED Multiplexer Configuration
 // ============================================
 #define NUM_LEDS 16
-const int ledPins[NUM_LEDS] = {
-    13, 12, 14, 27, 26, 25, 33, 32,
-    15, 2, 0, 4, 16, 17, 5, 18
-};
+
+// Multiplexer control pins
+const int S0 = 14;
+const int S1 = 27;
+const int S2 = 26;
+const int S3 = 25;
+const int EN = 33;  // Enable multiplexer
+const int SIG = 32; // SIG/COM multiplexer (output to LED)
+
+// Function to select multiplexer channel
+void setMux(int channel) {
+    digitalWrite(S0, channel & 1);
+    digitalWrite(S1, (channel >> 1) & 1);
+    digitalWrite(S2, (channel >> 2) & 1);
+    digitalWrite(S3, (channel >> 3) & 1);
+}
+
+// Function to turn on specific LED
+void turnOnLED(int index) {
+    if (index >= 0 && index < NUM_LEDS) {
+        setMux(index);
+    }
+}
+
+// Function to turn off all LEDs
+void turnOffAllLEDs() {
+    setMux(15); // Set to unused channel to turn off all
+}
 
 // ============================================
 // Animation Variables
@@ -95,9 +119,7 @@ void updateAnimation() {
             animationInterval = 0; // No animation
             animationSpeed = 0;
             // Turn off all LEDs
-            for (int i = 0; i < NUM_LEDS; i++) {
-                digitalWrite(ledPins[i], LOW);
-            }
+            turnOffAllLEDs();
             return;
             
         case 1: // STARTING
@@ -118,13 +140,8 @@ void updateAnimation() {
     
     // Perform animation
     if (millis() - lastAnimationUpdate >= animationInterval) {
-        // Turn off all LEDs
-        for (int i = 0; i < NUM_LEDS; i++) {
-            digitalWrite(ledPins[i], LOW);
-        }
-        
-        // Turn on current position LED
-        digitalWrite(ledPins[animationPosition], HIGH);
+        // Turn on current position LED (multiplexer stays on selected channel)
+        turnOnLED(animationPosition);
         
         // Move to next position
         animationPosition++;
@@ -152,18 +169,24 @@ void setup() {
     Wire.onRequest(onRequestData);
     Serial.printf("I2C Slave initialized at address 0x%02X\n", I2C_SLAVE_ADDRESS);
     
-    // Initialize LED pins
-    for (int i = 0; i < NUM_LEDS; i++) {
-        pinMode(ledPins[i], OUTPUT);
-        digitalWrite(ledPins[i], LOW);
-    }
+    // Initialize multiplexer pins
+    pinMode(S0, OUTPUT);
+    pinMode(S1, OUTPUT);
+    pinMode(S2, OUTPUT);
+    pinMode(S3, OUTPUT);
+    pinMode(EN, OUTPUT);
+    pinMode(SIG, OUTPUT);
+    
+    digitalWrite(EN, LOW);   // Enable multiplexer (EN = LOW to enable)
+    digitalWrite(SIG, HIGH); // Set signal HIGH to LED
+    turnOffAllLEDs();        // Turn off all LEDs initially
     
     // Startup animation
     for (int i = 0; i < NUM_LEDS; i++) {
-        digitalWrite(ledPins[i], HIGH);
+        turnOnLED(i);
         delay(50);
-        digitalWrite(ledPins[i], LOW);
     }
+    turnOffAllLEDs();
     
     // Prepare initial send buffer
     prepareSendData();
