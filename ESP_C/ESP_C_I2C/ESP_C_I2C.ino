@@ -23,19 +23,16 @@
 // I2C Slave Configuration
 // ============================================
 #define I2C_SLAVE_ADDRESS 0x09
-#define I2C_SDA_PIN 21
-#define I2C_SCL_PIN 22
 
 // I2C Data Buffers
-#define RECEIVE_BUFFER_SIZE 32
-#define SEND_BUFFER_SIZE 32
+#define RECEIVE_SIZE 3
+#define SEND_SIZE 10
 
-volatile uint8_t receiveBuffer[RECEIVE_BUFFER_SIZE];
+volatile uint8_t receiveBuffer[RECEIVE_SIZE];
 volatile uint8_t receiveLength = 0;
-volatile bool newDataFromMaster = false;
+volatile bool newDataFlag = false;
 
-uint8_t sendBuffer[SEND_BUFFER_SIZE];
-uint8_t sendLength = 0;
+uint8_t sendBuffer[SEND_SIZE];
 
 // ============================================
 // Hardware Configuration
@@ -80,48 +77,38 @@ unsigned long lastUpdate = 0;
 const unsigned long UPDATE_INTERVAL = 100;
 
 // ============================================
-// I2C Callback Functions
+// I2C Callback Functions (ISR - Keep Simple!)
 // ============================================
 
 void onReceiveData(int numBytes) {
-    receiveLength = 0;
-    while (Wire.available() && receiveLength < RECEIVE_BUFFER_SIZE) {
-        receiveBuffer[receiveLength++] = Wire.read();
+    if (numBytes <= 0 || numBytes > RECEIVE_SIZE) return;
+    
+    for (int i = 0; i < numBytes; i++) {
+        receiveBuffer[i] = Wire.read();
     }
-    newDataFromMaster = true;
+    receiveLength = numBytes;
+    newDataFlag = true;
 }
 
 void onRequestData() {
-    Wire.write(sendBuffer, sendLength);
+    Wire.write(sendBuffer, SEND_SIZE);
 }
 
 // ============================================
 // Data Processing
 // ============================================
 
-void parseReceivedData() {
-    if (receiveLength >= 3) {
-        masterData.rod1Pos = receiveBuffer[0];
-        masterData.rod2Pos = receiveBuffer[1];
-        masterData.rod3Pos = receiveBuffer[2];
-    }
-}
-
 void prepareSendData() {
-    sendLength = 0;
-    
     // Power Level (float, 4 bytes)
-    memcpy(&sendBuffer[sendLength], &powerLevel, 4);
-    sendLength += 4;
+    memcpy(&sendBuffer[0], &powerLevel, 4);
     
     // State (uint32, 4 bytes)
     uint32_t state = (uint32_t)currentState;
-    memcpy(&sendBuffer[sendLength], &state, 4);
-    sendLength += 4;
+    memcpy(&sendBuffer[4], &state, 4);
     
     // Generator & Turbine Status (2 bytes)
-    sendBuffer[sendLength++] = generatorStatus;
-    sendBuffer[sendLength++] = turbineStatus;
+    sendBuffer[8] = generatorStatus;
+    sendBuffer[9] = turbineStatus;
 }
 
 // ============================================
@@ -233,10 +220,12 @@ void updateOutputs() {
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("ESP-C I2C Slave Starting...");
+    delay(300);
+    
+    Serial.println("\nESP-C I2C Slave Starting...");
     
     // Initialize I2C as Slave
-    Wire.begin(I2C_SLAVE_ADDRESS, I2C_SDA_PIN, I2C_SCL_PIN);
+    Wire.begin(I2C_SLAVE_ADDRESS);
     Wire.onReceive(onReceiveData);
     Wire.onRequest(onRequestData);
     Serial.printf("I2C Slave initialized at address 0x%02X\n", I2C_SLAVE_ADDRESS);
@@ -259,7 +248,10 @@ void setup() {
     digitalWrite(RELAY_CONDENSER, LOW);
     digitalWrite(RELAY_COOLING_TOWER, LOW);
     
-    Serial.println("ESP-C Ready!");
+    // Prepare initial send buffer
+    prepareSendData();
+    
+    Serial.println("I2C Ready. Waiting for Raspberry Pi...");
 }
 
 // ============================================
@@ -267,15 +259,26 @@ void setup() {
 // ============================================
 
 void loop() {
-    // Process received data
-    if (newDataFromMaster) {
-        noInterrupts();
-        parseReceivedData();
-        newDataFromMaster = false;
-        interrupts();
+    // Process received data from Raspberry Pi
+    if (newDataFlag) {
+        newDataFlag = false;
+        
+        // Copy to local buffer to avoid volatile issues
+        uint8_t buf[RECEIVE_SIZE];
+        memcpy(buf, (const void*)receiveBuffer, RECEIVE_SIZE);
+        
+        // Parse received rod positions
+        masterData.rod1Pos = buf[0];
+        masterData.rod2Pos = buf[1];
+        masterData.rod3Pos = buf[2];
+        
+        Serial.println("\n--- DATA RECEIVED FROM RASPBERRY ---");
+        Serial.printf("Rod1: %d%%\n", masterData.rod1Pos);
+        Serial.printf("Rod2: %d%%\n", masterData.rod2Pos);
+        Serial.printf("Rod3: %d%%\n", masterData.rod3Pos);
     }
     
-    // Update state machine
+    // Update state machine periodically
     if (millis() - lastUpdate >= UPDATE_INTERVAL) {
         updateStateMachine();
         updateOutputs();
@@ -283,8 +286,11 @@ void loop() {
         lastUpdate = millis();
         
         // Debug output
-        Serial.printf("Rods: %d,%d,%d | Power: %.1f%% | State: %d\n",
-                      masterData.rod1Pos, masterData.rod2Pos, masterData.rod3Pos,
-                      powerLevel, currentState);
+        Serial.println("--- RESPONSE UPDATED ---");
+        Serial.printf("Power: %.1f%% | State: %d | Gen: %d | Turb: %d\n",
+                      powerLevel, currentState, generatorStatus, turbineStatus);
     }
+    
+    // Prevent watchdog reset
+    delay(100);
 }

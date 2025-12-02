@@ -78,19 +78,17 @@ class I2CMaster:
             logger.error(f"Failed to initialize I2C Master: {e}")
             raise
         
-        # Data storage
+        # Data storage (SIMPLIFIED - Only 3 ESP)
         self.esp_b_data = ESP_B_Data()
         self.esp_c_data = ESP_C_Data()
-        self.esp_e_data = ESP_Visualizer_Data()
-        self.esp_f_data = ESP_Visualizer_Data()
-        self.esp_g_data = ESP_Visualizer_Data()
+        self.esp_e_data = ESP_Visualizer_Data()  # Now handles all 3 flows
         
         # Error tracking
         self.error_counts = {
-            0x08: 0, 0x09: 0, 0x0A: 0, 0x0B: 0, 0x0C: 0
+            0x08: 0, 0x09: 0, 0x0A: 0
         }
         self.last_comm_time = {
-            0x08: 0, 0x09: 0, 0x0A: 0, 0x0B: 0, 0x0C: 0
+            0x08: 0, 0x09: 0, 0x0A: 0
         }
     
     def write_read_with_retry(self, address: int, write_data: bytes, 
@@ -247,7 +245,8 @@ class I2CMaster:
     def update_visualizer(self, esp_address: int, channel: int, 
                          pressure: float, pump_status: int) -> bool:
         """
-        Send data to visualizer ESP
+        Send data to visualizer ESP (LEGACY - single flow)
+        For backward compatibility with separate ESP-E/F/G
         
         Args:
             esp_address: ESP I2C address (0x0A/0x0B/0x0C)
@@ -275,14 +274,7 @@ class I2CMaster:
                 if esp_address == 0x0A:
                     self.esp_e_data.animation_speed = values[0]
                     self.esp_e_data.led_count = values[1]
-                elif esp_address == 0x0B:
-                    self.esp_f_data.animation_speed = values[0]
-                    self.esp_f_data.led_count = values[1]
-                elif esp_address == 0x0C:
-                    self.esp_g_data.animation_speed = values[0]
-                    self.esp_g_data.led_count = values[1]
-                
-                logger.debug(f"ESP-{chr(0x45+esp_address-0x0A)}: Speed={values[0]}, LEDs={values[1]}")
+                    logger.debug(f"ESP-E (single flow): Speed={values[0]}, LEDs={values[1]}")
                 return True
             
         except Exception as e:
@@ -290,17 +282,74 @@ class I2CMaster:
         
         return False
     
+    def update_all_visualizers(self, 
+                              pressure_primary: float, pump_status_primary: int,
+                              pressure_secondary: float, pump_status_secondary: int,
+                              pressure_tertiary: float, pump_status_tertiary: int) -> bool:
+        """
+        Update ESP-E with all 3 flow visualizers (NEW - unified 3-flow system)
+        
+        Args:
+            pressure_primary: Primary flow pressure
+            pump_status_primary: Primary pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
+            pressure_secondary: Secondary flow pressure
+            pump_status_secondary: Secondary pump status
+            pressure_tertiary: Tertiary flow pressure
+            pump_status_tertiary: Tertiary pump status
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        esp_address = 0x0A  # ESP-E now handles all 3 flows
+        channel = 2
+        
+        if self.mux_select:
+            self.mux_select(channel)
+        
+        try:
+            # Pack data: 3 x (float pressure + uint8 status) = 15 bytes
+            write_data = struct.pack('<fBfBfB', 
+                                    pressure_primary, pump_status_primary,
+                                    pressure_secondary, pump_status_secondary,
+                                    pressure_tertiary, pump_status_tertiary)
+            
+            # Read response: 2 x uint8
+            response = self.write_read_with_retry(esp_address, write_data, 2)
+            
+            if response:
+                values = struct.unpack('<BB', response)
+                self.esp_e_data.animation_speed = values[0]
+                self.esp_e_data.led_count = values[1]
+                
+                logger.debug(f"ESP-E (3-Flow): Speed={values[0]}, LEDs={values[1]}")
+                logger.debug(f"  Primary: P={pressure_primary:.1f}, S={pump_status_primary}")
+                logger.debug(f"  Secondary: P={pressure_secondary:.1f}, S={pump_status_secondary}")
+                logger.debug(f"  Tertiary: P={pressure_tertiary:.1f}, S={pump_status_tertiary}")
+                return True
+            
+        except Exception as e:
+            logger.error(f"Error updating ESP-E (3-Flow): {e}")
+        
+        return False
+    
+    # ============================================
+    # LEGACY Methods (Deprecated - use update_all_visualizers instead)
+    # ============================================
+    
     def update_esp_e(self, pressure: float, pump_status: int) -> bool:
-        """Update ESP-E (Visualizer Primer)"""
+        """DEPRECATED: Use update_all_visualizers() instead"""
+        logger.warning("update_esp_e() is deprecated. Use update_all_visualizers() instead.")
         return self.update_visualizer(0x0A, 2, pressure, pump_status)
     
     def update_esp_f(self, pressure: float, pump_status: int) -> bool:
-        """Update ESP-F (Visualizer Sekunder)"""
-        return self.update_visualizer(0x0B, 3, pressure, pump_status)
+        """DEPRECATED: ESP-F no longer needed (merged into ESP-E)"""
+        logger.warning("update_esp_f() is deprecated. ESP-F merged into ESP-E.")
+        return False
     
     def update_esp_g(self, pressure: float, pump_status: int) -> bool:
-        """Update ESP-G (Visualizer Tersier)"""
-        return self.update_visualizer(0x0C, 4, pressure, pump_status)
+        """DEPRECATED: ESP-G no longer needed (merged into ESP-E)"""
+        logger.warning("update_esp_g() is deprecated. ESP-G merged into ESP-E.")
+        return False
     
     # ============================================
     # Health Check
@@ -316,15 +365,15 @@ class I2CMaster:
         current_time = time.time()
         health = {}
         
-        for addr in [0x08, 0x09, 0x0A, 0x0B, 0x0C]:
-            last_comm = self.last_comm_time[addr]
+        for addr in [0x08, 0x09, 0x0A]:  # Only 3 ESP now
+            last_comm = self.last_comm_time.get(addr, 0)
             time_since = current_time - last_comm if last_comm > 0 else -1
             
             health[addr] = {
-                'error_count': self.error_counts[addr],
+                'error_count': self.error_counts.get(addr, 0),
                 'last_comm': last_comm,
                 'time_since': time_since,
-                'status': 'OK' if self.error_counts[addr] < 5 else 'ERROR'
+                'status': 'OK' if self.error_counts.get(addr, 0) < 5 else 'ERROR'
             }
         
         return health

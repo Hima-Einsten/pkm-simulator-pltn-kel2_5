@@ -479,19 +479,15 @@ class PLTNController:
                                 )
                                 last_esp_c_time = current_time
                     
-                    # Update visualizers (slow - 200ms)
-                    if current_time - last_esp_viz_time > config.I2C_UPDATE_INTERVAL_SLOW:
-                        self.i2c_master.update_esp_e(
-                            self.state.pressure, 
-                            self.state.pump_primary_status
-                        )
-                        self.i2c_master.update_esp_f(
-                            self.state.pressure, 
-                            self.state.pump_secondary_status
-                        )
-                        self.i2c_master.update_esp_g(
-                            self.state.pressure, 
-                            self.state.pump_tertiary_status
+                    # Update visualizers - NEW: All 3 flows to ESP-E (100ms)
+                    if current_time - last_esp_viz_time > config.I2C_UPDATE_INTERVAL_NORMAL:
+                        self.i2c_master.update_all_visualizers(
+                            pressure_primary=self.state.pressure,
+                            pump_status_primary=self.state.pump_primary_status,
+                            pressure_secondary=self.state.pressure * 0.35,  # ~50 bar from 155
+                            pump_status_secondary=self.state.pump_secondary_status,
+                            pressure_tertiary=self.state.pressure * 0.10,   # ~15 bar from 155
+                            pump_status_tertiary=self.state.pump_tertiary_status
                         )
                         last_esp_viz_time = current_time
                 
