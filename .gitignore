@@ -138,3 +138,5 @@ Thumbs.db
 *.pyo
 *.pyd
 .Python
+
+py37env/
