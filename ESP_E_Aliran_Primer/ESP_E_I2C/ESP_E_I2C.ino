@@ -180,7 +180,8 @@ void onRequestData() {
 // ============================================
 
 void prepareSendData() {
-    sendBuffer[0] = animationSpeed;
+    // Return average animation speed of all flows (or just first flow)
+    sendBuffer[0] = flows[0].animationSpeed;  // Use Primary flow speed
     sendBuffer[1] = LED_COUNT;
 }
 
