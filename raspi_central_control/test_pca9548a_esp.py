@@ -5,6 +5,7 @@ Auto-detect dan test semua ESP modules yang terhubung
 """
 
 import smbus2
+from smbus2 import i2c_msg
 import time
 import struct
 
@@ -330,8 +331,9 @@ def test_write_to_esp_three_flow_visualizer(bus, esp_addr):
             print(f"   Tertiary: {scenario['tertiary'][0]:.1f} bar, Status: {scenario['tertiary'][1]}")
             print(f"   Raw bytes ({len(data)}): {' '.join([f'{b:02X}' for b in data])}")
             
-            # Write data
-            bus.write_i2c_block_data(esp_addr, 0x00, list(data))
+            # Write data - Use i2c_msg for large data (register + 15 bytes)
+            write_msg = i2c_msg.write(esp_addr, [0x00] + list(data))
+            bus.i2c_rdwr(write_msg)
             
             print(f"   ✅ Data sent successfully!")
             print(f"   💡 Watch ALL THREE flow LEDs for {scenario['duration']} seconds...")
@@ -523,7 +525,9 @@ def test_esp_e_detailed(bus, pca_addr):
             print(f"    Tertiary: {test['tertiary'][0]:.1f} bar, Status: {test['tertiary'][1]}")
             print(f"    Raw bytes ({len(data)}): {' '.join([f'{b:02X}' for b in data])}")
             
-            bus.write_i2c_block_data(esp_addr, 0x00, list(data))
+            # Write data - Use i2c_msg for large data (register + 15 bytes)
+            write_msg = i2c_msg.write(esp_addr, [0x00] + list(data))
+            bus.i2c_rdwr(write_msg)
             print(f"    ✅ Data sent successfully!")
             
             time.sleep(0.2)
