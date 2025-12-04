@@ -31,28 +31,12 @@ ESP_MODULES = {
         'protocol': 'turbine'
     },
     'ESP-E': {
-        'name': 'ESP-E (Primary Flow Visualizer)',
+        'name': 'ESP-E (3-Flow Visualizer: Primary, Secondary, Tertiary)',
         'channel': 2,
         'address': 0x0A,
-        'write_size': 5,
+        'write_size': 15,  # 3 flows x (4 bytes float + 1 byte status)
         'read_size': 2,
-        'protocol': 'visualizer'
-    },
-    'ESP-F': {
-        'name': 'ESP-F (Secondary Flow Visualizer)',
-        'channel': 3,
-        'address': 0x0B,
-        'write_size': 5,
-        'read_size': 2,
-        'protocol': 'visualizer'
-    },
-    'ESP-G': {
-        'name': 'ESP-G (Tertiary Flow Visualizer)',
-        'channel': 4,
-        'address': 0x0C,
-        'write_size': 5,
-        'read_size': 2,
-        'protocol': 'visualizer'
+        'protocol': 'three_flow_visualizer'
     }
 }
 
@@ -272,38 +256,90 @@ def test_write_to_esp_c(bus, esp_addr):
         print(f"❌ Failed to write to ESP-C: {e}")
         return False
 
-def test_write_to_esp_visualizer(bus, esp_addr, pump_num):
+def test_write_to_esp_three_flow_visualizer(bus, esp_addr):
     """
-    Test menulis data ke ESP Visualizer (E/F/G)
-    Kirim dummy pressure & pump status dengan cycle
+    Test menulis data ke ESP-E (3-Flow Visualizer)
+    Kirim data untuk ketiga aliran (Primary, Secondary, Tertiary)
     """
-    print(f"\n📤 Testing write to Visualizer at 0x{esp_addr:02X}...")
+    print(f"\n📤 Testing write to 3-Flow Visualizer at 0x{esp_addr:02X}...")
     
-    pump_statuses = [
-        (0, "OFF - All LEDs should turn off"),
-        (1, "STARTING - Slow animation (300ms)"),
-        (2, "ON - Fast animation (100ms)"),
-        (3, "SHUTTING_DOWN - Very slow animation (500ms)")
+    # Test scenarios untuk ketiga aliran
+    test_scenarios = [
+        {
+            'name': 'All Flows OFF',
+            'primary': (150.0, 0),
+            'secondary': (100.0, 0),
+            'tertiary': (50.0, 0),
+            'duration': 3
+        },
+        {
+            'name': 'Primary ON, Others OFF',
+            'primary': (155.0, 2),
+            'secondary': (0.0, 0),
+            'tertiary': (0.0, 0),
+            'duration': 8
+        },
+        {
+            'name': 'Primary + Secondary ON',
+            'primary': (155.0, 2),
+            'secondary': (105.0, 2),
+            'tertiary': (0.0, 0),
+            'duration': 8
+        },
+        {
+            'name': 'All Flows ON (Full Operation)',
+            'primary': (155.0, 2),
+            'secondary': (105.0, 2),
+            'tertiary': (55.0, 2),
+            'duration': 10
+        },
+        {
+            'name': 'All STARTING (Slow Animation)',
+            'primary': (150.0, 1),
+            'secondary': (100.0, 1),
+            'tertiary': (50.0, 1),
+            'duration': 8
+        },
+        {
+            'name': 'All SHUTTING DOWN',
+            'primary': (140.0, 3),
+            'secondary': (90.0, 3),
+            'tertiary': (40.0, 3),
+            'duration': 8
+        },
     ]
     
-    for pump_status, desc in pump_statuses:
+    for scenario in test_scenarios:
         try:
-            # Protokol Visualizer: pressure (float, 4 bytes) + pumpStatus (byte, 1 byte)
-            pressure = 150.0  # bar
+            print(f"\n{'='*60}")
+            print(f"   Scenario: {scenario['name']}")
+            print(f"{'='*60}")
             
-            # Pack data (5 bytes total)
-            data = struct.pack('fB', pressure, pump_status)
+            # Pack data untuk 3 aliran (15 bytes total)
+            # Primary: 4 bytes float + 1 byte status
+            # Secondary: 4 bytes float + 1 byte status  
+            # Tertiary: 4 bytes float + 1 byte status
+            data = struct.pack('fBfBfB',
+                scenario['primary'][0], scenario['primary'][1],
+                scenario['secondary'][0], scenario['secondary'][1],
+                scenario['tertiary'][0], scenario['tertiary'][1]
+            )
             
-            print(f"\n   Testing Status {pump_status}: {desc}")
-            print(f"   Sending: pressure={pressure} bar, pump{pump_num}_status={pump_status}")
-            print(f"   Raw bytes: {' '.join([f'{b:02X}' for b in data])}")
+            print(f"   Primary: {scenario['primary'][0]:.1f} bar, Status: {scenario['primary'][1]}")
+            print(f"   Secondary: {scenario['secondary'][0]:.1f} bar, Status: {scenario['secondary'][1]}")
+            print(f"   Tertiary: {scenario['tertiary'][0]:.1f} bar, Status: {scenario['tertiary'][1]}")
+            print(f"   Raw bytes ({len(data)}): {' '.join([f'{b:02X}' for b in data])}")
             
             # Write data
             bus.write_i2c_block_data(esp_addr, 0x00, list(data))
             
             print(f"   ✅ Data sent successfully!")
-            print(f"   💡 Watch the LEDs for 5 seconds...")
-            time.sleep(5)  # Observe animation
+            print(f"   💡 Watch ALL THREE flow LEDs for {scenario['duration']} seconds...")
+            
+            for i in range(scenario['duration']):
+                print(f"      {i+1}/{scenario['duration']}s", end='\r')
+                time.sleep(1)
+            print()
             
         except Exception as e:
             print(f"   ❌ Failed to write: {e}")
@@ -386,10 +422,9 @@ def test_esp_module(bus, pca_addr, module_id, config):
             time.sleep(0.2)
             read_success = test_esp_c_communication(bus, esp_addr)
             
-        elif protocol == 'visualizer':
-            # ESP-E/F/G protocol
-            pump_num = {'ESP-E': 1, 'ESP-F': 2, 'ESP-G': 3}.get(module_id, 1)
-            write_success = test_write_to_esp_visualizer(bus, esp_addr, pump_num)
+        elif protocol == 'three_flow_visualizer':
+            # ESP-E protocol (3 flows in one ESP)
+            write_success = test_write_to_esp_three_flow_visualizer(bus, esp_addr)
             time.sleep(0.2)
             read_success = test_read_from_esp_visualizer(bus, esp_addr)
     
@@ -402,9 +437,11 @@ def test_esp_module(bus, pca_addr, module_id, config):
 def test_esp_e_detailed(bus, pca_addr):
     """
     Detailed test khusus untuk ESP-E dengan debugging lengkap
+    ESP-E mengontrol 3 aliran sekaligus (Primary, Secondary, Tertiary)
     """
     print("\n" + "="*70)
-    print("  DETAILED TEST: ESP-E (Primary Flow Visualizer)")
+    print("  DETAILED TEST: ESP-E (3-Flow Visualizer)")
+    print("  Controls: Primary + Secondary + Tertiary Flows")
     print("="*70)
     
     esp_addr = 0x0A
@@ -431,26 +468,60 @@ def test_esp_e_detailed(bus, pca_addr):
     
     print(f"\n✅ ESP-E found at 0x{esp_addr:02X}")
     
-    # Step 3: Test each pump status with LED observation
-    print("\n--- Step 3: Test Animation with Different Pump Status ---")
+    # Step 3: Test 3-Flow control with various scenarios
+    print("\n--- Step 3: Test 3-Flow LED Animation ---")
     
-    pump_tests = [
-        (2, "ON", "Fast animation (100ms)", 8),
-        (1, "STARTING", "Slow animation (300ms)", 8),
-        (3, "SHUTTING_DOWN", "Very slow animation (500ms)", 8),
-        (0, "OFF", "All LEDs should turn OFF", 3),
+    flow_tests = [
+        {
+            'name': 'All Flows OFF',
+            'primary': (150.0, 0), 'secondary': (100.0, 0), 'tertiary': (50.0, 0),
+            'desc': 'All LEDs should be OFF', 'duration': 3
+        },
+        {
+            'name': 'Primary Flow ONLY (ON)',
+            'primary': (155.0, 2), 'secondary': (0.0, 0), 'tertiary': (0.0, 0),
+            'desc': 'Only Primary LEDs flowing (fast)', 'duration': 8
+        },
+        {
+            'name': 'Primary + Secondary Flows (ON)',
+            'primary': (155.0, 2), 'secondary': (105.0, 2), 'tertiary': (0.0, 0),
+            'desc': 'Primary & Secondary LEDs flowing', 'duration': 8
+        },
+        {
+            'name': 'All 3 Flows ON (Full Operation)',
+            'primary': (155.0, 2), 'secondary': (105.0, 2), 'tertiary': (55.0, 2),
+            'desc': 'All LEDs flowing (fast animation)', 'duration': 10
+        },
+        {
+            'name': 'All Flows STARTING (Slow)',
+            'primary': (150.0, 1), 'secondary': (100.0, 1), 'tertiary': (50.0, 1),
+            'desc': 'All LEDs slow animation (starting)', 'duration': 8
+        },
+        {
+            'name': 'All Flows SHUTTING DOWN',
+            'primary': (140.0, 3), 'secondary': (90.0, 3), 'tertiary': (40.0, 3),
+            'desc': 'All LEDs very slow animation', 'duration': 8
+        }
     ]
     
-    for pump_status, name, desc, duration in pump_tests:
-        print(f"\n>>> Test Pump Status {pump_status}: {name}")
-        print(f"    Expected: {desc}")
+    for test in flow_tests:
+        print(f"\n{'='*70}")
+        print(f">>> Test: {test['name']}")
+        print(f"    Expected: {test['desc']}")
+        print(f"{'='*70}")
         
         try:
-            # Send data
-            pressure = 150.0
-            data = struct.pack('fB', pressure, pump_status)
-            print(f"    Sending: pressure={pressure} bar, status={pump_status}")
-            print(f"    Raw bytes: {' '.join([f'{b:02X}' for b in data])}")
+            # Pack 15 bytes: 3 x (float pressure + byte status)
+            data = struct.pack('fBfBfB',
+                test['primary'][0], test['primary'][1],
+                test['secondary'][0], test['secondary'][1],
+                test['tertiary'][0], test['tertiary'][1]
+            )
+            
+            print(f"    Primary: {test['primary'][0]:.1f} bar, Status: {test['primary'][1]}")
+            print(f"    Secondary: {test['secondary'][0]:.1f} bar, Status: {test['secondary'][1]}")
+            print(f"    Tertiary: {test['tertiary'][0]:.1f} bar, Status: {test['tertiary'][1]}")
+            print(f"    Raw bytes ({len(data)}): {' '.join([f'{b:02X}' for b in data])}")
             
             bus.write_i2c_block_data(esp_addr, 0x00, list(data))
             print(f"    ✅ Data sent successfully!")
@@ -464,17 +535,10 @@ def test_esp_e_detailed(bus, pca_addr):
             
             print(f"    Response: animation_speed={anim_speed}, led_count={led_count}")
             
-            # Verify expected animation speed
-            expected_speeds = {0: 0, 1: 33, 2: 100, 3: 20}
-            if anim_speed == expected_speeds[pump_status]:
-                print(f"    ✅ Animation speed correct!")
-            else:
-                print(f"    ⚠️  Animation speed mismatch! Expected: {expected_speeds[pump_status]}")
-            
             # Observe animation
-            print(f"    💡 WATCH THE LEDs for {duration} seconds...")
-            for i in range(duration):
-                print(f"       {i+1}/{duration}s", end='\r')
+            print(f"    💡 WATCH ALL 3 FLOW LEDs for {test['duration']} seconds...")
+            for i in range(test['duration']):
+                print(f"       {i+1}/{test['duration']}s", end='\r')
                 time.sleep(1)
             print()
             
@@ -483,14 +547,14 @@ def test_esp_e_detailed(bus, pca_addr):
             return False
     
     print("\n" + "="*70)
-    print("  ESP-E TEST COMPLETED")
+    print("  ESP-E 3-FLOW TEST COMPLETED")
     print("="*70)
     return True
 
 def main():
     print("=" * 60)
     print("  PCA9548A + ESP32 Auto-Detection & Test")
-    print("  Supports: ESP-B, ESP-C, ESP-E, ESP-F, ESP-G")
+    print("  Supports: ESP-B, ESP-C, ESP-E (3-Flow Visualizer)")
     print("=" * 60)
     
     try:
