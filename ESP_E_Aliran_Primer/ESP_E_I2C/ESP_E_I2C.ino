@@ -26,7 +26,7 @@
 #define I2C_SLAVE_ADDRESS 0x0A
 
 // I2C Data Buffers
-#define RECEIVE_SIZE 16  // Python sends: 1 byte register + 15 bytes data (3 flows x 5 bytes)
+#define RECEIVE_SIZE 32  // Increased buffer size to accommodate any I2C variations
 #define DATA_SIZE 15     // Actual data: 3 x (4 bytes float + 1 byte status)
 #define SEND_SIZE 2
 
@@ -136,20 +136,34 @@ const uint8_t LED_COUNT = NUM_LEDS;
 void onReceiveData(int numBytes) {
     Serial.printf("[ISR] onReceive called: %d bytes\n", numBytes);
     
-    if (numBytes <= 0 || numBytes > RECEIVE_SIZE) {
+    if (numBytes <= 0) {
         Serial.printf("[ISR] Invalid numBytes: %d\n", numBytes);
         return;
     }
     
-    for (int i = 0; i < numBytes; i++) {
-        receiveBuffer[i] = Wire.read();
+    if (numBytes > RECEIVE_SIZE) {
+        Serial.printf("[ISR] WARNING: numBytes %d exceeds buffer size %d\n", numBytes, RECEIVE_SIZE);
+        // Read all bytes but only store what fits
+        for (int i = 0; i < numBytes; i++) {
+            if (i < RECEIVE_SIZE) {
+                receiveBuffer[i] = Wire.read();
+            } else {
+                Wire.read(); // Discard extra bytes
+            }
+        }
+        receiveLength = RECEIVE_SIZE;
+    } else {
+        for (int i = 0; i < numBytes; i++) {
+            receiveBuffer[i] = Wire.read();
+        }
+        receiveLength = numBytes;
     }
-    receiveLength = numBytes;
+    
     newDataFlag = true;
     
     // Debug raw bytes
     Serial.print("[ISR] Raw bytes: ");
-    for (int i = 0; i < numBytes; i++) {
+    for (int i = 0; i < receiveLength; i++) {
         Serial.printf("%02X ", receiveBuffer[i]);
     }
     Serial.println();
@@ -372,20 +386,25 @@ void loop() {
         Serial.println();
         
         // Parse received data for 3 flows
-        // Skip first byte (register address from Python), data starts at buf[1]
-        int dataStart = (receiveLength == 16) ? 1 : 0;  // Auto-detect format
+        // First byte is usually register address (0x00), skip it
+        int dataStart = 1;
         
-        // Parse Primary flow (bytes 0-4)
-        memcpy(&flows[0].pressure, &buf[dataStart], 4);
-        flows[0].pumpStatus = buf[dataStart + 4];
-        
-        // Parse Secondary flow (bytes 5-9)
-        memcpy(&flows[1].pressure, &buf[dataStart + 5], 4);
-        flows[1].pumpStatus = buf[dataStart + 9];
-        
-        // Parse Tertiary flow (bytes 10-14)
-        memcpy(&flows[2].pressure, &buf[dataStart + 10], 4);
-        flows[2].pumpStatus = buf[dataStart + 14];
+        // Check if we have enough bytes (need at least 16: 1 register + 15 data)
+        if (receiveLength < 16) {
+            Serial.printf("[LOOP] ERROR: Not enough data. Expected 16+ bytes, got %d\n", receiveLength);
+        } else {
+            // Parse Primary flow (bytes 1-5 after register)
+            memcpy(&flows[0].pressure, &buf[dataStart], 4);
+            flows[0].pumpStatus = buf[dataStart + 4];
+            
+            // Parse Secondary flow (bytes 6-10 after register)
+            memcpy(&flows[1].pressure, &buf[dataStart + 5], 4);
+            flows[1].pumpStatus = buf[dataStart + 9];
+            
+            // Parse Tertiary flow (bytes 11-15 after register)
+            memcpy(&flows[2].pressure, &buf[dataStart + 10], 4);
+            flows[2].pumpStatus = buf[dataStart + 14];
+        }
         
         // Debug output
         Serial.printf("[LOOP] Primary: %.1f bar | Status: %d\n", 

@@ -320,7 +320,8 @@ def test_write_to_esp_three_flow_visualizer(bus, esp_addr):
             # Primary: 4 bytes float + 1 byte status
             # Secondary: 4 bytes float + 1 byte status  
             # Tertiary: 4 bytes float + 1 byte status
-            data = struct.pack('fBfBfB',
+            # Use '<' for little-endian, no padding
+            data = struct.pack('<fBfBfB',
                 scenario['primary'][0], scenario['primary'][1],
                 scenario['secondary'][0], scenario['secondary'][1],
                 scenario['tertiary'][0], scenario['tertiary'][1]
@@ -514,7 +515,8 @@ def test_esp_e_detailed(bus, pca_addr):
         
         try:
             # Pack 15 bytes: 3 x (float pressure + byte status)
-            data = struct.pack('fBfBfB',
+            # Use '<' for little-endian, no padding
+            data = struct.pack('<fBfBfB',
                 test['primary'][0], test['primary'][1],
                 test['secondary'][0], test['secondary'][1],
                 test['tertiary'][0], test['tertiary'][1]

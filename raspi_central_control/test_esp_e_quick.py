@@ -8,6 +8,7 @@ import smbus2
 from smbus2 import i2c_msg
 import time
 import struct
+import sys
 
 # Konfigurasi
 I2C_BUS = 1
@@ -56,16 +57,25 @@ def test_esp_e_three_flows():
             print(f"Test: {name}")
             print(f"{'='*60}")
             
-            # Pack 15 bytes: 3 x (float + byte)
-            data = struct.pack('fBfBfB', p1, s1, p2, s2, p3, s3)
+            # Pack 15 bytes: 3 x (float + byte) - use '<' for little-endian, no padding
+            data = struct.pack('<fBfBfB', p1, s1, p2, s2, p3, s3)
+            
+            # Verify data size
+            if len(data) != 15:
+                print(f"⚠️  WARNING: Packed data is {len(data)} bytes, expected 15!")
+                print(f"   This may cause issues on ESP-E")
             
             print(f"Primary: {p1:.1f} bar, Status: {s1}")
             print(f"Secondary: {p2:.1f} bar, Status: {s2}")
             print(f"Tertiary: {p3:.1f} bar, Status: {s3}")
             print(f"Data ({len(data)} bytes): {' '.join([f'{b:02X}' for b in data])}")
             
+            # Prepare message with register
+            full_msg = [0x00] + list(data)
+            print(f"Full message ({len(full_msg)} bytes): {' '.join([f'{b:02X}' for b in full_msg])}")
+            
             # Send using i2c_msg (register 0x00 + 15 bytes data)
-            write_msg = i2c_msg.write(ESP_E_ADDR, [0x00] + list(data))
+            write_msg = i2c_msg.write(ESP_E_ADDR, full_msg)
             bus.i2c_rdwr(write_msg)
             
             print(f"✅ Sent! Watch LEDs for {duration}s...")
@@ -79,7 +89,7 @@ def test_esp_e_three_flows():
         # Turn off all
         print("\n" + "="*60)
         print("Turning off all flows...")
-        data = struct.pack('fBfBfB', 0.0, 0, 0.0, 0, 0.0, 0)
+        data = struct.pack('<fBfBfB', 0.0, 0, 0.0, 0, 0.0, 0)
         write_msg = i2c_msg.write(ESP_E_ADDR, [0x00] + list(data))
         bus.i2c_rdwr(write_msg)
         print("✅ All flows OFF")
