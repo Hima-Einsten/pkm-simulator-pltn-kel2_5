@@ -1,20 +1,27 @@
 /*
- * ESP-C I2C Slave - Turbin & Generator
+ * ESP-C I2C Slave - Turbine, Generator & Humidifier Control
  * 
  * I2C Slave Address: 0x09
  * 
- * Receives from Raspberry Pi:
- * - Rod 1 Position (uint8, 1 byte) 0-100%
- * - Rod 2 Position (uint8, 1 byte) 0-100%
- * - Rod 3 Position (uint8, 1 byte) 0-100%
- * Total: 3 bytes
+ * UPDATED PROTOCOL FOR HUMIDIFIER CONTROL:
  * 
- * Sends to Raspberry Pi:
+ * Receives from Raspberry Pi (11 bytes):
+ * - Rod 1 Position (uint8, 1 byte) - Safety Rod 0-100%
+ * - Rod 2 Position (uint8, 1 byte) - Shim Rod 0-100%
+ * - Rod 3 Position (uint8, 1 byte) - Regulating Rod 0-100%
+ * - Thermal Power kW (float, 4 bytes) - From ESP-B
+ * - Humidifier Steam Gen Command (uint8, 1 byte) - 0=OFF, 1=ON
+ * - Humidifier Cooling Tower Command (uint8, 1 byte) - 0=OFF, 1=ON
+ * Total: 11 bytes
+ * 
+ * Sends to Raspberry Pi (12 bytes):
  * - Power Level (float, 4 bytes) 0-100%
  * - State (uint32, 4 bytes) State machine state
  * - Generator Status (uint8, 1 byte)
  * - Turbine Status (uint8, 1 byte)
- * Total: 10 bytes
+ * - Humidifier Steam Gen Status (uint8, 1 byte)
+ * - Humidifier Cooling Tower Status (uint8, 1 byte)
+ * Total: 12 bytes
  */
 
 #include <Wire.h>
@@ -24,9 +31,9 @@
 // ============================================
 #define I2C_SLAVE_ADDRESS 0x09
 
-// I2C Data Buffers
-#define RECEIVE_SIZE 3
-#define SEND_SIZE 10
+// I2C Data Buffers - UPDATED SIZE
+#define RECEIVE_SIZE 12  // Was 3, now 12 (11 data + 1 register)
+#define SEND_SIZE 12     // Was 10, now 12
 
 volatile uint8_t receiveBuffer[RECEIVE_SIZE];
 volatile uint8_t receiveLength = 0;
@@ -37,16 +44,21 @@ uint8_t sendBuffer[SEND_SIZE];
 // ============================================
 // Hardware Configuration
 // ============================================
-// Relay & Motor Pins
-#define RELAY_STEAM_GEN 25
-#define RELAY_TURBINE 26
-#define RELAY_CONDENSER 27
-#define RELAY_COOLING_TOWER 14
+// Relay Pins
+#define RELAY_STEAM_GEN 25              // Main steam generator (turbine steam)
+#define RELAY_TURBINE 26                // Turbine
+#define RELAY_CONDENSER 27              // Condenser
+#define RELAY_COOLING_TOWER 14          // Cooling tower (was used for tower, now free)
 
+// NEW: Humidifier Relay Pins
+#define RELAY_HUMIDIFIER_STEAM_GEN 32   // Humidifier di Steam Generator
+#define RELAY_HUMIDIFIER_COOLING_TOWER 33  // Humidifier di Cooling Tower
+
+// Motor PWM Pins
 #define MOTOR_STEAM_GEN_PIN 12
 #define MOTOR_TURBINE_PIN 13
-#define MOTOR_CONDENSER_PIN 32
-#define MOTOR_COOLING_PIN 33
+#define MOTOR_CONDENSER_PIN 15
+#define MOTOR_COOLING_PIN 4
 
 // ============================================
 // State Machine
@@ -64,30 +76,45 @@ SystemState currentState = STATE_IDLE;
 // System Variables
 // ============================================
 struct {
-    uint8_t rod1Pos;
-    uint8_t rod2Pos;
-    uint8_t rod3Pos;
+    uint8_t rod1Pos;      // Safety Rod
+    uint8_t rod2Pos;      // Shim Rod
+    uint8_t rod3Pos;      // Regulating Rod
+    float thermalPowerKW; // Thermal power from ESP-B
+    uint8_t humidifierSteamGenCmd;     // Command from RasPi
+    uint8_t humidifierCoolingTowerCmd; // Command from RasPi
 } masterData;
 
 float powerLevel = 0.0;
 uint8_t generatorStatus = 0;
 uint8_t turbineStatus = 0;
+uint8_t humidifierSteamGenStatus = 0;      // NEW
+uint8_t humidifierCoolingTowerStatus = 0;  // NEW
 
 unsigned long lastUpdate = 0;
 const unsigned long UPDATE_INTERVAL = 100;
 
 // ============================================
-// I2C Callback Functions (ISR - Keep Simple!)
+// I2C Callback Functions
 // ============================================
 
 void onReceiveData(int numBytes) {
-    if (numBytes <= 0 || numBytes > RECEIVE_SIZE) return;
+    if (numBytes <= 0 || numBytes > RECEIVE_SIZE) {
+        Serial.printf("Invalid numBytes: %d\n", numBytes);
+        return;
+    }
     
     for (int i = 0; i < numBytes; i++) {
         receiveBuffer[i] = Wire.read();
     }
     receiveLength = numBytes;
     newDataFlag = true;
+    
+    // Debug
+    Serial.print("Received: ");
+    for (int i = 0; i < numBytes; i++) {
+        Serial.printf("%02X ", receiveBuffer[i]);
+    }
+    Serial.println();
 }
 
 void onRequestData() {
@@ -106,9 +133,11 @@ void prepareSendData() {
     uint32_t state = (uint32_t)currentState;
     memcpy(&sendBuffer[4], &state, 4);
     
-    // Generator & Turbine Status (2 bytes)
+    // Status bytes
     sendBuffer[8] = generatorStatus;
     sendBuffer[9] = turbineStatus;
+    sendBuffer[10] = humidifierSteamGenStatus;         // NEW
+    sendBuffer[11] = humidifierCoolingTowerStatus;     // NEW
 }
 
 // ============================================
@@ -126,7 +155,7 @@ void updateStateMachine() {
         case STATE_IDLE:
             if (targetPower > 10.0) {
                 currentState = STATE_STARTING_UP;
-                Serial.println("Starting up...");
+                Serial.println("State: STARTING_UP");
             }
             powerLevel = 0.0;
             break;
@@ -137,7 +166,7 @@ void updateStateMachine() {
                 powerLevel += 2.0;
                 if (powerLevel >= targetPower) {
                     currentState = STATE_RUNNING;
-                    Serial.println("Running");
+                    Serial.println("State: RUNNING");
                 }
             }
             break;
@@ -146,7 +175,7 @@ void updateStateMachine() {
             // Track target power
             if (targetPower < 5.0) {
                 currentState = STATE_SHUTTING_DOWN;
-                Serial.println("Shutting down...");
+                Serial.println("State: SHUTTING_DOWN");
             } else {
                 powerLevel = targetPower;
             }
@@ -159,7 +188,7 @@ void updateStateMachine() {
                 if (powerLevel <= 0.0) {
                     powerLevel = 0.0;
                     currentState = STATE_IDLE;
-                    Serial.println("Idle");
+                    Serial.println("State: IDLE");
                 }
             }
             break;
@@ -171,10 +200,12 @@ void updateStateMachine() {
 }
 
 void updateOutputs() {
-    // Control relays and motors based on power level
+    // ========================================
+    // Main Power Generation Components
+    // ========================================
     
+    // Steam Generator (main turbine steam)
     if (powerLevel > 20.0) {
-        // Steam Generator
         digitalWrite(RELAY_STEAM_GEN, HIGH);
         analogWrite(MOTOR_STEAM_GEN_PIN, map(powerLevel, 0, 100, 0, 255));
         generatorStatus = 1;
@@ -184,8 +215,8 @@ void updateOutputs() {
         generatorStatus = 0;
     }
     
+    // Turbine
     if (powerLevel > 30.0) {
-        // Turbine
         digitalWrite(RELAY_TURBINE, HIGH);
         analogWrite(MOTOR_TURBINE_PIN, map(powerLevel, 0, 100, 0, 255));
         turbineStatus = 1;
@@ -195,8 +226,8 @@ void updateOutputs() {
         turbineStatus = 0;
     }
     
+    // Condenser
     if (powerLevel > 20.0) {
-        // Condenser
         digitalWrite(RELAY_CONDENSER, HIGH);
         analogWrite(MOTOR_CONDENSER_PIN, map(powerLevel, 0, 100, 0, 255));
     } else {
@@ -204,13 +235,39 @@ void updateOutputs() {
         analogWrite(MOTOR_CONDENSER_PIN, 0);
     }
     
+    // Cooling Tower (main cooling)
     if (powerLevel > 15.0) {
-        // Cooling Tower
         digitalWrite(RELAY_COOLING_TOWER, HIGH);
         analogWrite(MOTOR_COOLING_PIN, map(powerLevel, 0, 100, 0, 255));
     } else {
         digitalWrite(RELAY_COOLING_TOWER, LOW);
         analogWrite(MOTOR_COOLING_PIN, 0);
+    }
+    
+    // ========================================
+    // HUMIDIFIER CONTROL (NEW!)
+    // ========================================
+    
+    // Humidifier di Steam Generator
+    // Command dari Raspberry Pi berdasarkan Shim + Regulating Rod
+    if (masterData.humidifierSteamGenCmd == 1) {
+        digitalWrite(RELAY_HUMIDIFIER_STEAM_GEN, HIGH);
+        humidifierSteamGenStatus = 1;
+        Serial.println("Humidifier Steam Gen: ON");
+    } else {
+        digitalWrite(RELAY_HUMIDIFIER_STEAM_GEN, LOW);
+        humidifierSteamGenStatus = 0;
+    }
+    
+    // Humidifier di Cooling Tower
+    // Command dari Raspberry Pi berdasarkan Thermal Power (kW)
+    if (masterData.humidifierCoolingTowerCmd == 1) {
+        digitalWrite(RELAY_HUMIDIFIER_COOLING_TOWER, HIGH);
+        humidifierCoolingTowerStatus = 1;
+        Serial.println("Humidifier Cooling Tower: ON");
+    } else {
+        digitalWrite(RELAY_HUMIDIFIER_COOLING_TOWER, LOW);
+        humidifierCoolingTowerStatus = 0;
     }
 }
 
@@ -222,19 +279,27 @@ void setup() {
     Serial.begin(115200);
     delay(300);
     
-    Serial.println("\nESP-C I2C Slave Starting...");
+    Serial.println("\n================================");
+    Serial.println("ESP-C I2C Slave + Humidifier Control");
+    Serial.println("================================");
     
     // Initialize I2C as Slave
     Wire.begin(I2C_SLAVE_ADDRESS);
     Wire.onReceive(onReceiveData);
     Wire.onRequest(onRequestData);
-    Serial.printf("I2C Slave initialized at address 0x%02X\n", I2C_SLAVE_ADDRESS);
+    Serial.printf("I2C: Address 0x%02X\n", I2C_SLAVE_ADDRESS);
+    Serial.printf("Receive: %d bytes\n", RECEIVE_SIZE);
+    Serial.printf("Send: %d bytes\n", SEND_SIZE);
     
-    // Initialize relay pins
+    // Initialize main relay pins
     pinMode(RELAY_STEAM_GEN, OUTPUT);
     pinMode(RELAY_TURBINE, OUTPUT);
     pinMode(RELAY_CONDENSER, OUTPUT);
     pinMode(RELAY_COOLING_TOWER, OUTPUT);
+    
+    // Initialize humidifier relay pins (NEW)
+    pinMode(RELAY_HUMIDIFIER_STEAM_GEN, OUTPUT);
+    pinMode(RELAY_HUMIDIFIER_COOLING_TOWER, OUTPUT);
     
     // Initialize motor pins
     pinMode(MOTOR_STEAM_GEN_PIN, OUTPUT);
@@ -247,11 +312,16 @@ void setup() {
     digitalWrite(RELAY_TURBINE, LOW);
     digitalWrite(RELAY_CONDENSER, LOW);
     digitalWrite(RELAY_COOLING_TOWER, LOW);
+    digitalWrite(RELAY_HUMIDIFIER_STEAM_GEN, LOW);
+    digitalWrite(RELAY_HUMIDIFIER_COOLING_TOWER, LOW);
     
-    // Prepare initial send buffer
-    prepareSendData();
+    analogWrite(MOTOR_STEAM_GEN_PIN, 0);
+    analogWrite(MOTOR_TURBINE_PIN, 0);
+    analogWrite(MOTOR_CONDENSER_PIN, 0);
+    analogWrite(MOTOR_COOLING_PIN, 0);
     
-    Serial.println("I2C Ready. Waiting for Raspberry Pi...");
+    Serial.println("Hardware initialized");
+    Serial.println("Waiting for Raspberry Pi...\n");
 }
 
 // ============================================
@@ -259,38 +329,42 @@ void setup() {
 // ============================================
 
 void loop() {
-    // Process received data from Raspberry Pi
+    // Process received data
     if (newDataFlag) {
         newDataFlag = false;
         
-        // Copy to local buffer to avoid volatile issues
+        // Copy to local buffer
         uint8_t buf[RECEIVE_SIZE];
         memcpy(buf, (const void*)receiveBuffer, RECEIVE_SIZE);
         
-        // Parse received rod positions
-        masterData.rod1Pos = buf[0];
-        masterData.rod2Pos = buf[1];
-        masterData.rod3Pos = buf[2];
+        // Parse data (skip first byte if it's register address)
+        int offset = (receiveLength == 12) ? 1 : 0;
         
-        Serial.println("\n--- DATA RECEIVED FROM RASPBERRY ---");
-        Serial.printf("Rod1: %d%%\n", masterData.rod1Pos);
-        Serial.printf("Rod2: %d%%\n", masterData.rod2Pos);
-        Serial.printf("Rod3: %d%%\n", masterData.rod3Pos);
+        // Parse 11 bytes of data
+        masterData.rod1Pos = buf[offset + 0];
+        masterData.rod2Pos = buf[offset + 1];
+        masterData.rod3Pos = buf[offset + 2];
+        memcpy(&masterData.thermalPowerKW, &buf[offset + 3], 4);
+        masterData.humidifierSteamGenCmd = buf[offset + 7];
+        masterData.humidifierCoolingTowerCmd = buf[offset + 8];
+        
+        // Debug
+        Serial.printf("Rods: S=%d%% H=%d%% R=%d%% | Thermal: %.1f kW | Humid: SG=%d CT=%d\n",
+            masterData.rod1Pos, masterData.rod2Pos, masterData.rod3Pos,
+            masterData.thermalPowerKW,
+            masterData.humidifierSteamGenCmd,
+            masterData.humidifierCoolingTowerCmd
+        );
     }
     
-    // Update state machine periodically
+    // Update system periodically
     if (millis() - lastUpdate >= UPDATE_INTERVAL) {
+        lastUpdate = millis();
+        
         updateStateMachine();
         updateOutputs();
         prepareSendData();
-        lastUpdate = millis();
-        
-        // Debug output
-        Serial.println("--- RESPONSE UPDATED ---");
-        Serial.printf("Power: %.1f%% | State: %d | Gen: %d | Turb: %d\n",
-                      powerLevel, currentState, generatorStatus, turbineStatus);
     }
     
-    // Prevent watchdog reset
-    delay(100);
+    delay(10);
 }
