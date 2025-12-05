@@ -15,7 +15,7 @@ from typing import Optional
 import raspi_config as config
 from raspi_tca9548a import DualMultiplexerManager
 from raspi_i2c_master import I2CMaster
-from raspi_gpio_buttons import ButtonManager
+from raspi_gpio_buttons import ButtonHandler as ButtonManager
 from raspi_humidifier_control import HumidifierController
 
 # Try to import GPIO library
@@ -127,31 +127,33 @@ class PLTNPanelController:
     def init_buttons(self):
         """Initialize button manager with 15 buttons"""
         try:
+            from raspi_gpio_buttons import ButtonPin
+            
             self.button_manager = ButtonManager()
             
-            # Register button callbacks
+            # Register button callbacks using ButtonPin enum
             # Pressure control
-            self.button_manager.register_callback("PRES_UP", self.on_pressure_up)
-            self.button_manager.register_callback("PRES_DOWN", self.on_pressure_down)
+            self.button_manager.register_callback(ButtonPin.PRESSURE_UP, self.on_pressure_up)
+            self.button_manager.register_callback(ButtonPin.PRESSURE_DOWN, self.on_pressure_down)
             
             # Pump controls
-            self.button_manager.register_callback("PUMP_PRIM_ON", self.on_pump_primary_on)
-            self.button_manager.register_callback("PUMP_PRIM_OFF", self.on_pump_primary_off)
-            self.button_manager.register_callback("PUMP_SEC_ON", self.on_pump_secondary_on)
-            self.button_manager.register_callback("PUMP_SEC_OFF", self.on_pump_secondary_off)
-            self.button_manager.register_callback("PUMP_TER_ON", self.on_pump_tertiary_on)
-            self.button_manager.register_callback("PUMP_TER_OFF", self.on_pump_tertiary_off)
+            self.button_manager.register_callback(ButtonPin.PUMP_PRIMARY_ON, self.on_pump_primary_on)
+            self.button_manager.register_callback(ButtonPin.PUMP_PRIMARY_OFF, self.on_pump_primary_off)
+            self.button_manager.register_callback(ButtonPin.PUMP_SECONDARY_ON, self.on_pump_secondary_on)
+            self.button_manager.register_callback(ButtonPin.PUMP_SECONDARY_OFF, self.on_pump_secondary_off)
+            self.button_manager.register_callback(ButtonPin.PUMP_TERTIARY_ON, self.on_pump_tertiary_on)
+            self.button_manager.register_callback(ButtonPin.PUMP_TERTIARY_OFF, self.on_pump_tertiary_off)
             
             # Rod controls
-            self.button_manager.register_callback("SAFETY_UP", self.on_safety_rod_up)
-            self.button_manager.register_callback("SAFETY_DOWN", self.on_safety_rod_down)
-            self.button_manager.register_callback("SHIM_UP", self.on_shim_rod_up)
-            self.button_manager.register_callback("SHIM_DOWN", self.on_shim_rod_down)
-            self.button_manager.register_callback("REG_UP", self.on_regulating_rod_up)
-            self.button_manager.register_callback("REG_DOWN", self.on_regulating_rod_down)
+            self.button_manager.register_callback(ButtonPin.SAFETY_ROD_UP, self.on_safety_rod_up)
+            self.button_manager.register_callback(ButtonPin.SAFETY_ROD_DOWN, self.on_safety_rod_down)
+            self.button_manager.register_callback(ButtonPin.SHIM_ROD_UP, self.on_shim_rod_up)
+            self.button_manager.register_callback(ButtonPin.SHIM_ROD_DOWN, self.on_shim_rod_down)
+            self.button_manager.register_callback(ButtonPin.REGULATING_ROD_UP, self.on_regulating_rod_up)
+            self.button_manager.register_callback(ButtonPin.REGULATING_ROD_DOWN, self.on_regulating_rod_down)
             
             # Emergency button
-            self.button_manager.register_callback("EMERGENCY", self.on_emergency)
+            self.button_manager.register_callback(ButtonPin.EMERGENCY, self.on_emergency)
             
             logger.info("Button manager initialized with 15 buttons")
         except Exception as e:
@@ -437,7 +439,7 @@ class PLTNPanelController:
         
         while self.state.running:
             try:
-                self.button_manager.poll()
+                self.button_manager.check_all_buttons()
                 time.sleep(0.01)  # 10ms
                 
             except Exception as e:

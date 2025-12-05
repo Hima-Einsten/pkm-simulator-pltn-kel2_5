@@ -33,8 +33,18 @@ def test_imports():
         logger.info(f"  - ESP_E_Data: {ESP_E_Data.__name__}")
         
         logger.info("Importing raspi_gpio_buttons...")
-        from raspi_gpio_buttons import ButtonManager
-        logger.info("✓ raspi_gpio_buttons imported (may warn about GPIO)")
+        try:
+            from raspi_gpio_buttons import ButtonHandler as ButtonManager
+            logger.info("✓ raspi_gpio_buttons imported")
+        except RuntimeError as e:
+            # GPIO not available (running on PC)
+            logger.warning(f"⚠ raspi_gpio_buttons: {e} (OK for PC testing)")
+            # Create dummy class for testing
+            class ButtonManager:
+                def __init__(self): pass
+                def register_callback(self, pin, cb): pass
+                def check_all_buttons(self): pass
+                def cleanup(self): pass
         
         logger.info("Importing raspi_humidifier_control...")
         from raspi_humidifier_control import HumidifierController
