@@ -17,13 +17,17 @@ class HumidifierController:
     - Cooling Tower: Based on thermal power output
     """
     
-    def __init__(self, config):
+    def __init__(self, config=None):
         """
         Initialize humidifier controller
         
         Args:
-            config: Configuration dict with thresholds
+            config: Optional configuration dict with thresholds
         """
+        # Use config if provided, otherwise use defaults
+        if config is None:
+            config = {}
+        
         # Thresholds for Steam Generator Humidifier
         self.sg_shim_rod_threshold = config.get('sg_shim_rod_threshold', 40.0)  # 40%
         self.sg_reg_rod_threshold = config.get('sg_reg_rod_threshold', 40.0)    # 40%
@@ -124,8 +128,30 @@ class HumidifierController:
         self.cooling_tower_humidifier = new_state
         return new_state
     
+    def update(self, shim_rod, regulating_rod, thermal_power_kw):
+        """
+        Update both humidifiers based on current system state
+        
+        Args:
+            shim_rod: Shim rod position (0-100%)
+            regulating_rod: Regulating rod position (0-100%)
+            thermal_power_kw: Thermal power in kW
+            
+        Returns:
+            tuple: (steam_gen_on, cooling_tower_on) as (bool, bool)
+        """
+        # Update Steam Generator humidifier (based on Shim + Regulating rods)
+        sg_on = self.update_steam_gen_humidifier(shim_rod, regulating_rod)
+        
+        # Update Cooling Tower humidifier (based on thermal power)
+        ct_on = self.update_cooling_tower_humidifier(thermal_power_kw)
+        
+        # Return as boolean tuple
+        return (sg_on, ct_on)
+    
     def update_all(self, safety_rod, shim_rod, regulating_rod, thermal_power_kw):
         """
+        DEPRECATED: Use update() instead (safety_rod not needed)
         Update both humidifiers based on current system state
         
         Args:
@@ -137,14 +163,8 @@ class HumidifierController:
         Returns:
             tuple: (steam_gen_command, cooling_tower_command) as (0/1, 0/1)
         """
-        # Update Steam Generator humidifier (based on Shim + Regulating rods)
-        sg_cmd = self.update_steam_gen_humidifier(shim_rod, regulating_rod)
-        
-        # Update Cooling Tower humidifier (based on thermal power)
-        ct_cmd = self.update_cooling_tower_humidifier(thermal_power_kw)
-        
-        # Return as 0/1 commands for ESP-C
-        return (1 if sg_cmd else 0, 1 if ct_cmd else 0)
+        sg_on, ct_on = self.update(shim_rod, regulating_rod, thermal_power_kw)
+        return (1 if sg_on else 0, 1 if ct_on else 0)
     
     def get_status(self):
         """

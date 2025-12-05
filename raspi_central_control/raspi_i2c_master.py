@@ -1,6 +1,6 @@
 """
-I2C Master Communication Module
-Handles communication with all ESP32 slaves
+I2C Master Communication Module - 2 ESP Architecture
+Handles communication with 2 ESP32 slaves (ESP-BC and ESP-E)
 """
 
 import smbus2
@@ -14,32 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ESP_B_Data:
-    """Data structure for ESP-B (Batang Kendali & Reaktor)"""
-    # To ESP-B (NEW PROTOCOL: only target rod positions)
-    safety_target: int = 0      # Safety rod target (0-100%)
-    shim_target: int = 0         # Shim rod target (0-100%)
-    regulating_target: int = 0   # Regulating rod target (0-100%)
+class ESP_BC_Data:
+    """Data structure for ESP-BC (Control Rods + Turbine + Humidifier) - MERGED"""
+    # To ESP-BC
+    safety_target: int = 0
+    shim_target: int = 0
+    regulating_target: int = 0
+    humidifier_sg_cmd: int = 0
+    humidifier_ct_cmd: int = 0
     
-    # From ESP-B
-    safety_actual: int = 0       # Safety rod actual (0-100%)
-    shim_actual: int = 0         # Shim rod actual (0-100%)
-    regulating_actual: int = 0   # Regulating rod actual (0-100%)
-    kw_thermal: float = 0.0      # Thermal power (kW)
-
-
-@dataclass
-class ESP_C_Data:
-    """Data structure for ESP-C (Turbin & Generator)"""
-    # To ESP-C (NEW: includes humidifier commands)
-    safety_pos: int = 0           # Safety rod position (0-100%)
-    shim_pos: int = 0             # Shim rod position (0-100%)
-    regulating_pos: int = 0       # Regulating rod position (0-100%)
-    thermal_kw: float = 0.0       # Thermal power (kW)
-    humidifier_sg_cmd: int = 0    # SG humidifier command (0=OFF, 1=ON)
-    humidifier_ct_cmd: int = 0    # CT humidifier command (0=OFF, 1=ON)
-    
-    # From ESP-C
+    # From ESP-BC
+    safety_actual: int = 0
+    shim_actual: int = 0
+    regulating_actual: int = 0
+    kw_thermal: float = 0.0
     power_level: float = 0.0
     state: int = 0
     generator_status: int = 0
@@ -49,20 +37,26 @@ class ESP_C_Data:
 
 
 @dataclass
-class ESP_Visualizer_Data:
-    """Data structure for ESP-E/F/G (Visualizer)"""
-    # To ESP
-    pressure: float = 0.0
-    pump_status: int = 0
+class ESP_E_Data:
+    """Data structure for ESP-E (3-Flow LED Visualizer)"""
+    # To ESP-E
+    pressure_primary: float = 0.0
+    pump_status_primary: int = 0
+    pressure_secondary: float = 0.0
+    pump_status_secondary: int = 0
+    pressure_tertiary: float = 0.0
+    pump_status_tertiary: int = 0
     
-    # From ESP
+    # From ESP-E
     animation_speed: int = 0
     led_count: int = 0
 
 
 class I2CMaster:
     """
-    I2C Master for communicating with ESP32 slaves
+    I2C Master for communicating with 2 ESP32 slaves
+    - ESP-BC (0x08): Control rods + Turbine + Humidifier
+    - ESP-E (0x0A): 48 LED visualizer
     """
     
     def __init__(self, bus_number: int, mux_select_callback=None):
@@ -78,23 +72,18 @@ class I2CMaster:
         
         try:
             self.bus = smbus2.SMBus(bus_number)
-            logger.info(f"I2C Master initialized on bus {bus_number}")
+            logger.info(f"I2C Master initialized on bus {bus_number} (2 ESP Architecture)")
         except Exception as e:
             logger.error(f"Failed to initialize I2C Master: {e}")
             raise
         
-        # Data storage (SIMPLIFIED - Only 3 ESP)
-        self.esp_b_data = ESP_B_Data()
-        self.esp_c_data = ESP_C_Data()
-        self.esp_e_data = ESP_Visualizer_Data()  # Now handles all 3 flows
+        # Data storage (Only 2 ESP)
+        self.esp_bc_data = ESP_BC_Data()
+        self.esp_e_data = ESP_E_Data()
         
         # Error tracking
-        self.error_counts = {
-            0x08: 0, 0x09: 0, 0x0A: 0
-        }
-        self.last_comm_time = {
-            0x08: 0, 0x09: 0, 0x0A: 0
-        }
+        self.error_counts = {0x08: 0, 0x0A: 0}
+        self.last_comm_time = {0x08: 0, 0x0A: 0}
     
     def write_read_with_retry(self, address: int, write_data: bytes, 
                                read_length: int, retry_count: int = 3) -> Optional[bytes]:
@@ -152,191 +141,90 @@ class I2CMaster:
         return None
     
     # ============================================
-    # ESP-B Communication (Batang Kendali)
+    # ESP-BC Communication (Control Rods + Turbine + Humidifier)
     # ============================================
     
-    def send_rod_targets_to_esp_b(self, safety: int, shim: int, regulating: int) -> bool:
+    def update_esp_bc(self, safety: int, shim: int, regulating: int,
+                      humid_sg_cmd: int, humid_ct_cmd: int) -> bool:
         """
-        Send target rod positions to ESP-B (NEW PROTOCOL)
+        Send rod positions and humidifier commands to ESP-BC
         
         Args:
-            safety: Safety rod target position (0-100%)
-            shim: Shim rod target position (0-100%)
-            regulating: Regulating rod target position (0-100%)
+            safety: Safety rod target (0-100%)
+            shim: Shim rod target (0-100%)
+            regulating: Regulating rod target (0-100%)
+            humid_sg_cmd: Steam Generator humidifier command (0/1)
+            humid_ct_cmd: Cooling Tower humidifier command (0/1)
             
         Returns:
             True if successful, False otherwise
         """
         if self.mux_select:
-            self.mux_select(0)  # Select ESP-B channel
+            self.mux_select(0)  # Select ESP-BC channel
         
         try:
             # Update internal state
-            self.esp_b_data.safety_target = safety
-            self.esp_b_data.shim_target = shim
-            self.esp_b_data.regulating_target = regulating
+            self.esp_bc_data.safety_target = safety
+            self.esp_bc_data.shim_target = shim
+            self.esp_bc_data.regulating_target = regulating
+            self.esp_bc_data.humidifier_sg_cmd = humid_sg_cmd
+            self.esp_bc_data.humidifier_ct_cmd = humid_ct_cmd
             
-            # Pack data: 3 bytes (target positions)
-            write_data = struct.pack('<BBB', safety, shim, regulating)
+            # Pack data: 12 bytes
+            write_data = struct.pack('<BBBBfBBBB',
+                                    safety, shim, regulating, 0,
+                                    0.0,  # Reserved float
+                                    humid_sg_cmd, humid_ct_cmd,
+                                    0, 0)  # Reserved bytes
             
-            # Read response: 16 bytes (3 x uint8 positions, 1 reserved, 3 x float)
-            response = self.write_read_with_retry(0x08, write_data, 16)
-            
-            if response:
-                # Unpack response
-                values = struct.unpack('<BBBBfff', response)
-                self.esp_b_data.safety_actual = values[0]
-                self.esp_b_data.shim_actual = values[1]
-                self.esp_b_data.regulating_actual = values[2]
-                # values[3] is reserved
-                self.esp_b_data.kw_thermal = values[4]
-                
-                logger.debug(f"ESP-B: Targets=[{safety},{shim},{regulating}], "
-                           f"Actual=[{values[0]},{values[1]},{values[2]}], "
-                           f"Thermal={values[4]:.1f} kW")
-                return True
-            
-        except Exception as e:
-            logger.error(f"Error sending rod targets to ESP-B: {e}")
-        
-        return False
-    
-    def update_esp_b(self, pressure: float, pump1_status: int, pump2_status: int) -> bool:
-        """
-        DEPRECATED: Old protocol. Use send_rod_targets_to_esp_b() instead.
-        Kept for backward compatibility.
-        """
-        logger.warning("update_esp_b() is deprecated. Use send_rod_targets_to_esp_b()")
-        return False
-    
-    def get_esp_b_data(self) -> ESP_B_Data:
-        """Get latest data from ESP-B"""
-        return self.esp_b_data
-    
-    # ============================================
-    # ESP-C Communication (Turbin & Generator)
-    # ============================================
-    
-    def send_to_esp_c_with_humidifier(self, safety: int, shim: int, regulating: int,
-                                       thermal_kw: float, sg_cmd: int, ct_cmd: int) -> bool:
-        """
-        Send rod positions, thermal power, and humidifier commands to ESP-C (NEW PROTOCOL)
-        
-        Args:
-            safety, shim, regulating: Rod positions (0-100%)
-            thermal_kw: Thermal power (kW)
-            sg_cmd: SG humidifier command (0=OFF, 1=ON)
-            ct_cmd: CT humidifier command (0=OFF, 1=ON)
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        if self.mux_select:
-            self.mux_select(1)  # Select ESP-C channel
-        
-        try:
-            # Update internal state
-            self.esp_c_data.safety_pos = safety
-            self.esp_c_data.shim_pos = shim
-            self.esp_c_data.regulating_pos = regulating
-            self.esp_c_data.thermal_kw = thermal_kw
-            self.esp_c_data.humidifier_sg_cmd = sg_cmd
-            self.esp_c_data.humidifier_ct_cmd = ct_cmd
-            
-            # Pack data: 3 x uint8 (rods) + float (thermal) + 2 x uint8 (humidifier) = 12 bytes
-            write_data = struct.pack('<BBBfBB', safety, shim, regulating, 
-                                    thermal_kw, sg_cmd, ct_cmd)
-            
-            # Read response: float (power), uint32 (state), 4 x uint8 (status) = 12 bytes
-            response = self.write_read_with_retry(0x09, write_data, 12)
+            # Read response: 20 bytes
+            response = self.write_read_with_retry(0x08, write_data, 20)
             
             if response:
                 # Unpack response
-                values = struct.unpack('<fIBBBB', response)
-                self.esp_c_data.power_level = values[0]
-                self.esp_c_data.state = values[1]
-                self.esp_c_data.generator_status = values[2]
-                self.esp_c_data.turbine_status = values[3]
-                self.esp_c_data.humidifier_sg_status = values[4]
-                self.esp_c_data.humidifier_ct_status = values[5]
+                values = struct.unpack('<BBBBffIBBBB', response)
+                self.esp_bc_data.safety_actual = values[0]
+                self.esp_bc_data.shim_actual = values[1]
+                self.esp_bc_data.regulating_actual = values[2]
+                # values[3] reserved
+                self.esp_bc_data.kw_thermal = values[4]
+                self.esp_bc_data.power_level = values[5]
+                self.esp_bc_data.state = values[6]
+                self.esp_bc_data.generator_status = values[7]
+                self.esp_bc_data.turbine_status = values[8]
+                self.esp_bc_data.humidifier_sg_status = values[9]
+                self.esp_bc_data.humidifier_ct_status = values[10]
                 
-                logger.debug(f"ESP-C: Rods=[{safety},{shim},{regulating}], "
-                           f"Thermal={thermal_kw:.1f}kW, "
-                           f"Humid=[SG:{sg_cmd}→{values[4]}, CT:{ct_cmd}→{values[5]}], "
-                           f"Power={values[0]:.1f}%")
+                logger.debug(f"ESP-BC: Rods=[{values[0]},{values[1]},{values[2]}], "
+                           f"Thermal={values[4]:.1f}kW, Power={values[5]:.1f}%, "
+                           f"Humid=[SG:{values[9]}, CT:{values[10]}]")
                 return True
             
         except Exception as e:
-            logger.error(f"Error sending to ESP-C with humidifier: {e}")
+            logger.error(f"Error updating ESP-BC: {e}")
         
         return False
     
-    def update_esp_c(self, rod1: int, rod2: int, rod3: int) -> bool:
-        """
-        DEPRECATED: Old protocol. Use send_to_esp_c_with_humidifier() instead.
-        Kept for backward compatibility.
-        """
-        logger.warning("update_esp_c() is deprecated. Use send_to_esp_c_with_humidifier()")
-        return self.send_to_esp_c_with_humidifier(rod1, rod2, rod3, 0.0, 0, 0)
+    def get_esp_bc_data(self) -> ESP_BC_Data:
+        """Get latest data from ESP-BC"""
+        return self.esp_bc_data
     
-    def get_esp_c_data(self) -> ESP_C_Data:
-        """Get latest data from ESP-C"""
-        return self.esp_c_data
+
     
     # ============================================
-    # ESP-E/F/G Communication (Visualizers)
+    # ESP-E Communication (3-Flow LED Visualizer)
     # ============================================
     
-    def update_visualizer(self, esp_address: int, channel: int, 
-                         pressure: float, pump_status: int) -> bool:
+    def update_esp_e(self, 
+                    pressure_primary: float, pump_status_primary: int,
+                    pressure_secondary: float, pump_status_secondary: int,
+                    pressure_tertiary: float, pump_status_tertiary: int) -> bool:
         """
-        Send data to visualizer ESP (LEGACY - single flow)
-        For backward compatibility with separate ESP-E/F/G
-        
-        Args:
-            esp_address: ESP I2C address (0x0A/0x0B/0x0C)
-            channel: TCA9548A channel
-            pressure: Pressure value
-            pump_status: Pump status
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        if self.mux_select:
-            self.mux_select(channel)
-        
-        try:
-            # Pack data: float, uint8
-            write_data = struct.pack('<fB', pressure, pump_status)
-            
-            # Read response: 2 x uint8 (optional, for debugging)
-            response = self.write_read_with_retry(esp_address, write_data, 2)
-            
-            if response:
-                values = struct.unpack('<BB', response)
-                
-                # Store data based on address
-                if esp_address == 0x0A:
-                    self.esp_e_data.animation_speed = values[0]
-                    self.esp_e_data.led_count = values[1]
-                    logger.debug(f"ESP-E (single flow): Speed={values[0]}, LEDs={values[1]}")
-                return True
-            
-        except Exception as e:
-            logger.error(f"Error updating ESP 0x{esp_address:02X}: {e}")
-        
-        return False
-    
-    def update_all_visualizers(self, 
-                              pressure_primary: float, pump_status_primary: int,
-                              pressure_secondary: float, pump_status_secondary: int,
-                              pressure_tertiary: float, pump_status_tertiary: int) -> bool:
-        """
-        Update ESP-E with all 3 flow visualizers (NEW - unified 3-flow system)
+        Update ESP-E with all 3 flow visualizers
         
         Args:
             pressure_primary: Primary flow pressure
-            pump_status_primary: Primary pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
+            pump_status_primary: Primary pump status (0-3)
             pressure_secondary: Secondary flow pressure
             pump_status_secondary: Secondary pump status
             pressure_tertiary: Tertiary flow pressure
@@ -345,56 +233,44 @@ class I2CMaster:
         Returns:
             True if successful, False otherwise
         """
-        esp_address = 0x0A  # ESP-E now handles all 3 flows
-        channel = 2
-        
         if self.mux_select:
-            self.mux_select(channel)
+            self.mux_select(2)  # Select ESP-E channel
         
         try:
-            # Pack data: 3 x (float pressure + uint8 status) = 15 bytes
-            write_data = struct.pack('<fBfBfB', 
+            # Update internal state
+            self.esp_e_data.pressure_primary = pressure_primary
+            self.esp_e_data.pump_status_primary = pump_status_primary
+            self.esp_e_data.pressure_secondary = pressure_secondary
+            self.esp_e_data.pump_status_secondary = pump_status_secondary
+            self.esp_e_data.pressure_tertiary = pressure_tertiary
+            self.esp_e_data.pump_status_tertiary = pump_status_tertiary
+            
+            # Pack data: 16 bytes (3 x (float + uint8) + padding)
+            write_data = struct.pack('<BfBfBfB',
+                                    0,  # Register address
                                     pressure_primary, pump_status_primary,
                                     pressure_secondary, pump_status_secondary,
                                     pressure_tertiary, pump_status_tertiary)
             
-            # Read response: 2 x uint8
-            response = self.write_read_with_retry(esp_address, write_data, 2)
+            # Read response: 2 bytes
+            response = self.write_read_with_retry(0x0A, write_data, 2)
             
             if response:
                 values = struct.unpack('<BB', response)
                 self.esp_e_data.animation_speed = values[0]
                 self.esp_e_data.led_count = values[1]
                 
-                logger.debug(f"ESP-E (3-Flow): Speed={values[0]}, LEDs={values[1]}")
-                logger.debug(f"  Primary: P={pressure_primary:.1f}, S={pump_status_primary}")
-                logger.debug(f"  Secondary: P={pressure_secondary:.1f}, S={pump_status_secondary}")
-                logger.debug(f"  Tertiary: P={pressure_tertiary:.1f}, S={pump_status_tertiary}")
+                logger.debug(f"ESP-E: Speed={values[0]}, LEDs={values[1]}")
                 return True
             
         except Exception as e:
-            logger.error(f"Error updating ESP-E (3-Flow): {e}")
+            logger.error(f"Error updating ESP-E: {e}")
         
         return False
     
-    # ============================================
-    # LEGACY Methods (Deprecated - use update_all_visualizers instead)
-    # ============================================
-    
-    def update_esp_e(self, pressure: float, pump_status: int) -> bool:
-        """DEPRECATED: Use update_all_visualizers() instead"""
-        logger.warning("update_esp_e() is deprecated. Use update_all_visualizers() instead.")
-        return self.update_visualizer(0x0A, 2, pressure, pump_status)
-    
-    def update_esp_f(self, pressure: float, pump_status: int) -> bool:
-        """DEPRECATED: ESP-F no longer needed (merged into ESP-E)"""
-        logger.warning("update_esp_f() is deprecated. ESP-F merged into ESP-E.")
-        return False
-    
-    def update_esp_g(self, pressure: float, pump_status: int) -> bool:
-        """DEPRECATED: ESP-G no longer needed (merged into ESP-E)"""
-        logger.warning("update_esp_g() is deprecated. ESP-G merged into ESP-E.")
-        return False
+    def get_esp_e_data(self) -> ESP_E_Data:
+        """Get latest data from ESP-E"""
+        return self.esp_e_data
     
     # ============================================
     # Health Check
@@ -410,7 +286,7 @@ class I2CMaster:
         current_time = time.time()
         health = {}
         
-        for addr in [0x08, 0x09, 0x0A]:  # Only 3 ESP now
+        for addr in [0x08, 0x0A]:  # Only 2 ESP (ESP-BC and ESP-E)
             last_comm = self.last_comm_time.get(addr, 0)
             time_since = current_time - last_comm if last_comm > 0 else -1
             
@@ -436,21 +312,41 @@ class I2CMaster:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     
-    print("Testing I2C Master...")
+    print("Testing I2C Master (2 ESP Architecture)...")
     
     try:
         master = I2CMaster(bus_number=1)
         
-        # Test ESP-B communication
-        print("\nTesting ESP-B communication...")
-        success = master.update_esp_b(pressure=150.0, pump1_status=2, pump2_status=2)
+        # Test ESP-BC communication
+        print("\nTesting ESP-BC communication...")
+        success = master.update_esp_bc(
+            safety=50, shim=60, regulating=70,
+            humid_sg_cmd=1, humid_ct_cmd=1
+        )
         
         if success:
-            data = master.get_esp_b_data()
-            print(f"  Rod positions: {data.rod1_pos}, {data.rod2_pos}, {data.rod3_pos}")
+            data = master.get_esp_bc_data()
+            print(f"  Rod positions: {data.safety_actual}, {data.shim_actual}, {data.regulating_actual}")
             print(f"  Thermal power: {data.kw_thermal} kW")
+            print(f"  Turbine power: {data.power_level}%")
+            print(f"  Humidifiers: SG={data.humidifier_sg_status}, CT={data.humidifier_ct_status}")
         else:
-            print("  Failed to communicate with ESP-B")
+            print("  Failed to communicate with ESP-BC")
+        
+        # Test ESP-E communication
+        print("\nTesting ESP-E communication...")
+        success = master.update_esp_e(
+            pressure_primary=155.0, pump_status_primary=2,
+            pressure_secondary=50.0, pump_status_secondary=2,
+            pressure_tertiary=15.0, pump_status_tertiary=2
+        )
+        
+        if success:
+            data = master.get_esp_e_data()
+            print(f"  Animation speed: {data.animation_speed}")
+            print(f"  LED count: {data.led_count}")
+        else:
+            print("  Failed to communicate with ESP-E")
         
         # Health check
         print("\nHealth Status:")

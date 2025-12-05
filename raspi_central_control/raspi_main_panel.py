@@ -1,6 +1,6 @@
 """
-Main Control Program for PLTN Simulator - Panel Control Version
-Supports 15 buttons, 9 OLEDs, humidifier control, and new ESP protocols
+Main Control Program for PLTN Simulator - 2 ESP Architecture
+Supports 15 buttons, humidifier control, optimized for 2 ESP32
 """
 
 import time
@@ -80,8 +80,8 @@ class PLTNPanelController:
     def __init__(self):
         """Initialize PLTN Panel Controller"""
         logger.info("="*60)
-        logger.info("PLTN Simulator v2.5 - Panel Control System")
-        logger.info("15 Buttons | 9 OLEDs | Humidifier Control")
+        logger.info("PLTN Simulator v3.0 - 2 ESP Architecture")
+        logger.info("ESP-BC (Rods+Turbine+Humid) | ESP-E (48 LED)")
         logger.info("="*60)
         
         self.state = PanelState()
@@ -113,13 +113,13 @@ class PLTNPanelController:
             raise
     
     def init_i2c_master(self):
-        """Initialize I2C Master for ESP communication"""
+        """Initialize I2C Master for 2 ESP communication"""
         try:
             self.i2c_master = I2CMaster(
                 bus_number=config.I2C_BUS_ESP,
                 mux_select_callback=self.mux_manager.select_esp_channel
             )
-            logger.info("I2C Master initialized")
+            logger.info("I2C Master initialized (2 ESP)")
         except Exception as e:
             logger.error(f"Failed to initialize I2C Master: {e}")
             raise
@@ -389,36 +389,28 @@ class PLTNPanelController:
     
     def esp_communication_thread(self):
         """Thread for ESP communication (100ms cycle)"""
-        logger.info("ESP communication thread started")
+        logger.info("ESP communication thread started (2 ESP)")
         
         while self.state.running:
             try:
                 with self.i2c_lock:
                     with self.state_lock:
-                        # Send rod targets to ESP-B
-                        success = self.i2c_master.send_rod_targets_to_esp_b(
+                        # Send to ESP-BC (Control Rods + Turbine + Humidifier)
+                        success = self.i2c_master.update_esp_bc(
                             self.state.safety_rod,
                             self.state.shim_rod,
-                            self.state.regulating_rod
+                            self.state.regulating_rod,
+                            self.state.humidifier_sg_cmd,
+                            self.state.humidifier_ct_cmd
                         )
                         
                         if success:
-                            # Get ESP-B data
-                            esp_b_data = self.i2c_master.get_esp_b_data()
-                            self.state.thermal_kw = esp_b_data.kw_thermal
+                            # Get data back from ESP-BC
+                            esp_bc_data = self.i2c_master.get_esp_bc_data()
+                            self.state.thermal_kw = esp_bc_data.kw_thermal
                             
-                            # Send to ESP-C with humidifier commands
-                            self.i2c_master.send_to_esp_c_with_humidifier(
-                                esp_b_data.safety_actual,
-                                esp_b_data.shim_actual,
-                                esp_b_data.regulating_actual,
-                                esp_b_data.kw_thermal,
-                                self.state.humidifier_sg_cmd,
-                                self.state.humidifier_ct_cmd
-                            )
-                            
-                            # Send to ESP-E (visualizer)
-                            self.i2c_master.update_all_visualizers(
+                            # Send to ESP-E (LED Visualizer)
+                            self.i2c_master.update_esp_e(
                                 pressure_primary=self.state.pressure,
                                 pump_status_primary=self.state.pump_primary_status,
                                 pressure_secondary=self.state.pressure * 0.35,
@@ -460,7 +452,7 @@ class PLTNPanelController:
     
     def run(self):
         """Main control loop"""
-        logger.info("Starting PLTN Panel Controller...")
+        logger.info("Starting PLTN Controller (2 ESP)...")
         
         # Start threads
         threads = [
@@ -478,10 +470,14 @@ class PLTNPanelController:
                 
                 # Print status every second
                 with self.state_lock:
+                    # Get turbine data from ESP-BC
+                    esp_bc_data = self.i2c_master.get_esp_bc_data()
+                    
                     logger.info(f"Status: P={self.state.pressure:.1f}bar, "
                               f"Rods=[{self.state.safety_rod},{self.state.shim_rod},"
                               f"{self.state.regulating_rod}]%, "
                               f"Thermal={self.state.thermal_kw:.1f}kW, "
+                              f"Turbine={esp_bc_data.power_level:.1f}%, "
                               f"Humid=[SG:{self.state.humidifier_sg_cmd},"
                               f"CT:{self.state.humidifier_ct_cmd}]")
                 
