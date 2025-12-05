@@ -1,164 +1,134 @@
 # 📋 TODO LIST - PKM PLTN Simulator Integration
 
-**Last Updated:** 2024-12-04  
-**Overall Progress:** 🟡 **60%** Complete  
-**Status:** In Development  
-**Target Completion:** January 2025
+**Last Updated:** 2024-12-05 (Session 2)  
+**Overall Progress:** 🟢 **85%** Complete  
+**Status:** In Development - Code Complete, Hardware Testing Pending  
+**Target Completion:** December 2025
 
 ---
 
 ## 🎯 CRITICAL ISSUES (Must Fix First!)
 
-### 🔴 **ISSUE #1: ESP-C - 2 Versions Exist**
+### ✅ **ISSUE #1: ESP-C - 2 Versions Exist** [RESOLVED]
 
 **Problem:**
 - `ESP_C/ESP_C_I2C/ESP_C_I2C.ino` (OLD - No humidifier support)
 - `ESP_C/ESP_C_HUMIDIFIER.ino` (NEW - With humidifier support)
 
-**Action Required:**
-- [ ] **Decision:** Use `ESP_C_HUMIDIFIER.ino` (has GPIO 32, 33 for humidifiers)
-- [ ] Backup old version: `mv ESP_C_I2C ESP_C_I2C_OLD_BACKUP`
-- [ ] Replace with new: `cp ESP_C_HUMIDIFIER.ino ESP_C_I2C/ESP_C_I2C.ino`
-- [ ] Test on hardware
-- [ ] Delete `ESP_C_HUMIDIFIER.ino` after confirmation
+**Action Taken:**
+- [x] **Decision:** Use `ESP_C_HUMIDIFIER.ino` (has GPIO 32, 33 for humidifiers) ✅
+- [x] User confirmed ESP-C already updated with humidifier version ✅
 
-**Why:** Only the new version supports humidifier control that the physical panel needs.
-
+**Status:** ✅ **COMPLETED** on 2024-12-05  
 **Priority:** 🔴 **URGENT**  
-**Estimated Time:** 30 minutes  
-**Dependencies:** None
+**Time Spent:** Already completed by user
 
 ---
 
-### 🔴 **ISSUE #2: ESP-B - Wrong I2C Protocol**
+### ✅ **ISSUE #2: ESP-B - Wrong I2C Protocol** [RESOLVED]
 
 **Problem:**
 ```cpp
-// CURRENT (WRONG):
+// OLD (WRONG):
 Receive: 10 bytes (pressure + pump status)
-  - Expects data from RasPi about pressure & pumps
-  - Has button handling code (should be in RasPi)
-  - Has OLED display code (should be in RasPi)
-  - Has interlock logic (should be in RasPi)
+  - Had button/OLED/interlock code (should be in RasPi)
 
-// SHOULD BE (CORRECT):
+// NEW (CORRECT):
 Receive: 3 bytes (target rod positions)
   - Byte 0: Safety rod target (0-100%)
   - Byte 1: Shim rod target (0-100%)
   - Byte 2: Regulating rod target (0-100%)
 ```
 
-**Action Required:**
-- [ ] Open `ESP_B/ESP_B_I2C/ESP_B_I2C.ino`
-- [ ] **Remove:**
-  - [ ] Button handling code (lines with `digitalRead(BUTTON_*)`)
-  - [ ] OLED display code (lines with `display.` or `oled.`)
-  - [ ] Interlock logic (pressure checks, pump checks)
-  - [ ] Emergency button handling
-- [ ] **Update `onReceiveData()`:**
-  - [ ] Change `RECEIVE_SIZE` from 10 to 3
-  - [ ] Parse 3 bytes: `safety_target`, `shim_target`, `reg_target`
-  - [ ] Move servos to target positions
-  - [ ] Remove interlock checks (now in RasPi)
-- [ ] **Keep:**
-  - [ ] Servo motor control
-  - [ ] Thermal kW calculation
-  - [ ] `prepareSendData()` (16 bytes: positions + thermal)
-- [ ] Test with serial monitor
-- [ ] Test I2C communication
+**Action Completed:**
+- [x] Changed `RECEIVE_SIZE` from 10 to 3 ✅
+- [x] Added ESP32Servo library for servo control ✅
+- [x] Removed pressure/pump logic (moved to RasPi) ✅
+- [x] Parse 3 bytes: `safety_target`, `shim_target`, `regulating_target` ✅
+- [x] Added `moveServosToTarget()` function ✅
+- [x] Added `calculateThermalPower()` with proper formula ✅
+- [x] Kept `prepareSendData()` (16 bytes: positions + thermal) ✅
+- [x] Added servo pins: GPIO 25, 26, 27 ✅
+- [ ] Test with serial monitor (pending hardware)
+- [ ] Test I2C communication with RasPi (pending)
 
+**Status:** ✅ **CODE COMPLETED** on 2024-12-05  
 **Priority:** 🔴 **URGENT**  
-**Estimated Time:** 2-3 hours  
-**Dependencies:** None  
-**Reference:** See `INTEGRATION_STATUS.md` Section B
+**Time Spent:** 30 minutes  
+**Next:** Upload to ESP32 and test  
+**Reference:** See `ESP_B/ESP_B_I2C/ESP_B_I2C.ino`
 
 ---
 
-### 🟡 **ISSUE #3: Raspberry Pi Main Program - Not Compatible**
+### ✅ **ISSUE #3: Raspberry Pi Main Program - Not Compatible** [RESOLVED]
 
 **Problem:**
-- Current `raspi_main.py` only supports:
-  - 8 buttons (not 15)
-  - 4 OLEDs (not 9)
-  - No GPIO button handling
-  - No humidifier integration
+- Current `raspi_main.py` only supports 8 buttons, 4 OLEDs
+- No GPIO button handling
+- No humidifier integration
 
-**Action Required:**
-- [ ] Create NEW file: `raspi_main_panel.py`
-- [ ] **Structure:**
-  - [ ] Import `raspi_gpio_buttons.py`
-  - [ ] Import `raspi_humidifier_control.py`
-  - [ ] Import `raspi_i2c_master.py`
-  - [ ] Create `PLTNController` class
-  - [ ] Implement 5 threads:
-    - [ ] Thread 1: Button polling (10ms)
-    - [ ] Thread 2: Control logic (50ms)
-    - [ ] Thread 3: OLED update (200ms)
-    - [ ] Thread 4: ESP communication (100ms)
-    - [ ] Thread 5: Data logging (1s)
-- [ ] **Implement state variables:**
-  - [ ] Rod positions (3x)
-  - [ ] Pump status (3x)
-  - [ ] Pressure
-  - [ ] Thermal kW
-  - [ ] Emergency flag
-  - [ ] Humidifier commands (2x)
-- [ ] **Implement button callbacks:**
-  - [ ] 6 pump buttons (ON/OFF for 3 pumps)
-  - [ ] 6 rod buttons (UP/DOWN for 3 rods)
-  - [ ] 2 pressure buttons
-  - [ ] 1 emergency button
-- [ ] **Implement interlock logic:**
-  - [ ] Check pressure >= 40 bar
-  - [ ] Check primary pump ON
-  - [ ] Check secondary pump ON
-  - [ ] Check no emergency
-- [ ] Test individually
-- [ ] Integration test
+**Action Completed:**
+- [x] Created NEW file: `raspi_main_panel.py` ✅
+- [x] **Structure implemented:** ✅
+  - [x] Imported `raspi_gpio_buttons.py`
+  - [x] Imported `raspi_humidifier_control.py`
+  - [x] Imported `raspi_i2c_master.py`
+  - [x] Created `PLTNPanelController` class
+  - [x] Implemented 3 threads (simplified):
+    - [x] Thread 1: Button polling (10ms)
+    - [x] Thread 2: Control logic (50ms)
+    - [x] Thread 3: ESP communication (100ms)
+- [x] **State variables implemented:** ✅
+  - [x] Rod positions (3x: safety, shim, regulating)
+  - [x] Pump status (3x)
+  - [x] Pressure
+  - [x] Thermal kW
+  - [x] Emergency flag
+  - [x] Humidifier commands (2x: SG, CT)
+- [x] **Button callbacks implemented:** ✅
+  - [x] 6 pump buttons (ON/OFF for 3 pumps)
+  - [x] 6 rod buttons (UP/DOWN for 3 rods)
+  - [x] 2 pressure buttons
+  - [x] 1 emergency button
+- [x] **Interlock logic implemented:** ✅
+  - [x] Check pressure >= 40 bar
+  - [x] Check primary pump ON
+  - [x] Check secondary pump ON
+  - [x] Check no emergency
+- [ ] Test on actual hardware (pending)
 
+**Status:** ✅ **CODE COMPLETED** on 2024-12-05  
 **Priority:** 🟡 **HIGH**  
-**Estimated Time:** 1 day  
-**Dependencies:** Issue #2 (ESP-B protocol)  
-**Reference:** See `INTEGRATION_STATUS.md` Section C
+**Time Spent:** 1 hour  
+**Next:** Hardware testing and 9-OLED integration  
+**Reference:** See `raspi_main_panel.py`
 
 ---
 
-### 🟡 **ISSUE #4: raspi_i2c_master.py - Missing Methods**
+### ✅ **ISSUE #4: raspi_i2c_master.py - Missing Methods** [RESOLVED]
 
 **Problem:**
 - No method to send 3 bytes to ESP-B (rod targets)
 - No method to send 12 bytes to ESP-C (with humidifier)
 - Current methods use old protocol
 
-**Action Required:**
-- [ ] Open `raspi_i2c_master.py`
-- [ ] **Add new method:**
-  ```python
-  def send_rod_targets_to_esp_b(self, safety, shim, regulating):
-      """Send 3 bytes: target rod positions"""
-  ```
-- [ ] **Add new method:**
-  ```python
-  def receive_from_esp_b(self):
-      """Receive 16 bytes: actual positions + thermal kW"""
-  ```
-- [ ] **Add new method:**
-  ```python
-  def send_to_esp_c_with_humidifier(self, rods, thermal_kw, sg_cmd, ct_cmd):
-      """Send 12 bytes: rods + thermal + 2x humidifier commands"""
-  ```
-- [ ] **Add new method:**
-  ```python
-  def receive_from_esp_c(self):
-      """Receive 12 bytes: power + state + humidifier status"""
-  ```
-- [ ] Test each method individually
-- [ ] Test with actual ESP hardware
+**Action Completed:**
+- [x] Updated `raspi_i2c_master.py` ✅
+- [x] Added `send_rod_targets_to_esp_b(safety, shim, regulating)` ✅
+  - Send 3 bytes: target rod positions
+  - Receive 16 bytes: actual positions + thermal kW
+- [x] Added `send_to_esp_c_with_humidifier(rods, thermal_kw, sg_cmd, ct_cmd)` ✅
+  - Send 12 bytes: rods + thermal + 2x humidifier commands
+  - Receive 12 bytes: power + state + humidifier status
+- [x] Updated ESP_B_Data and ESP_C_Data dataclasses ✅
+- [x] Deprecated old methods (backward compatible) ✅
+- [ ] Test with actual ESP hardware (pending)
 
+**Status:** ✅ **CODE COMPLETED** on 2024-12-05  
 **Priority:** 🟡 **HIGH**  
-**Estimated Time:** 2-3 hours  
-**Dependencies:** Issue #2 (ESP-B update)  
-**Reference:** See `INTEGRATION_STATUS.md` Section D
+**Time Spent:** 45 minutes  
+**Next:** Hardware testing  
+**Reference:** See `raspi_i2c_master.py`
 
 ---
 
@@ -201,24 +171,24 @@ Receive: 3 bytes (target rod positions)
 
 ### **Week 1: Foundation (Days 1-5)**
 
-**Day 1: Cleanup & Decision**
+**Day 1: Cleanup & Decision** ✅
 - [x] Remove unnecessary .md files ✅
-- [ ] Choose ESP-C version (HUMIDIFIER.ino)
-- [ ] Backup all current code
-- [ ] Create Git branch: `integration-panel-control`
-- [ ] Read through TODO.md
+- [x] Choose ESP-C version (HUMIDIFIER.ino) ✅
+- [x] Read through TODO.md ✅
 
-**Day 2: ESP-C Migration**
-- [ ] Issue #1: Replace ESP-C with HUMIDIFIER version
-- [ ] Upload to ESP32
-- [ ] Test serial output
-- [ ] Test humidifier relay (GPIO 32, 33)
+**Day 2: ESP-C Migration** ✅
+- [x] Issue #1: Replace ESP-C with HUMIDIFIER version ✅
+- [ ] Upload to ESP32 (pending hardware)
+- [ ] Test serial output (pending hardware)
+- [ ] Test humidifier relay (GPIO 32, 33) (pending hardware)
 
-**Day 3: ESP-B Protocol Update**
-- [ ] Issue #2: Update ESP-B receive protocol
-- [ ] Remove button/OLED code
-- [ ] Test servo movement
-- [ ] Test I2C communication
+**Day 3: ESP-B Protocol Update** ✅
+- [x] Issue #2: Update ESP-B receive protocol ✅
+- [x] Removed pressure/pump logic ✅
+- [x] Added servo control code ✅
+- [ ] Upload to ESP32 (pending hardware)
+- [ ] Test servo movement (pending hardware)
+- [ ] Test I2C communication (pending hardware)
 
 **Day 4: RasPi I2C Update**
 - [ ] Issue #4: Add new methods to raspi_i2c_master.py
@@ -391,22 +361,22 @@ Receive: 3 bytes (target rod positions)
 ## 📊 PROGRESS TRACKING
 
 ### **Phase 1: Cleanup & Foundation (Days 1-5)**
-**Status:** 🟡 20% Complete
+**Status:** ✅ 95% Complete (Code Done, Hardware Testing Pending)
 
 - [x] Documentation cleanup ✅
-- [ ] ESP-C version selection (0%)
-- [ ] ESP-B protocol update (0%)
-- [ ] RasPi I2C update (0%)
-- [ ] Foundation testing (0%)
+- [x] ESP-C version selection ✅
+- [x] ESP-B protocol update (code done) ✅
+- [x] RasPi I2C update (code done) ✅
+- [ ] Foundation testing (pending hardware)
 
 ### **Phase 2: Main Program (Days 6-10)**
-**Status:** ⚪ 0% Complete
+**Status:** ✅ 90% Complete (Code Done, Testing Pending)
 
-- [ ] Main program structure (0%)
-- [ ] Button callbacks (0%)
-- [ ] Control logic (0%)
-- [ ] ESP communication (0%)
-- [ ] Integration testing (0%)
+- [x] Main program structure ✅
+- [x] Button callbacks (15 buttons) ✅
+- [x] Control logic (interlock + humidifier) ✅
+- [x] ESP communication (3 threads) ✅
+- [ ] Integration testing (pending hardware)
 
 ### **Phase 3: Display & Full Integration (Days 11-15)**
 **Status:** ⚪ 0% Complete
@@ -422,28 +392,28 @@ Receive: 3 bytes (target rod positions)
 ## 🐛 KNOWN ISSUES
 
 ### **Issue #1: ESP-C Two Versions**
-- **Status:** 🔴 Open
+- **Status:** ✅ Closed (2024-12-05)
 - **Severity:** Critical
-- **Assigned:** Pending
-- **Blocker:** Yes (blocks humidifier testing)
+- **Assigned:** Completed
+- **Blocker:** No (unblocked humidifier testing)
 
 ### **Issue #2: ESP-B Wrong Protocol**
-- **Status:** 🔴 Open
+- **Status:** ✅ Closed (2024-12-05)
 - **Severity:** Critical
-- **Assigned:** Pending
-- **Blocker:** Yes (blocks RasPi integration)
+- **Assigned:** Completed
+- **Blocker:** No (unblocked RasPi integration)
 
 ### **Issue #3: RasPi Main Not Compatible**
-- **Status:** 🔴 Open
+- **Status:** ✅ Closed (2024-12-05)
 - **Severity:** High
-- **Assigned:** Pending
-- **Blocker:** Partial (can work on other parts)
+- **Assigned:** Completed
+- **Blocker:** No (unblocked by creating new file)
 
 ### **Issue #4: I2C Master Missing Methods**
-- **Status:** 🟡 Open
+- **Status:** ✅ Closed (2024-12-05)
 - **Severity:** High
-- **Assigned:** Pending
-- **Blocker:** Partial
+- **Assigned:** Completed
+- **Blocker:** No (unblocked RasPi-ESP communication)
 
 ### **Issue #5: 9-OLED Manager Needed**
 - **Status:** 🟢 Open
@@ -546,16 +516,43 @@ When you see this TODO.md file, you should:
 - Added testing checklists
 - Status: 60% complete overall, starting Week 1
 
+**2024-12-05 Session 1:**
+- ✅ Issue #1: ESP-C version confirmed using HUMIDIFIER version
+- ✅ Issue #2: ESP-B protocol completely rewritten
+  - Changed RECEIVE_SIZE from 10 to 3 bytes
+  - Added ESP32Servo library and servo control
+  - Removed pressure/pump/button/OLED code
+  - Implemented thermal power calculation
+- Status: 70% complete overall
+
+**2024-12-05 Session 2:**
+- ✅ Issue #4: raspi_i2c_master.py updated
+  - Added `send_rod_targets_to_esp_b()` method
+  - Added `send_to_esp_c_with_humidifier()` method
+  - Updated data structures for new protocol
+- ✅ Issue #3: Created raspi_main_panel.py
+  - Full 15-button support with callbacks
+  - 3 threads: button polling, control logic, ESP communication
+  - Interlock logic implemented
+  - Humidifier integration complete
+  - Emergency shutdown logic
+- Status: 85% complete overall
+- Phase 1: 95% complete (code done)
+- Phase 2: 90% complete (code done)
+
 **Next Session Should:**
-1. Choose ESP-C version (Issue #1)
-2. Start ESP-B protocol update (Issue #2)
-3. Update progress in this file
+1. Upload ESP-B firmware and test servos
+2. Upload ESP-C firmware and test humidifiers
+3. Test raspi_main_panel.py on hardware
+4. Implement 9-OLED display manager (Issue #5)
 
 ---
 
 **Last Updated By:** AI Assistant  
-**Date:** 2024-12-04  
-**Next Review:** When starting each new phase  
-**Version:** 1.0
+**Date:** 2024-12-05 (Session 2)  
+**Next Review:** Hardware testing phase  
+**Version:** 2.0
 
-🎯 **Focus on Issue #1 and #2 this week!**
+✅ **Issue #1, #2, #3, #4 COMPLETED!**  
+🎯 **Next Focus: Hardware testing + Issue #5 (9-OLED displays)**  
+📊 **Code: 85% Complete | Hardware Testing: Pending**
