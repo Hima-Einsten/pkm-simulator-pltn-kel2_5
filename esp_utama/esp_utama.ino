@@ -1,19 +1,23 @@
 /*
- * ESP-BC MERGED - Control Rods + Turbine + Humidifier
+ * ESP-BC MERGED - Control Rods + Turbine + Humidifier + Pumps
  * I2C Address: 0x08
  * 
  * Menggabungkan fungsi ESP-B dan ESP-C:
  * - 3x Servo motors (control rods)
- * - 6x Relay (4 main components + 2 humidifiers)
- * - 4x PWM motors (steam gen, turbine, condenser, cooling)
+ * - 6x Relay untuk humidifier (4 untuk cooling tower, 2 untuk steam generator)
+ * - 4x Motor DC dengan motor driver (3 pompa aliran + 1 turbin)
  * - Thermal power calculation
  * - Turbine state machine
  * 
  * Pin Configuration (ESP32 38-pin):
- * - Servos: GPIO 25, 26, 27
- * - Main Relays: GPIO 32, 33, 14, 12
- * - Humidifier Relays: GPIO 13, 15
- * - Motors PWM: GPIO 4, 16, 17, 5
+ * - Servos: GPIO 25, 26, 27 (control rods)
+ * - Humidifier Relays Cooling Tower (4): GPIO 32, 33, 14, 12
+ * - Humidifier Relays Steam Generator (2): GPIO 13, 15
+ * - Motor Driver PWM:
+ *   - GPIO 4:  Pompa Primer (Primary Loop)
+ *   - GPIO 16: Pompa Sekunder (Secondary Loop)
+ *   - GPIO 17: Pompa Tersier (Tertiary/Cooling Loop)
+ *   - GPIO 5:  Motor Turbin (berdasarkan shim + regulating rod)
  * - I2C: GPIO 21 (SDA), 22 (SCL)
  * - Status LED: GPIO 2
  * 
@@ -47,21 +51,21 @@ uint8_t sendBuffer[SEND_SIZE];
 #define SERVO_SHIM        26
 #define SERVO_REGULATING  27
 
-// === MAIN RELAYS (4 relay) ===
-#define RELAY_STEAM_GEN       32
-#define RELAY_TURBINE         33
-#define RELAY_CONDENSER       14
-#define RELAY_COOLING_TOWER   12
+// === HUMIDIFIER RELAYS - Cooling Tower (4 relay) ===
+#define RELAY_HUMID_CT1       32
+#define RELAY_HUMID_CT2       33
+#define RELAY_HUMID_CT3       14
+#define RELAY_HUMID_CT4       12
 
-// === HUMIDIFIER RELAYS (2 relay) ===
-#define RELAY_HUMID_SG    13    // Steam Generator humidifier
-#define RELAY_HUMID_CT    15    // Cooling Tower humidifier
+// === HUMIDIFIER RELAYS - Steam Generator (2 relay) ===
+#define RELAY_HUMID_SG1       13
+#define RELAY_HUMID_SG2       15
 
-// === PWM MOTORS (4 motors) ===
-#define MOTOR_STEAM_GEN_PIN   4
-#define MOTOR_TURBINE_PIN     16
-#define MOTOR_CONDENSER_PIN   17
-#define MOTOR_COOLING_PIN     5
+// === MOTOR DRIVER PWM (4 motor DC) ===
+#define MOTOR_PUMP_PRIMARY    4    // Pompa Primer
+#define MOTOR_PUMP_SECONDARY  16   // Pompa Sekunder
+#define MOTOR_PUMP_TERTIARY   17   // Pompa Tersier
+#define MOTOR_TURBINE         5    // Motor Turbin
 
 // === PWM Configuration (ESP32 Core v3.x) ===
 #define PWM_FREQ       5000  // 5 kHz
@@ -101,12 +105,32 @@ TurbineState current_state = STATE_IDLE;
 float power_level = 0.0;  // 0-100%
 
 // ================================
+// GLOBAL VARIABLES - Pumps
+// ================================
+float pump_primary_actual = 0.0;    // Current PWM (0-100%)
+float pump_secondary_actual = 0.0;
+float pump_tertiary_actual = 0.0;
+
+float pump_primary_target = 0.0;    // Target PWM from state machine
+float pump_secondary_target = 0.0;
+float pump_tertiary_target = 0.0;
+
+// ================================
 // GLOBAL VARIABLES - Humidifier
 // ================================
-uint8_t humid_sg_cmd = 0;  // Command from RasPi
-uint8_t humid_ct_cmd = 0;
-uint8_t humid_sg_status = 0;  // Actual relay status
-uint8_t humid_ct_status = 0;
+uint8_t humid_sg1_cmd = 0;  // Command from RasPi
+uint8_t humid_sg2_cmd = 0;
+uint8_t humid_ct1_cmd = 0;
+uint8_t humid_ct2_cmd = 0;
+uint8_t humid_ct3_cmd = 0;
+uint8_t humid_ct4_cmd = 0;
+
+uint8_t humid_sg1_status = 0;  // Actual relay status
+uint8_t humid_sg2_status = 0;
+uint8_t humid_ct1_status = 0;
+uint8_t humid_ct2_status = 0;
+uint8_t humid_ct3_status = 0;
+uint8_t humid_ct4_status = 0;
 
 // ================================
 // I2C ISR HANDLERS
@@ -146,35 +170,35 @@ void setup() {
   servoRegulating.write(0);
   Serial.println("✓ Servos initialized at 0%");
 
-  // Initialize relay pins
-  pinMode(RELAY_STEAM_GEN, OUTPUT);
-  pinMode(RELAY_TURBINE, OUTPUT);
-  pinMode(RELAY_CONDENSER, OUTPUT);
-  pinMode(RELAY_COOLING_TOWER, OUTPUT);
-  pinMode(RELAY_HUMID_SG, OUTPUT);
-  pinMode(RELAY_HUMID_CT, OUTPUT);
+  // Initialize humidifier relay pins
+  pinMode(RELAY_HUMID_CT1, OUTPUT);
+  pinMode(RELAY_HUMID_CT2, OUTPUT);
+  pinMode(RELAY_HUMID_CT3, OUTPUT);
+  pinMode(RELAY_HUMID_CT4, OUTPUT);
+  pinMode(RELAY_HUMID_SG1, OUTPUT);
+  pinMode(RELAY_HUMID_SG2, OUTPUT);
   
-  // All relays OFF initially
-  digitalWrite(RELAY_STEAM_GEN, LOW);
-  digitalWrite(RELAY_TURBINE, LOW);
-  digitalWrite(RELAY_CONDENSER, LOW);
-  digitalWrite(RELAY_COOLING_TOWER, LOW);
-  digitalWrite(RELAY_HUMID_SG, LOW);
-  digitalWrite(RELAY_HUMID_CT, LOW);
-  Serial.println("✓ Relays initialized (all OFF)");
+  // All humidifier relays OFF initially
+  digitalWrite(RELAY_HUMID_CT1, LOW);
+  digitalWrite(RELAY_HUMID_CT2, LOW);
+  digitalWrite(RELAY_HUMID_CT3, LOW);
+  digitalWrite(RELAY_HUMID_CT4, LOW);
+  digitalWrite(RELAY_HUMID_SG1, LOW);
+  digitalWrite(RELAY_HUMID_SG2, LOW);
+  Serial.println("✓ Humidifier relays initialized (all OFF)");
 
-  // Initialize PWM channels (ESP32 Core v3.x API)
-  ledcAttach(MOTOR_STEAM_GEN_PIN, PWM_FREQ, PWM_RESOLUTION);
-  ledcAttach(MOTOR_TURBINE_PIN, PWM_FREQ, PWM_RESOLUTION);
-  ledcAttach(MOTOR_CONDENSER_PIN, PWM_FREQ, PWM_RESOLUTION);
-  ledcAttach(MOTOR_COOLING_PIN, PWM_FREQ, PWM_RESOLUTION);
+  // Initialize motor driver PWM channels (ESP32 Core v3.x API)
+  ledcAttach(MOTOR_PUMP_PRIMARY, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(MOTOR_PUMP_SECONDARY, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(MOTOR_PUMP_TERTIARY, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(MOTOR_TURBINE, PWM_FREQ, PWM_RESOLUTION);
   
-  // All motors OFF initially
-  ledcWrite(MOTOR_STEAM_GEN_PIN, 0);
-  ledcWrite(MOTOR_TURBINE_PIN, 0);
-  ledcWrite(MOTOR_CONDENSER_PIN, 0);
-  ledcWrite(MOTOR_COOLING_PIN, 0);
-  Serial.println("✓ PWM motors initialized (speed 0)");
+  // All motor drivers OFF initially
+  ledcWrite(MOTOR_PUMP_PRIMARY, 0);
+  ledcWrite(MOTOR_PUMP_SECONDARY, 0);
+  ledcWrite(MOTOR_PUMP_TERTIARY, 0);
+  ledcWrite(MOTOR_TURBINE, 0);
+  Serial.println("✓ Motor drivers initialized (3 pumps + turbine = 0%)");
 
   // Initialize status LED
   pinMode(STATUS_LED, OUTPUT);
@@ -265,35 +289,127 @@ void updateTurbineState() {
       break;
   }
   
-  // Update relays
-  digitalWrite(RELAY_STEAM_GEN, (current_state != STATE_IDLE) ? HIGH : LOW);
-  digitalWrite(RELAY_TURBINE, (current_state == STATE_RUNNING) ? HIGH : LOW);
-  digitalWrite(RELAY_CONDENSER, (current_state != STATE_IDLE) ? HIGH : LOW);
-  digitalWrite(RELAY_COOLING_TOWER, (current_state != STATE_IDLE) ? HIGH : LOW);
+  // Update pump targets based on turbine state
+  if (current_state == STATE_IDLE) {
+    pump_primary_target = 0.0;
+    pump_secondary_target = 0.0;
+    pump_tertiary_target = 0.0;
+  } else if (current_state == STATE_STARTING) {
+    pump_primary_target = 50.0;
+    pump_secondary_target = 50.0;
+    pump_tertiary_target = 50.0;
+  } else if (current_state == STATE_RUNNING) {
+    pump_primary_target = 100.0;
+    pump_secondary_target = 100.0;
+    pump_tertiary_target = 100.0;
+  } else if (current_state == STATE_SHUTDOWN) {
+    pump_primary_target = 20.0;
+    pump_secondary_target = 20.0;
+    pump_tertiary_target = 20.0;
+  }
 }
 
 // ================================
 // HUMIDIFIER CONTROL
 // ================================
 void updateHumidifiers() {
-  digitalWrite(RELAY_HUMID_SG, humid_sg_cmd ? HIGH : LOW);
-  digitalWrite(RELAY_HUMID_CT, humid_ct_cmd ? HIGH : LOW);
+  // Steam Generator humidifiers (2)
+  digitalWrite(RELAY_HUMID_SG1, humid_sg1_cmd ? HIGH : LOW);
+  digitalWrite(RELAY_HUMID_SG2, humid_sg2_cmd ? HIGH : LOW);
   
-  humid_sg_status = digitalRead(RELAY_HUMID_SG);
-  humid_ct_status = digitalRead(RELAY_HUMID_CT);
+  // Cooling Tower humidifiers (4)
+  digitalWrite(RELAY_HUMID_CT1, humid_ct1_cmd ? HIGH : LOW);
+  digitalWrite(RELAY_HUMID_CT2, humid_ct2_cmd ? HIGH : LOW);
+  digitalWrite(RELAY_HUMID_CT3, humid_ct3_cmd ? HIGH : LOW);
+  digitalWrite(RELAY_HUMID_CT4, humid_ct4_cmd ? HIGH : LOW);
+  
+  // Update status
+  humid_sg1_status = digitalRead(RELAY_HUMID_SG1);
+  humid_sg2_status = digitalRead(RELAY_HUMID_SG2);
+  humid_ct1_status = digitalRead(RELAY_HUMID_CT1);
+  humid_ct2_status = digitalRead(RELAY_HUMID_CT2);
+  humid_ct3_status = digitalRead(RELAY_HUMID_CT3);
+  humid_ct4_status = digitalRead(RELAY_HUMID_CT4);
 }
 
 // ================================
-// PWM MOTOR SPEED CONTROL
+// PUMP GRADUAL SPEED CONTROL
 // ================================
-void updateMotorSpeeds() {
-  int speed = map((int)power_level, 0, 100, 0, 255);
+void updatePumpSpeeds() {
+  // Gradual acceleration/deceleration untuk pompa
+  // Jika dimatikan/dinyalakan, tidak langsung tapi perlahan
   
-  // ESP32 Core v3.x: ledcWrite() uses pin number directly
-  ledcWrite(MOTOR_STEAM_GEN_PIN, speed);
-  ledcWrite(MOTOR_TURBINE_PIN, speed);
-  ledcWrite(MOTOR_CONDENSER_PIN, speed);
-  ledcWrite(MOTOR_COOLING_PIN, speed);
+  // Primary pump
+  if (pump_primary_actual < pump_primary_target) {
+    pump_primary_actual += 2.0;  // Naik 2% per cycle
+    if (pump_primary_actual > pump_primary_target) {
+      pump_primary_actual = pump_primary_target;
+    }
+  } else if (pump_primary_actual > pump_primary_target) {
+    pump_primary_actual -= 1.0;  // Turun 1% per cycle (lebih pelan)
+    if (pump_primary_actual < pump_primary_target) {
+      pump_primary_actual = pump_primary_target;
+    }
+  }
+  
+  // Secondary pump
+  if (pump_secondary_actual < pump_secondary_target) {
+    pump_secondary_actual += 2.0;
+    if (pump_secondary_actual > pump_secondary_target) {
+      pump_secondary_actual = pump_secondary_target;
+    }
+  } else if (pump_secondary_actual > pump_secondary_target) {
+    pump_secondary_actual -= 1.0;
+    if (pump_secondary_actual < pump_secondary_target) {
+      pump_secondary_actual = pump_secondary_target;
+    }
+  }
+  
+  // Tertiary pump
+  if (pump_tertiary_actual < pump_tertiary_target) {
+    pump_tertiary_actual += 2.0;
+    if (pump_tertiary_actual > pump_tertiary_target) {
+      pump_tertiary_actual = pump_tertiary_target;
+    }
+  } else if (pump_tertiary_actual > pump_tertiary_target) {
+    pump_tertiary_actual -= 1.0;
+    if (pump_tertiary_actual < pump_tertiary_target) {
+      pump_tertiary_actual = pump_tertiary_target;
+    }
+  }
+  
+  // Apply PWM to motor drivers
+  int pwm_primary = map((int)pump_primary_actual, 0, 100, 0, 255);
+  int pwm_secondary = map((int)pump_secondary_actual, 0, 100, 0, 255);
+  int pwm_tertiary = map((int)pump_tertiary_actual, 0, 100, 0, 255);
+  
+  ledcWrite(MOTOR_PUMP_PRIMARY, pwm_primary);
+  ledcWrite(MOTOR_PUMP_SECONDARY, pwm_secondary);
+  ledcWrite(MOTOR_PUMP_TERTIARY, pwm_tertiary);
+}
+
+// ================================
+// TURBINE MOTOR SPEED CONTROL
+// ================================
+void updateTurbineSpeed() {
+  // Putaran turbin berdasarkan posisi shim dan regulating rod
+  // Semakin ditarik ke atas (nilai besar), semakin cepat putaran
+  
+  float avg_control_rods = (shim_actual + regulating_actual) / 2.0;
+  
+  // Map 0-100% rod position to 0-100% turbine speed
+  // Safety rod tidak mempengaruhi turbine speed
+  float turbine_speed = avg_control_rods;
+  
+  // Apply minimum threshold
+  if (turbine_speed < 10.0) {
+    turbine_speed = 0.0;  // Stop turbine if rods too low
+  }
+  
+  // Convert to PWM (0-255)
+  int pwm_turbine = map((int)turbine_speed, 0, 100, 0, 255);
+  
+  ledcWrite(MOTOR_TURBINE, pwm_turbine);
 }
 
 // ================================
@@ -313,8 +429,11 @@ void prepareSendData() {
   
   sendBuffer[16] = (current_state != STATE_IDLE) ? 1 : 0;
   sendBuffer[17] = (current_state == STATE_RUNNING) ? 1 : 0;
-  sendBuffer[18] = humid_sg_status;
-  sendBuffer[19] = humid_ct_status;
+  
+  // Kirim status semua humidifier (6 relays dalam 2 bytes)
+  sendBuffer[18] = (humid_sg1_status) | (humid_sg2_status << 1) | 
+                   (humid_ct1_status << 2) | (humid_ct2_status << 3);
+  sendBuffer[19] = (humid_ct3_status) | (humid_ct4_status << 1);
 }
 
 // ================================
@@ -328,13 +447,20 @@ void processReceivedData() {
   shim_target = buf[1];
   regulating_target = buf[2];
   
-  humid_sg_cmd = buf[8];
-  humid_ct_cmd = buf[9];
+  // Unpack humidifier commands (6 relays dari 2 bytes)
+  humid_sg1_cmd = buf[8] & 0x01;
+  humid_sg2_cmd = (buf[8] >> 1) & 0x01;
+  humid_ct1_cmd = (buf[8] >> 2) & 0x01;
+  humid_ct2_cmd = (buf[8] >> 3) & 0x01;
+  humid_ct3_cmd = (buf[8] >> 4) & 0x01;
+  humid_ct4_cmd = (buf[8] >> 5) & 0x01;
 
   Serial.println("\n=== COMMAND RECEIVED ===");
   Serial.printf("Rod Targets: Safety=%d%%, Shim=%d%%, Reg=%d%%\n", 
                 safety_target, shim_target, regulating_target);
-  Serial.printf("Humidifier: SG=%d, CT=%d\n", humid_sg_cmd, humid_ct_cmd);
+  Serial.printf("Humidifier SG: %d,%d | CT: %d,%d,%d,%d\n", 
+                humid_sg1_cmd, humid_sg2_cmd, 
+                humid_ct1_cmd, humid_ct2_cmd, humid_ct3_cmd, humid_ct4_cmd);
 }
 
 // ================================
@@ -355,7 +481,8 @@ void loop() {
   calculateThermalPower();
   updateTurbineState();
   updateHumidifiers();
-  updateMotorSpeeds();
+  updatePumpSpeeds();
+  updateTurbineSpeed();
   prepareSendData();
   
   delay(10);
