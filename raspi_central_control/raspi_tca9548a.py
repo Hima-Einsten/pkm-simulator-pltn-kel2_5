@@ -37,12 +37,15 @@ class TCA9548A:
             logger.error(f"Failed to initialize TCA9548A: {e}")
             raise
     
-    def select_channel(self, channel: int) -> bool:
+    def select_channel(self, channel: int, force: bool = False) -> bool:
         """
         Select an I2C channel (0-7)
         
+        Optimization: Skip selection if channel is already active
+        
         Args:
             channel: Channel number (0-7)
+            force: Force channel selection even if already active
             
         Returns:
             True if successful, False otherwise
@@ -50,6 +53,11 @@ class TCA9548A:
         if channel < 0 or channel > 7:
             logger.error(f"Invalid channel: {channel}. Must be 0-7")
             return False
+        
+        # Optimization: Skip if channel already selected
+        if not force and self.current_channel == channel:
+            logger.debug(f"Channel {channel} already active, skipping selection")
+            return True
         
         try:
             # Write channel selection byte (bit mask)

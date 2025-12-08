@@ -124,6 +124,8 @@ class OLEDDisplay:
 class OLEDManager:
     """
     Manages 4 OLED displays through TCA9548A multiplexer
+    
+    Optimization: Only update displays when data changes
     """
     
     def __init__(self, mux_manager, width: int = 128, height: int = 32):
@@ -148,7 +150,15 @@ class OLEDManager:
         self.blink_state = False
         self.last_blink_time = time.time()
         
-        logger.info("OLED Manager initialized")
+        # Data tracking for optimization (only update if changed)
+        self.last_data = {
+            'pressurizer': None,
+            'pump_primary': None,
+            'pump_secondary': None,
+            'pump_tertiary': None
+        }
+        
+        logger.info("OLED Manager initialized with smart update optimization")
     
     def init_all_displays(self):
         """Initialize all OLED displays"""

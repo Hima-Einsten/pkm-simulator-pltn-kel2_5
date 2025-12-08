@@ -1,7 +1,11 @@
 /*
- * ESP-E I2C Slave - Visualizer 3 Aliran (Primer, Sekunder, Tersier)
+ * ESP-E I2C Slave - Visualizer 3 Aliran + Power Indicator
  * 
  * I2C Slave Address: 0x0A
+ * 
+ * Features:
+ * - 48 LED Flow Visualizer (3 flows × 16 LEDs)
+ * - 10 LED Power Indicator (PWM brightness based on thermal power)
  * 
  * Receives from Raspberry Pi:
  * - Pressure 1 (float, 4 bytes) - Primary
@@ -10,7 +14,8 @@
  * - Pump Status 2 (uint8, 1 byte) - Secondary
  * - Pressure 3 (float, 4 bytes) - Tertiary
  * - Pump Status 3 (uint8, 1 byte) - Tertiary
- * Total: 15 bytes
+ * - Thermal Power (float, 4 bytes) - kW
+ * Total: 19 bytes
  * 
  * Sends to Raspberry Pi:
  * - Animation Speed (uint8, 1 byte)
@@ -26,8 +31,8 @@
 #define I2C_SLAVE_ADDRESS 0x0A
 
 // I2C Data Buffers
-#define RECEIVE_SIZE 32  // Increased buffer size to accommodate any I2C variations
-#define DATA_SIZE 15     // Actual data: 3 x (4 bytes float + 1 byte status)
+#define RECEIVE_SIZE 32  // Increased buffer size
+#define DATA_SIZE 19     // 3 x (4 bytes float + 1 byte status) + 4 bytes thermal power
 #define SEND_SIZE 2
 
 volatile uint8_t receiveBuffer[RECEIVE_SIZE];
@@ -60,6 +65,26 @@ const int EN_TERTIARY = 2;    // Enable untuk Aliran Tersier
 const int SIG_PRIMARY = 32;   // PWM output untuk Aliran Primer
 const int SIG_SECONDARY = 4;  // PWM output untuk Aliran Sekunder
 const int SIG_TERTIARY = 16;  // PWM output untuk Aliran Tersier
+
+// ============================================
+// POWER INDICATOR LEDs (10 LEDs)
+// ============================================
+#define NUM_POWER_LEDS 10
+#define MAX_THERMAL_MWE 300.0  // Maximum electrical power (MWe) - Nuclear Reactor Rating
+
+// Power LED pins (PWM capable)
+const int POWER_LED_PINS[NUM_POWER_LEDS] = {
+    23,  // LED 1
+    22,  // LED 2
+    21,  // LED 3
+    19,  // LED 4
+    18,  // LED 5
+    5,   // LED 6
+    17,  // LED 7
+    13,  // LED 8 (Note: Avoid GPIO 12 if using LED strip)
+    12,  // LED 9
+    14   // LED 10
+};
 
 // PWM settings for brightness control
 const int PWM_FREQ = 5000;
@@ -130,6 +155,12 @@ FlowData flows[NUM_FLOWS] = {
 const uint8_t LED_COUNT = NUM_LEDS;
 
 // ============================================
+// Power Indicator Variables
+// ============================================
+float thermal_power_kw = 0.0;  // Current thermal power in kW
+int power_led_brightness[NUM_POWER_LEDS] = {0};  // Brightness for each LED (0-255)
+
+// ============================================
 // I2C Callback Functions (ISR - Keep Simple!)
 // ============================================
 
@@ -183,6 +214,123 @@ void prepareSendData() {
     // Return average animation speed of all flows (or just first flow)
     sendBuffer[0] = flows[0].animationSpeed;  // Use Primary flow speed
     sendBuffer[1] = LED_COUNT;
+}
+
+// ============================================
+// POWER INDICATOR LED FUNCTIONS
+// ============================================
+
+void updatePowerIndicatorLEDs() {
+    /*
+     * Update 10 LEDs based on electrical power (MWe)
+     * 
+     * CORRECT BEHAVIOR:
+     * - Semua 10 LED menyala bersamaan dengan brightness SAMA
+     * - Brightness proporsional dengan total power output
+     * - 0 MWe = Semua LED OFF
+     * - 150 MWe (50%) = Semua LED DIM (brightness 127)
+     * - 300 MWe (100%) = Semua LED FULL (brightness 255)
+     * 
+     * Formula:
+     * brightness = (current_power / max_power) × 255
+     * 
+     * Example:
+     * 30 MWe (10%):   Semua LED brightness = 25
+     * 150 MWe (50%):  Semua LED brightness = 127
+     * 225 MWe (75%):  Semua LED brightness = 191
+     * 300 MWe (100%): Semua LED brightness = 255
+     */
+    
+    // Convert kW to MWe (thermal_power_kw from ESP-BC is in kW)
+    float power_mwe = thermal_power_kw / 1000.0;  // kW → MWe
+    
+    // Jika tidak ada power, matikan semua
+    if (power_mwe < 1.0) {  // Less than 1 MWe
+        for (int i = 0; i < NUM_POWER_LEDS; i++) {
+            power_led_brightness[i] = 0;
+            ledcWrite(POWER_LED_PINS[i], 0);
+        }
+        return;
+    }
+    
+    // Calculate brightness untuk SEMUA LED (SAMA!)
+    float ratio = power_mwe / MAX_THERMAL_MWE;
+    
+    // Clamp ratio 0.0 to 1.0
+    if (ratio > 1.0) ratio = 1.0;
+    if (ratio < 0.0) ratio = 0.0;
+    
+    int brightness = (int)(ratio * 255);
+    
+    // Minimum brightness agar terlihat (ketika ada power)
+    if (brightness > 0 && brightness < 20) {
+        brightness = 20;
+    }
+    
+    // Apply brightness yang SAMA ke SEMUA LED
+    for (int i = 0; i < NUM_POWER_LEDS; i++) {
+        power_led_brightness[i] = brightness;
+        ledcWrite(POWER_LED_PINS[i], brightness);
+    }
+}
+
+void initPowerIndicatorLEDs() {
+    /*
+     * Initialize all power indicator LEDs
+     */
+    Serial.println("Initializing Power Indicator LEDs...");
+    
+    for (int i = 0; i < NUM_POWER_LEDS; i++) {
+        // Attach PWM to each LED pin
+        ledcAttach(POWER_LED_PINS[i], PWM_FREQ, PWM_RESOLUTION);
+        
+        // Start with LED off
+        ledcWrite(POWER_LED_PINS[i], 0);
+        
+        Serial.printf("  Power LED %d (GPIO %d) initialized\n", i + 1, POWER_LED_PINS[i]);
+    }
+    
+    Serial.println("✓ Power Indicator LEDs initialized");
+}
+
+void testPowerIndicatorLEDs() {
+    /*
+     * Test sequence for power indicator LEDs
+     */
+    Serial.println("\nTesting Power Indicator LEDs...");
+    
+    // Test 1: Sequential turn on
+    for (int i = 0; i < NUM_POWER_LEDS; i++) {
+        ledcWrite(POWER_LED_PINS[i], 255);
+        delay(100);
+    }
+    
+    delay(500);
+    
+    // Test 2: Sequential turn off
+    for (int i = NUM_POWER_LEDS - 1; i >= 0; i--) {
+        ledcWrite(POWER_LED_PINS[i], 0);
+        delay(100);
+    }
+    
+    delay(500);
+    
+    // Test 3: Brightness sweep on all LEDs
+    for (int brightness = 0; brightness <= 255; brightness += 5) {
+        for (int i = 0; i < NUM_POWER_LEDS; i++) {
+            ledcWrite(POWER_LED_PINS[i], brightness);
+        }
+        delay(20);
+    }
+    
+    delay(300);
+    
+    // Turn off
+    for (int i = 0; i < NUM_POWER_LEDS; i++) {
+        ledcWrite(POWER_LED_PINS[i], 0);
+    }
+    
+    Serial.println("✓ Power Indicator LED test complete");
 }
 
 // ============================================
@@ -307,6 +455,12 @@ void setup() {
     Serial.printf("I2C Slave initialized at address 0x%02X\n", I2C_SLAVE_ADDRESS);
     Serial.println("Callbacks registered: onReceive & onRequest");
     
+    // Initialize Power Indicator LEDs FIRST
+    initPowerIndicatorLEDs();
+    
+    // Test Power Indicator LEDs
+    testPowerIndicatorLEDs();
+    
     // Initialize multiplexer selector pins (shared)
     pinMode(S0, OUTPUT);
     pinMode(S1, OUTPUT);
@@ -390,9 +544,9 @@ void loop() {
         // First byte is usually register address (0x00), skip it
         int dataStart = 1;
         
-        // Check if we have enough bytes (need at least 16: 1 register + 15 data)
-        if (receiveLength < 16) {
-            Serial.printf("[LOOP] ERROR: Not enough data. Expected 16+ bytes, got %d\n", receiveLength);
+        // Check if we have enough bytes (need at least 20: 1 register + 19 data)
+        if (receiveLength < 20) {
+            Serial.printf("[LOOP] ERROR: Not enough data. Expected 20+ bytes, got %d\n", receiveLength);
         } else {
             // Parse Primary flow (bytes 1-5 after register)
             memcpy(&flows[0].pressure, &buf[dataStart], 4);
@@ -405,6 +559,12 @@ void loop() {
             // Parse Tertiary flow (bytes 11-15 after register)
             memcpy(&flows[2].pressure, &buf[dataStart + 10], 4);
             flows[2].pumpStatus = buf[dataStart + 14];
+            
+            // Parse Thermal Power (bytes 16-19 after register)
+            memcpy(&thermal_power_kw, &buf[dataStart + 15], 4);
+            
+            // Update power indicator LEDs based on thermal power
+            updatePowerIndicatorLEDs();
         }
         
         // Debug output
@@ -414,6 +574,14 @@ void loop() {
                       flows[1].pressure, flows[1].pumpStatus);
         Serial.printf("[LOOP] Tertiary: %.1f bar | Status: %d\n", 
                       flows[2].pressure, flows[2].pumpStatus);
+        Serial.printf("[LOOP] Thermal Power: %.1f kW | LEDs active: ", thermal_power_kw);
+        
+        // Count how many LEDs are ON
+        int leds_on = 0;
+        for (int i = 0; i < NUM_POWER_LEDS; i++) {
+            if (power_led_brightness[i] > 0) leds_on++;
+        }
+        Serial.printf("%d/%d\n", leds_on, NUM_POWER_LEDS);
     }
     
     // Update animation

@@ -15,13 +15,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ESP_BC_Data:
-    """Data structure for ESP-BC (Control Rods + Turbine + Humidifier) - MERGED"""
+    """Data structure for ESP-BC (Control Rods + Turbine + Humidifier + Pumps) - MERGED"""
     # To ESP-BC
     safety_target: int = 0
     shim_target: int = 0
     regulating_target: int = 0
-    humidifier_sg_cmd: int = 0
-    humidifier_ct_cmd: int = 0
+    
+    # Humidifier commands (6 individual relays)
+    humid_sg1_cmd: int = 0  # Steam Generator #1
+    humid_sg2_cmd: int = 0  # Steam Generator #2
+    humid_ct1_cmd: int = 0  # Cooling Tower #1
+    humid_ct2_cmd: int = 0  # Cooling Tower #2
+    humid_ct3_cmd: int = 0  # Cooling Tower #3
+    humid_ct4_cmd: int = 0  # Cooling Tower #4
     
     # From ESP-BC
     safety_actual: int = 0
@@ -32,13 +38,19 @@ class ESP_BC_Data:
     state: int = 0
     generator_status: int = 0
     turbine_status: int = 0
-    humidifier_sg_status: int = 0
-    humidifier_ct_status: int = 0
+    
+    # Humidifier status (6 individual relays)
+    humid_sg1_status: int = 0
+    humid_sg2_status: int = 0
+    humid_ct1_status: int = 0
+    humid_ct2_status: int = 0
+    humid_ct3_status: int = 0
+    humid_ct4_status: int = 0
 
 
 @dataclass
 class ESP_E_Data:
-    """Data structure for ESP-E (3-Flow LED Visualizer)"""
+    """Data structure for ESP-E (3-Flow LED Visualizer + Power Indicator)"""
     # To ESP-E
     pressure_primary: float = 0.0
     pump_status_primary: int = 0
@@ -46,6 +58,7 @@ class ESP_E_Data:
     pump_status_secondary: int = 0
     pressure_tertiary: float = 0.0
     pump_status_tertiary: int = 0
+    thermal_power_kw: float = 0.0  # NEW: Thermal power for LED indicator
     
     # From ESP-E
     animation_speed: int = 0
@@ -145,7 +158,9 @@ class I2CMaster:
     # ============================================
     
     def update_esp_bc(self, safety: int, shim: int, regulating: int,
-                      humid_sg_cmd: int, humid_ct_cmd: int) -> bool:
+                      humid_sg1: int = 0, humid_sg2: int = 0,
+                      humid_ct1: int = 0, humid_ct2: int = 0,
+                      humid_ct3: int = 0, humid_ct4: int = 0) -> bool:
         """
         Send rod positions and humidifier commands to ESP-BC
         
@@ -153,8 +168,12 @@ class I2CMaster:
             safety: Safety rod target (0-100%)
             shim: Shim rod target (0-100%)
             regulating: Regulating rod target (0-100%)
-            humid_sg_cmd: Steam Generator humidifier command (0/1)
-            humid_ct_cmd: Cooling Tower humidifier command (0/1)
+            humid_sg1: Steam Generator humidifier #1 (0/1)
+            humid_sg2: Steam Generator humidifier #2 (0/1)
+            humid_ct1: Cooling Tower humidifier #1 (0/1)
+            humid_ct2: Cooling Tower humidifier #2 (0/1)
+            humid_ct3: Cooling Tower humidifier #3 (0/1)
+            humid_ct4: Cooling Tower humidifier #4 (0/1)
             
         Returns:
             True if successful, False otherwise
@@ -167,14 +186,26 @@ class I2CMaster:
             self.esp_bc_data.safety_target = safety
             self.esp_bc_data.shim_target = shim
             self.esp_bc_data.regulating_target = regulating
-            self.esp_bc_data.humidifier_sg_cmd = humid_sg_cmd
-            self.esp_bc_data.humidifier_ct_cmd = humid_ct_cmd
+            self.esp_bc_data.humid_sg1_cmd = humid_sg1
+            self.esp_bc_data.humid_sg2_cmd = humid_sg2
+            self.esp_bc_data.humid_ct1_cmd = humid_ct1
+            self.esp_bc_data.humid_ct2_cmd = humid_ct2
+            self.esp_bc_data.humid_ct3_cmd = humid_ct3
+            self.esp_bc_data.humid_ct4_cmd = humid_ct4
+            
+            # Pack 6 humidifier commands into 1 byte (bit packing)
+            humid_byte = (humid_sg1 & 0x01) | \
+                        ((humid_sg2 & 0x01) << 1) | \
+                        ((humid_ct1 & 0x01) << 2) | \
+                        ((humid_ct2 & 0x01) << 3) | \
+                        ((humid_ct3 & 0x01) << 4) | \
+                        ((humid_ct4 & 0x01) << 5)
             
             # Pack data: 12 bytes
             write_data = struct.pack('<BBBBfBBBB',
                                     safety, shim, regulating, 0,
                                     0.0,  # Reserved float
-                                    humid_sg_cmd, humid_ct_cmd,
+                                    humid_byte, 0,  # Humidifier byte + reserved
                                     0, 0)  # Reserved bytes
             
             # Read response: 20 bytes
@@ -192,12 +223,23 @@ class I2CMaster:
                 self.esp_bc_data.state = values[6]
                 self.esp_bc_data.generator_status = values[7]
                 self.esp_bc_data.turbine_status = values[8]
-                self.esp_bc_data.humidifier_sg_status = values[9]
-                self.esp_bc_data.humidifier_ct_status = values[10]
+                
+                # Unpack humidifier status (bit-packed in 2 bytes)
+                humid_status_byte1 = values[9]
+                humid_status_byte2 = values[10]
+                
+                self.esp_bc_data.humid_sg1_status = humid_status_byte1 & 0x01
+                self.esp_bc_data.humid_sg2_status = (humid_status_byte1 >> 1) & 0x01
+                self.esp_bc_data.humid_ct1_status = (humid_status_byte1 >> 2) & 0x01
+                self.esp_bc_data.humid_ct2_status = (humid_status_byte1 >> 3) & 0x01
+                self.esp_bc_data.humid_ct3_status = humid_status_byte2 & 0x01
+                self.esp_bc_data.humid_ct4_status = (humid_status_byte2 >> 1) & 0x01
                 
                 logger.debug(f"ESP-BC: Rods=[{values[0]},{values[1]},{values[2]}], "
                            f"Thermal={values[4]:.1f}kW, Power={values[5]:.1f}%, "
-                           f"Humid=[SG:{values[9]}, CT:{values[10]}]")
+                           f"Humid_SG=[{self.esp_bc_data.humid_sg1_status},{self.esp_bc_data.humid_sg2_status}], "
+                           f"Humid_CT=[{self.esp_bc_data.humid_ct1_status},{self.esp_bc_data.humid_ct2_status},"
+                           f"{self.esp_bc_data.humid_ct3_status},{self.esp_bc_data.humid_ct4_status}]")
                 return True
             
         except Exception as e:
@@ -218,9 +260,10 @@ class I2CMaster:
     def update_esp_e(self, 
                     pressure_primary: float, pump_status_primary: int,
                     pressure_secondary: float, pump_status_secondary: int,
-                    pressure_tertiary: float, pump_status_tertiary: int) -> bool:
+                    pressure_tertiary: float, pump_status_tertiary: int,
+                    thermal_power_kw: float = 0.0) -> bool:
         """
-        Update ESP-E with all 3 flow visualizers
+        Update ESP-E with all 3 flow visualizers + thermal power
         
         Args:
             pressure_primary: Primary flow pressure
@@ -229,6 +272,7 @@ class I2CMaster:
             pump_status_secondary: Secondary pump status
             pressure_tertiary: Tertiary flow pressure
             pump_status_tertiary: Tertiary pump status
+            thermal_power_kw: Thermal power in kW (for power indicator LEDs)
             
         Returns:
             True if successful, False otherwise
@@ -244,13 +288,15 @@ class I2CMaster:
             self.esp_e_data.pump_status_secondary = pump_status_secondary
             self.esp_e_data.pressure_tertiary = pressure_tertiary
             self.esp_e_data.pump_status_tertiary = pump_status_tertiary
+            self.esp_e_data.thermal_power_kw = thermal_power_kw
             
-            # Pack data: 16 bytes (3 x (float + uint8) + padding)
-            write_data = struct.pack('<BfBfBfB',
+            # Pack data: 20 bytes (3 x (float + uint8) + thermal power float)
+            write_data = struct.pack('<BfBfBfBf',
                                     0,  # Register address
                                     pressure_primary, pump_status_primary,
                                     pressure_secondary, pump_status_secondary,
-                                    pressure_tertiary, pump_status_tertiary)
+                                    pressure_tertiary, pump_status_tertiary,
+                                    thermal_power_kw)
             
             # Read response: 2 bytes
             response = self.write_read_with_retry(0x0A, write_data, 2)
@@ -321,7 +367,8 @@ if __name__ == "__main__":
         print("\nTesting ESP-BC communication...")
         success = master.update_esp_bc(
             safety=50, shim=60, regulating=70,
-            humid_sg_cmd=1, humid_ct_cmd=1
+            humid_sg1=1, humid_sg2=1,
+            humid_ct1=1, humid_ct2=0, humid_ct3=1, humid_ct4=0
         )
         
         if success:
@@ -329,7 +376,9 @@ if __name__ == "__main__":
             print(f"  Rod positions: {data.safety_actual}, {data.shim_actual}, {data.regulating_actual}")
             print(f"  Thermal power: {data.kw_thermal} kW")
             print(f"  Turbine power: {data.power_level}%")
-            print(f"  Humidifiers: SG={data.humidifier_sg_status}, CT={data.humidifier_ct_status}")
+            print(f"  Humidifiers SG: [{data.humid_sg1_status}, {data.humid_sg2_status}]")
+            print(f"  Humidifiers CT: [{data.humid_ct1_status}, {data.humid_ct2_status}, "
+                  f"{data.humid_ct3_status}, {data.humid_ct4_status}]")
         else:
             print("  Failed to communicate with ESP-BC")
         

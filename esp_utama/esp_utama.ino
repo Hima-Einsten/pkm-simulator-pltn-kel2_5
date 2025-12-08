@@ -236,26 +236,81 @@ void updateServos() {
 // THERMAL POWER CALCULATION
 // ================================
 void calculateThermalPower() {
-  float avgRodPosition = (safety_actual + shim_actual + regulating_actual) / 3.0;
+  /*
+   * Electrical Power Calculation - PWR Nuclear Reactor Model
+   * 
+   * Reactor Rating: 300 MWe (300,000 kW electrical)
+   * 
+   * Power dihasilkan ketika:
+   * 1. Control rods ditarik (reactivity meningkat)
+   * 2. Turbin bergerak (konversi thermal → electrical)
+   * 
+   * Realistic Physics:
+   * - Reactor menghasilkan panas thermal (dari fisi nuklir)
+   * - Turbine efficiency ~33% (typical PWR)
+   * - Electrical output = Thermal × Turbine Efficiency × Load
+   * 
+   * Formula:
+   * - Reactivity dari shim + regulating rods (safety untuk shutdown)
+   * - Thermal capacity ~900 MWth (untuk 300 MWe)
+   * - Scaling berdasarkan turbine power_level (0-100%)
+   */
   
-  // Base power curve
-  thermal_kw_calculated = 50.0 + (avgRodPosition * avgRodPosition * 0.195);
+  // Calculate reactivity from control rods
+  float avgRodPosition = (shim_actual + regulating_actual) / 2.0;
+  // Safety rod hanya untuk shutdown/SCRAM, tidak berkontribusi ke power
   
-  // Add individual rod contributions
-  thermal_kw_calculated += safety_actual * 2.0;
-  thermal_kw_calculated += shim_actual * 3.5;
-  thermal_kw_calculated += regulating_actual * 4.0;
+  // Reactor thermal power capacity (0 - 900 MWth = 900,000 kW thermal)
+  float reactor_thermal_kw = 0.0;
+  
+  if (avgRodPosition > 10.0) {
+    // Non-linear power curve (quadratic untuk simulasi reaktivitas)
+    // Max thermal: 900 MWth ketika rods full (100%)
+    reactor_thermal_kw = avgRodPosition * avgRodPosition * 90.0;  // 100^2 × 90 = 900,000 kW
+    
+    // Individual rod contributions untuk fine control
+    reactor_thermal_kw += shim_actual * 150.0;       // Coarse control
+    reactor_thermal_kw += regulating_actual * 200.0; // Fine control
+  }
+  
+  // Clamp reactor thermal output (0 - 900 MWth)
+  if (reactor_thermal_kw > 900000.0) reactor_thermal_kw = 900000.0;
+  
+  // **Turbine Conversion: Thermal → Electrical**
+  // Turbine efficiency ~33% (typical PWR)
+  // power_level = turbine load (0-100%)
+  
+  float turbine_load = power_level / 100.0;  // 0.0 to 1.0
+  const float TURBINE_EFFICIENCY = 0.33;     // 33% thermal to electrical
+  
+  // Final electrical power output (MWe)
+  // 900 MWth × 33% × 100% load = 300 MWe (max)
+  thermal_kw_calculated = reactor_thermal_kw * TURBINE_EFFICIENCY * turbine_load;
+  
+  // Clamp electrical output (0 - 300 MWe = 300,000 kW)
+  if (thermal_kw_calculated < 0.0) thermal_kw_calculated = 0.0;
+  if (thermal_kw_calculated > 300000.0) thermal_kw_calculated = 300000.0;
 }
 
 // ================================
 // TURBINE STATE MACHINE
 // ================================
 void updateTurbineState() {
-  float thermal_kw = thermal_kw_calculated;
+  // Check reactor thermal capacity (not electrical output)
+  // Calculate reactor thermal for state machine decision
+  float avgRodPosition = (shim_actual + regulating_actual) / 2.0;
+  float reactor_thermal_capacity = 0.0;
+  
+  if (avgRodPosition > 10.0) {
+    reactor_thermal_capacity = avgRodPosition * avgRodPosition * 90.0;
+    reactor_thermal_capacity += shim_actual * 150.0;
+    reactor_thermal_capacity += regulating_actual * 200.0;
+  }
   
   switch (current_state) {
     case STATE_IDLE:
-      if (thermal_kw > 500.0) {
+      // Start turbine ketika reactor panas cukup (>50 MWth = 50,000 kW)
+      if (reactor_thermal_capacity > 50000.0) {
         current_state = STATE_STARTING;
         Serial.println("Turbine: IDLE → STARTING");
       }
@@ -263,7 +318,8 @@ void updateTurbineState() {
       break;
       
     case STATE_STARTING:
-      power_level += 0.5;
+      // Gradual turbine spin-up (0→100% dalam ~3 menit)
+      power_level += 0.5;  // Increment per cycle
       if (power_level >= 100.0) {
         power_level = 100.0;
         current_state = STATE_RUNNING;
@@ -272,7 +328,8 @@ void updateTurbineState() {
       break;
       
     case STATE_RUNNING:
-      if (thermal_kw < 200.0) {
+      // Shutdown jika reactor thermal terlalu rendah (<20 MWth)
+      if (reactor_thermal_capacity < 20000.0) {
         current_state = STATE_SHUTDOWN;
         Serial.println("Turbine: RUNNING → SHUTDOWN");
       }

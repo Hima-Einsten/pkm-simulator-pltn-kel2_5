@@ -57,9 +57,13 @@ class PanelState:
     # Thermal power from ESP-B
     thermal_kw: float = 0.0
     
-    # Humidifier commands
-    humidifier_sg_cmd: int = 0
-    humidifier_ct_cmd: int = 0
+    # Humidifier commands (6 individual relays)
+    humid_sg1_cmd: int = 0
+    humid_sg2_cmd: int = 0
+    humid_ct1_cmd: int = 0
+    humid_ct2_cmd: int = 0
+    humid_ct3_cmd: int = 0
+    humid_ct4_cmd: int = 0
     
     # Emergency state
     emergency_active: bool = False
@@ -338,8 +342,24 @@ class PLTNPanelController:
                         self.state.regulating_rod,
                         self.state.thermal_kw
                     )
-                    self.state.humidifier_sg_cmd = 1 if sg_on else 0
-                    self.state.humidifier_ct_cmd = 1 if ct_on else 0
+                    # Control semua humidifier berdasarkan logika kontrol
+                    # Steam Generator: 2 humidifier
+                    self.state.humid_sg1_cmd = 1 if sg_on else 0
+                    self.state.humid_sg2_cmd = 1 if sg_on else 0
+                    
+                    # Cooling Tower: 4 humidifier (nyalakan bertahap)
+                    if ct_on:
+                        # Nyalakan semua jika butuh CT humidifier
+                        self.state.humid_ct1_cmd = 1
+                        self.state.humid_ct2_cmd = 1
+                        self.state.humid_ct3_cmd = 1
+                        self.state.humid_ct4_cmd = 1
+                    else:
+                        # Matikan semua
+                        self.state.humid_ct1_cmd = 0
+                        self.state.humid_ct2_cmd = 0
+                        self.state.humid_ct3_cmd = 0
+                        self.state.humid_ct4_cmd = 0
                 
                 # Simulate pump startup/shutdown
                 self.update_pump_status()
@@ -402,8 +422,12 @@ class PLTNPanelController:
                             self.state.safety_rod,
                             self.state.shim_rod,
                             self.state.regulating_rod,
-                            self.state.humidifier_sg_cmd,
-                            self.state.humidifier_ct_cmd
+                            self.state.humid_sg1_cmd,
+                            self.state.humid_sg2_cmd,
+                            self.state.humid_ct1_cmd,
+                            self.state.humid_ct2_cmd,
+                            self.state.humid_ct3_cmd,
+                            self.state.humid_ct4_cmd
                         )
                         
                         if success:

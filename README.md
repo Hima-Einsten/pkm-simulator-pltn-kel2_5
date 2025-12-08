@@ -35,10 +35,17 @@
 
 Simulator PLTN tipe **PWR (Pressurized Water Reactor)** dengan Raspberry Pi 4 sebagai master controller dan **2 ESP32** sebagai slave controllers (Optimized Architecture v3.0).
 
-### 🎉 What's New in v3.0 (2 ESP Architecture)
+### 🎉 What's New in v3.1 (Hardware Configuration Update - Dec 8, 2024)
 
-**Major Optimization:**
-- ✅ **Merged ESP-B + ESP-C → ESP-BC** (Control Rods + Turbine + Humidifier)
+**Hardware Clarification:**
+- ✅ **6 Relay = ALL for Humidifiers** (2 SG + 4 CT)
+- ✅ **4 Motor Driver = 3 Pompa + 1 Turbin**
+- ✅ **Pump Gradual Control** - Realistic start/stop behavior
+- ✅ **Dynamic Turbine Speed** - Based on control rods position
+- ✅ **Individual Humidifier Control** - 6 independent relays
+
+**Major Optimization (v3.0):**
+- ✅ **Merged ESP-B + ESP-C → ESP-BC** (Control Rods + Turbine + Humidifier + Pumps)
 - ✅ **Reduced from 3 ESP to 2 ESP** - Simpler, more efficient
 - ✅ **Cost savings:** ~$5-10 per unit
 - ✅ **Better performance:** <10% CPU load per ESP
@@ -977,17 +984,19 @@ python3 raspi_main_panel.py
 
 ## 📊 Status Implementasi
 
-**Overall Progress:** 🟢 **95% Complete** (Code Ready - Hardware Testing Pending)  
-**Architecture:** ✅ **v3.0 - 2 ESP Optimized**  
-**Last Updated:** 2024-12-05
+**Overall Progress:** 🟢 **98% Complete** (Code Ready - Hardware Testing Pending)  
+**Architecture:** ✅ **v3.1 - Hardware Configuration Finalized**  
+**Last Updated:** 2024-12-08
 
 ### ✅ Phase 1 & 2: COMPLETED (100%)
 
-- [x] **ESP-BC (Merged)** ✅ NEW
+- [x] **ESP-BC (Merged)** ✅ **UPDATED v3.1**
   - Firmware: `esp_utama/esp_utama.ino`
   - 3 servos (control rods)
-  - 6 relays (4 main + 2 humidifier)
-  - 4 PWM motors (turbine system)
+  - **6 relays (ALL for humidifiers: 2 SG + 4 CT)** ✨ NEW
+  - **4 motor drivers (3 pompa + 1 turbin)** ✨ NEW
+  - **Pump gradual control (realistic behavior)** ✨ NEW
+  - **Dynamic turbine speed (based on rods)** ✨ NEW
   - Thermal power calculation
   - I2C protocol: 12 bytes send, 20 bytes receive
   - ESP32 Core v3.x compatible
@@ -1016,8 +1025,10 @@ python3 raspi_main_panel.py
   - Emergency shutdown
   - Thermal power feedback
 
-- [x] **Documentation** ✅
-  - `README.md` - This file (updated)
+- [x] **Documentation** ✅ **UPDATED**
+  - `README.md` - This file (updated v3.1)
+  - `TODO.md` - Updated with Session 4 progress
+  - `HARDWARE_UPDATE_SUMMARY.md` - Hardware config details ✨ NEW
   - `ARCHITECTURE_2ESP.md` - Complete design
   - `ESP_PERFORMANCE_ANALYSIS.md` - Benchmarks
   - `HARDWARE_OPTIMIZATION_ANALYSIS.md` - Pin analysis

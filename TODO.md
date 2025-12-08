@@ -1,10 +1,48 @@
 # 📋 TODO LIST - PKM PLTN Simulator Integration
 
-**Last Updated:** 2024-12-05 (Session 4 - Architecture Finalized)  
-**Overall Progress:** 🟢 **95%** Complete  
+**Last Updated:** 2024-12-08 (Session 5 - Hardware Configuration Updated)  
+**Overall Progress:** 🟢 **98%** Complete  
 **Architecture:** ✅ **2 ESP (ESP-BC + ESP-E)** - OPTIMIZED  
-**Status:** Code Complete - Hardware Testing Pending  
+**Status:** Hardware Configuration Finalized - Ready for Testing  
 **Target Completion:** December 2024
+
+---
+
+## 🆕 LATEST UPDATE - 2024-12-08
+
+### ✅ **Hardware Configuration Correction** [COMPLETED]
+
+**What Changed:**
+- 🔧 Clarified relay usage: **6 relays = ALL for humidifiers only**
+- 🔧 Clarified motor driver: **4 channels = 3 pompa + 1 turbin**
+- 🔧 Added gradual pump control (realistic behavior)
+- 🔧 Added dynamic turbine speed based on control rods
+
+**Key Updates:**
+1. **Relay Configuration (6 Channels):**
+   - 2x Steam Generator Humidifiers (GPIO 13, 15)
+   - 4x Cooling Tower Humidifiers (GPIO 32, 33, 14, 12)
+
+2. **Motor Driver (4 Channels):**
+   - Pompa Primer (GPIO 4)
+   - Pompa Sekunder (GPIO 16)
+   - Pompa Tersier (GPIO 17)
+   - Motor Turbin (GPIO 5)
+
+3. **New Features:**
+   - ✅ Pompa gradual start/stop (realistic!)
+   - ✅ Turbine speed = (Shim + Regulating) / 2
+   - ✅ Safety rod tidak mempengaruhi turbine speed
+   - ✅ 6 humidifier individual control
+
+**Files Updated:**
+- `esp_utama/esp_utama.ino` - Hardware config + pump/turbine logic
+- `raspi_central_control/raspi_i2c_master.py` - 6 humidifier support
+- `raspi_central_control/raspi_main_panel.py` - 6 humidifier commands
+- `HARDWARE_UPDATE_SUMMARY.md` - Complete documentation (NEW)
+
+**Status:** ✅ **COMPLETED**  
+**Documentation:** See `HARDWARE_UPDATE_SUMMARY.md`
 
 ---
 
@@ -635,23 +673,51 @@ When you see this TODO.md file, you should:
 - Phase 2: 100% complete ✅
 - Phase 3: 0% complete (9-OLED pending)
 
+**2024-12-08 Session 4:**
+- ✅ **HARDWARE CONFIGURATION CORRECTION**
+- ✅ Clarified relay usage: 6 relays = ALL for humidifiers
+  - 2x Steam Generator (GPIO 13, 15)
+  - 4x Cooling Tower (GPIO 32, 33, 14, 12)
+- ✅ Clarified motor driver: 4 channels = 3 pompa + 1 turbin
+  - Pompa Primer, Sekunder, Tersier (GPIO 4, 16, 17)
+  - Motor Turbin (GPIO 5)
+- ✅ Added pump gradual control (realistic behavior)
+  - Gradual acceleration: +2% per cycle
+  - Gradual deceleration: -1% per cycle
+- ✅ Added dynamic turbine speed control
+  - Speed based on: (Shim + Regulating) / 2
+  - Safety rod tidak mempengaruhi turbine
+- ✅ Updated ESP32 firmware: `esp_utama/esp_utama.ino`
+- ✅ Updated Raspberry Pi I2C: `raspi_i2c_master.py`
+- ✅ Updated main panel: `raspi_main_panel.py`
+- ✅ Created documentation: `HARDWARE_UPDATE_SUMMARY.md`
+- Status: 98% complete overall
+- Phase 1: 100% complete ✅
+- Phase 2: 100% complete ✅
+- Phase 3: 0% complete (9-OLED pending)
+
 **Next Session Should:**
-1. Delete old `raspi_main.py` (deprecated)
-2. Upload ESP-BC firmware to ESP32
-3. Test hardware integration
-4. Implement 9-OLED display manager (Issue #5)
-5. Full system integration testing
+1. Upload updated ESP-BC firmware to ESP32
+2. Test hardware integration (relay + motor driver)
+3. Verify pump gradual control behavior
+4. Verify turbine speed control
+5. Test 6 individual humidifiers
+6. Implement 9-OLED display manager (Issue #5)
+7. Full system integration testing
 
 ---
 
 **Last Updated By:** AI Assistant  
-**Date:** 2024-12-05 (Session 3 - Architecture Finalized)  
+**Date:** 2024-12-08 (Session 4 - Hardware Configuration Updated)  
 **Next Review:** Hardware testing + OLED implementation  
-**Version:** 3.0 - 2 ESP Architecture
+**Version:** 3.1 - Hardware Configuration Finalized
 
-✅ **MAJOR ACHIEVEMENT: 2 ESP Architecture Complete!**  
-✅ **All Python code updated and tested**  
-✅ **ESP32 firmware ready for upload**  
-✅ **Documentation complete (8 new files)**  
+✅ **MAJOR ACHIEVEMENT: Hardware Configuration Clarified!**  
+✅ **6 Relay = Humidifiers Only (2 SG + 4 CT)**  
+✅ **4 Motor Driver = 3 Pompa + 1 Turbin**  
+✅ **Pump Gradual Control Implemented (Realistic!)**  
+✅ **Turbine Dynamic Speed Control**  
+✅ **All code updated and ready for testing**  
+✅ **Documentation complete (9 files)**  
 🎯 **Next Focus: Hardware testing + Issue #5 (9-OLED displays)**  
-📊 **Code: 95% Complete | Hardware Testing: Pending**
+📊 **Code: 98% Complete | Hardware Testing: Pending**
