@@ -180,60 +180,81 @@ class PLTNPanelController:
     
     def on_pressure_up(self):
         """Pressure UP button pressed"""
+        logger.info(">>> Callback: on_pressure_up")
         with self.state_lock:
             self.state.pressure = min(self.state.pressure + 5.0, 200.0)
             logger.info(f"Pressure: {self.state.pressure:.1f} bar")
     
     def on_pressure_down(self):
         """Pressure DOWN button pressed"""
+        logger.info(">>> Callback: on_pressure_down")
         with self.state_lock:
             self.state.pressure = max(self.state.pressure - 5.0, 0.0)
             logger.info(f"Pressure: {self.state.pressure:.1f} bar")
     
     def on_pump_primary_on(self):
         """Primary pump ON button"""
+        logger.info(">>> Callback: on_pump_primary_on")
         with self.state_lock:
             if self.state.pump_primary_status == 0:  # OFF
                 self.state.pump_primary_status = 1  # STARTING
                 logger.info("Primary pump: STARTING")
+            else:
+                logger.info(f"Primary pump already in state: {self.state.pump_primary_status}")
     
     def on_pump_primary_off(self):
         """Primary pump OFF button"""
+        logger.info(">>> Callback: on_pump_primary_off")
         with self.state_lock:
             if self.state.pump_primary_status == 2:  # ON
                 self.state.pump_primary_status = 3  # SHUTTING_DOWN
                 logger.info("Primary pump: SHUTTING DOWN")
+            else:
+                logger.info(f"Primary pump not ON (state: {self.state.pump_primary_status})")
     
     def on_pump_secondary_on(self):
         """Secondary pump ON button"""
+        logger.info(">>> Callback: on_pump_secondary_on")
         with self.state_lock:
             if self.state.pump_secondary_status == 0:
                 self.state.pump_secondary_status = 1
                 logger.info("Secondary pump: STARTING")
+            else:
+                logger.info(f"Secondary pump already in state: {self.state.pump_secondary_status}")
     
     def on_pump_secondary_off(self):
         """Secondary pump OFF button"""
+        logger.info(">>> Callback: on_pump_secondary_off")
         with self.state_lock:
             if self.state.pump_secondary_status == 2:
                 self.state.pump_secondary_status = 3
                 logger.info("Secondary pump: SHUTTING DOWN")
+            else:
+                logger.info(f"Secondary pump not ON (state: {self.state.pump_secondary_status})")
     
     def on_pump_tertiary_on(self):
         """Tertiary pump ON button"""
+        logger.info(">>> Callback: on_pump_tertiary_on")
         with self.state_lock:
             if self.state.pump_tertiary_status == 0:
                 self.state.pump_tertiary_status = 1
                 logger.info("Tertiary pump: STARTING")
+            else:
+                logger.info(f"Tertiary pump already in state: {self.state.pump_tertiary_status}")
     
     def on_pump_tertiary_off(self):
         """Tertiary pump OFF button"""
+        logger.info(">>> Callback: on_pump_tertiary_off")
         with self.state_lock:
             if self.state.pump_tertiary_status == 2:
                 self.state.pump_tertiary_status = 3
                 logger.info("Tertiary pump: SHUTTING DOWN")
+            else:
+                logger.info(f"Tertiary pump not ON (state: {self.state.pump_tertiary_status})")
     
     def on_safety_rod_up(self):
         """Safety rod UP button"""
+        logger.info(">>> Callback: on_safety_rod_up")
         if not self.check_interlock():
             logger.warning("Safety rod UP: Interlock not satisfied!")
             return
@@ -244,12 +265,14 @@ class PLTNPanelController:
     
     def on_safety_rod_down(self):
         """Safety rod DOWN button"""
+        logger.info(">>> Callback: on_safety_rod_down")
         with self.state_lock:
             self.state.safety_rod = max(self.state.safety_rod - 5, 0)
             logger.info(f"Safety rod: {self.state.safety_rod}%")
     
     def on_shim_rod_up(self):
         """Shim rod UP button"""
+        logger.info(">>> Callback: on_shim_rod_up")
         if not self.check_interlock():
             logger.warning("Shim rod UP: Interlock not satisfied!")
             return
@@ -260,12 +283,14 @@ class PLTNPanelController:
     
     def on_shim_rod_down(self):
         """Shim rod DOWN button"""
+        logger.info(">>> Callback: on_shim_rod_down")
         with self.state_lock:
             self.state.shim_rod = max(self.state.shim_rod - 5, 0)
             logger.info(f"Shim rod: {self.state.shim_rod}%")
     
     def on_regulating_rod_up(self):
         """Regulating rod UP button"""
+        logger.info(">>> Callback: on_regulating_rod_up")
         if not self.check_interlock():
             logger.warning("Regulating rod UP: Interlock not satisfied!")
             return
@@ -276,12 +301,14 @@ class PLTNPanelController:
     
     def on_regulating_rod_down(self):
         """Regulating rod DOWN button"""
+        logger.info(">>> Callback: on_regulating_rod_down")
         with self.state_lock:
             self.state.regulating_rod = max(self.state.regulating_rod - 5, 0)
             logger.info(f"Regulating rod: {self.state.regulating_rod}%")
     
     def on_emergency(self):
         """EMERGENCY button pressed"""
+        logger.critical(">>> Callback: on_emergency - EMERGENCY SHUTDOWN!")
         with self.state_lock:
             self.state.emergency_active = True
             self.state.safety_rod = 0

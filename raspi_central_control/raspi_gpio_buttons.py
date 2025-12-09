@@ -104,7 +104,7 @@ class ButtonHandler:
             callback: Function to call when button pressed (no arguments)
         """
         self.callbacks[button_pin] = callback
-        logger.debug(f"Registered callback for {BUTTON_NAMES[button_pin]}")
+        logger.info(f"Callback registered: {BUTTON_NAMES[button_pin]}")
     
     def check_all_buttons(self):
         """
@@ -116,15 +116,10 @@ class ButtonHandler:
         for pin in ButtonPin:
             current_state = GPIO.input(pin)
             
-            # Debug: Log state changes for all buttons
-            if current_state != self.last_state[pin]:
-                logger.debug(f"Button {BUTTON_NAMES[pin]} state changed: {self.last_state[pin]} -> {current_state}")
-            
             # Detect HIGH to LOW transition (button press)
             if current_state == GPIO.LOW and self.last_state[pin] == GPIO.HIGH:
                 # Check debounce
                 time_since_last = current_time - self.last_press_time[pin]
-                logger.debug(f"Button {BUTTON_NAMES[pin]} transition detected, time_since_last={time_since_last:.3f}s")
                 
                 if time_since_last > self.debounce_time:
                     self.last_press_time[pin] = current_time
@@ -134,14 +129,11 @@ class ButtonHandler:
                     # Trigger callback if registered
                     if pin in self.callbacks:
                         try:
-                            logger.debug(f"Calling callback for {BUTTON_NAMES[pin]}")
                             self.callbacks[pin]()
                         except Exception as e:
                             logger.error(f"Error in callback for {BUTTON_NAMES[pin]}: {e}")
                     else:
-                        logger.warning(f"No callback registered for {BUTTON_NAMES[pin]}")
-                else:
-                    logger.debug(f"Button {BUTTON_NAMES[pin]} debounced (too soon: {time_since_last:.3f}s)")
+                        logger.warning(f"⚠ No callback registered for {BUTTON_NAMES[pin]}")
             
             # Update last state AFTER checking
             self.last_state[pin] = current_state
