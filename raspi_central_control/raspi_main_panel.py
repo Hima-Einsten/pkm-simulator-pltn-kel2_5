@@ -159,7 +159,8 @@ class PLTNPanelController:
             # Emergency button
             self.button_manager.register_callback(ButtonPin.EMERGENCY, self.on_emergency)
             
-            logger.info("Button manager initialized with 15 buttons")
+            callback_count = len(self.button_manager.callbacks)
+            logger.info(f"Button manager initialized: {callback_count} callbacks registered")
         except Exception as e:
             logger.error(f"Failed to initialize buttons: {e}")
             raise
