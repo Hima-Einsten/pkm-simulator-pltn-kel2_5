@@ -79,6 +79,7 @@ class ButtonHandler:
         """
         self.debounce_time = debounce_time
         self.last_press_time = {}
+        self.last_state = {}
         self.callbacks = {}
         
         # Initialize GPIO
@@ -90,6 +91,7 @@ class ButtonHandler:
         for pin in ButtonPin:
             GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
             self.last_press_time[pin] = 0
+            self.last_state[pin] = GPIO.HIGH
             
         logger.info("GPIO Button Handler initialized with 15 buttons")
     
@@ -112,8 +114,10 @@ class ButtonHandler:
         current_time = time.time()
         
         for pin in ButtonPin:
-            # Button pressed when GPIO reads LOW (pulled to GND)
-            if GPIO.input(pin) == GPIO.LOW:
+            current_state = GPIO.input(pin)
+            
+            # Detect HIGH to LOW transition (button press)
+            if current_state == GPIO.LOW and self.last_state[pin] == GPIO.HIGH:
                 # Check debounce
                 if current_time - self.last_press_time[pin] > self.debounce_time:
                     self.last_press_time[pin] = current_time
@@ -126,6 +130,9 @@ class ButtonHandler:
                             self.callbacks[pin]()
                         except Exception as e:
                             logger.error(f"Error in callback for {BUTTON_NAMES[pin]}: {e}")
+            
+            # Update last state
+            self.last_state[pin] = current_state
     
     def is_button_pressed(self, button_pin):
         """
