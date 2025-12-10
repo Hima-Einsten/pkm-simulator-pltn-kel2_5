@@ -5,14 +5,22 @@ PLTN Simulator - TCA9548A + 9 OLED Test Script
 This script will ACTUALLY LIGHT UP the OLEDs and display text!
 
 Usage:
-    python test_oled_display_active.py
+    python3 test_oled_display_active.py
 
 Requirements:
-    pip install smbus2 luma.oled pillow
+    pip3 install smbus2 luma.oled pillow
 
 Author: System Architect
 Date: 2024-12-10
 """
+
+import sys
+import os
+
+# Add user site-packages to path if not already there
+user_site = os.path.expanduser('~/.local/lib/python3.7/site-packages')
+if user_site not in sys.path:
+    sys.path.insert(0, user_site)
 
 import time
 import smbus2
