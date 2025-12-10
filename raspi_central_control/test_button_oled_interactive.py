@@ -381,6 +381,13 @@ def main():
     
     # Setup GPIO
     print("\n2. Setting up GPIO buttons...")
+    
+    # Cleanup first (in case of previous runs)
+    try:
+        GPIO.cleanup()
+    except:
+        pass
+    
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
     
@@ -396,11 +403,24 @@ def main():
     ]
     
     for pin, name in buttons:
-        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.add_event_detect(pin, GPIO.FALLING, 
-                            callback=button_callback, 
-                            bouncetime=200)
-        print(f"   ✓ GPIO {pin:2d}: {name}")
+        try:
+            GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            GPIO.add_event_detect(pin, GPIO.FALLING, 
+                                callback=button_callback, 
+                                bouncetime=200)
+            print(f"   ✓ GPIO {pin:2d}: {name}")
+        except RuntimeError as e:
+            print(f"   ⚠️  GPIO {pin:2d}: {name} - {e}")
+            print(f"      Trying to recover...")
+            try:
+                GPIO.remove_event_detect(pin)
+                GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+                GPIO.add_event_detect(pin, GPIO.FALLING, 
+                                    callback=button_callback, 
+                                    bouncetime=200)
+                print(f"   ✓ GPIO {pin:2d}: Recovered")
+            except Exception as e2:
+                print(f"   ✗ GPIO {pin:2d}: Failed - {e2}")
     
     print("\n" + "="*60)
     print("System Ready!")
