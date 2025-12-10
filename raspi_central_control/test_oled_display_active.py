@@ -129,7 +129,6 @@ class OLEDDisplayManager:
             from luma.core.interface.serial import i2c
             from luma.core.render import canvas
             from luma.oled.device import ssd1306
-            from PIL import ImageFont
             
             # Create I2C serial interface
             serial = i2c(port=I2C_BUS, address=OLED_ADDRESS)
@@ -211,13 +210,13 @@ class OLEDDisplayManager:
             return True
             
         except ImportError as e:
-            logger.error("❌ luma.oled library not installed!")
-            logger.error("Install with: pip install luma.oled pillow")
+            logger.error(f"❌ Import error: {e}")
+            logger.error("Install with: pip3 install luma.oled pillow")
             return False
         except Exception as e:
             logger.error(f"❌ OLED test failed: {e}")
             import traceback
-            traceback.print_exc()
+            logger.error(traceback.format_exc())
             return False
 
 
