@@ -207,7 +207,7 @@ class OLEDManager:
         try:
             i2c = board.I2C()
             
-            # Initialize displays on TCA9548A #1
+            # Initialize displays on TCA9548A #1 (0x70)
             logger.info("Initializing OLEDs on TCA9548A #1 (0x70)...")
             for channel, display, name in displays_mux1:
                 self.mux.select_display_channel(channel)
@@ -222,14 +222,13 @@ class OLEDManager:
                 logger.info(f"  ✓ OLED #{channel}: {name}")
                 time.sleep(0.3)
             
-            # Initialize displays on TCA9548A #2
+            # Initialize displays on TCA9548A #2 (0x71)
             logger.info("Initializing OLEDs on TCA9548A #2 (0x71)...")
-            # Note: This requires dual multiplexer support
-            # For now, we'll use the same method but with different base
             for channel, display, name in displays_mux2:
-                # Select second multiplexer (implementation depends on mux_manager)
-                # This may need adjustment based on DualMultiplexerManager implementation
-                self.mux.select_display_channel(channel + 10)  # Offset for second mux
+                # Use esp_channel to access second multiplexer (0x71)
+                # Assuming mux_manager has select_esp_channel for TCA9548A #2
+                # For now, we'll use display_channel which should handle both
+                self.mux.select_esp_channel(channel)  # Changed to use ESP mux
                 time.sleep(0.1)
                 display.init_hardware(i2c, 0x3C)
                 
@@ -374,8 +373,8 @@ class OLEDManager:
         Args:
             power_kw: Electrical power in kW (0-300,000 kW = 0-300 MWe)
         """
-        # Channel offset for second multiplexer
-        self.mux.select_display_channel(11)  # TCA9548A #2, Channel 1
+        # Use ESP channel for TCA9548A #2 (0x71), Channel 1
+        self.mux.select_esp_channel(1)
         
         display = self.oled_thermal_power
         display.clear()
@@ -407,8 +406,8 @@ class OLEDManager:
             humid_ct1-ct4: Cooling tower humidifier status (0/1)
             interlock: Interlock satisfied flag
         """
-        # Channel offset for second multiplexer
-        self.mux.select_display_channel(12)  # TCA9548A #2, Channel 2
+        # Use ESP channel for TCA9548A #2 (0x71), Channel 2
+        self.mux.select_esp_channel(2)
         
         display = self.oled_system_status
         display.clear()
