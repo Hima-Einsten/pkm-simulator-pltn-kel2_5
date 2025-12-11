@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PanelState:
     """Panel control system state"""
+    # System control
+    reactor_started: bool = False  # Sistem reaktor sudah dimulai atau belum
+    
     # Pressure control
     pressure: float = 0.0
     
@@ -160,6 +163,10 @@ class PLTNPanelController:
             # Emergency button
             self.button_manager.register_callback(ButtonPin.EMERGENCY, self.on_emergency)
             
+            # System control buttons
+            self.button_manager.register_callback(ButtonPin.REACTOR_START, self.on_reactor_start)
+            self.button_manager.register_callback(ButtonPin.REACTOR_STOP, self.on_reactor_stop)
+            
             callback_count = len(self.button_manager.callbacks)
             logger.info(f"Button manager initialized: {callback_count} callbacks registered")
         except Exception as e:
@@ -204,6 +211,9 @@ class PLTNPanelController:
         """Pressure UP button pressed"""
         logger.info(">>> Callback: on_pressure_up")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             self.state.pressure = min(self.state.pressure + 5.0, 200.0)
             logger.info(f"Pressure: {self.state.pressure:.1f} bar")
     
@@ -211,6 +221,9 @@ class PLTNPanelController:
         """Pressure DOWN button pressed"""
         logger.info(">>> Callback: on_pressure_down")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             self.state.pressure = max(self.state.pressure - 5.0, 0.0)
             logger.info(f"Pressure: {self.state.pressure:.1f} bar")
     
@@ -218,6 +231,9 @@ class PLTNPanelController:
         """Primary pump ON button"""
         logger.info(">>> Callback: on_pump_primary_on")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             if self.state.pump_primary_status == 0:  # OFF
                 self.state.pump_primary_status = 1  # STARTING
                 logger.info("Primary pump: STARTING")
@@ -228,6 +244,9 @@ class PLTNPanelController:
         """Primary pump OFF button"""
         logger.info(">>> Callback: on_pump_primary_off")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             if self.state.pump_primary_status == 2:  # ON
                 self.state.pump_primary_status = 3  # SHUTTING_DOWN
                 logger.info("Primary pump: SHUTTING DOWN")
@@ -238,6 +257,9 @@ class PLTNPanelController:
         """Secondary pump ON button"""
         logger.info(">>> Callback: on_pump_secondary_on")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             if self.state.pump_secondary_status == 0:
                 self.state.pump_secondary_status = 1
                 logger.info("Secondary pump: STARTING")
@@ -248,6 +270,9 @@ class PLTNPanelController:
         """Secondary pump OFF button"""
         logger.info(">>> Callback: on_pump_secondary_off")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             if self.state.pump_secondary_status == 2:
                 self.state.pump_secondary_status = 3
                 logger.info("Secondary pump: SHUTTING DOWN")
@@ -258,6 +283,9 @@ class PLTNPanelController:
         """Tertiary pump ON button"""
         logger.info(">>> Callback: on_pump_tertiary_on")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             if self.state.pump_tertiary_status == 0:
                 self.state.pump_tertiary_status = 1
                 logger.info("Tertiary pump: STARTING")
@@ -268,6 +296,9 @@ class PLTNPanelController:
         """Tertiary pump OFF button"""
         logger.info(">>> Callback: on_pump_tertiary_off")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             if self.state.pump_tertiary_status == 2:
                 self.state.pump_tertiary_status = 3
                 logger.info("Tertiary pump: SHUTTING DOWN")
@@ -277,6 +308,10 @@ class PLTNPanelController:
     def on_safety_rod_up(self):
         """Safety rod UP button"""
         logger.info(">>> Callback: on_safety_rod_up")
+        with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
         if not self.check_interlock():
             logger.warning("Safety rod UP: Interlock not satisfied!")
             return
@@ -289,12 +324,19 @@ class PLTNPanelController:
         """Safety rod DOWN button"""
         logger.info(">>> Callback: on_safety_rod_down")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             self.state.safety_rod = max(self.state.safety_rod - 5, 0)
             logger.info(f"Safety rod: {self.state.safety_rod}%")
     
     def on_shim_rod_up(self):
         """Shim rod UP button"""
         logger.info(">>> Callback: on_shim_rod_up")
+        with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
         if not self.check_interlock():
             logger.warning("Shim rod UP: Interlock not satisfied!")
             return
@@ -307,12 +349,19 @@ class PLTNPanelController:
         """Shim rod DOWN button"""
         logger.info(">>> Callback: on_shim_rod_down")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             self.state.shim_rod = max(self.state.shim_rod - 5, 0)
             logger.info(f"Shim rod: {self.state.shim_rod}%")
     
     def on_regulating_rod_up(self):
         """Regulating rod UP button"""
         logger.info(">>> Callback: on_regulating_rod_up")
+        with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
         if not self.check_interlock():
             logger.warning("Regulating rod UP: Interlock not satisfied!")
             return
@@ -325,6 +374,9 @@ class PLTNPanelController:
         """Regulating rod DOWN button"""
         logger.info(">>> Callback: on_regulating_rod_down")
         with self.state_lock:
+            if not self.state.reactor_started:
+                logger.warning("⚠️  Reactor not started! Press START button first.")
+                return
             self.state.regulating_rod = max(self.state.regulating_rod - 5, 0)
             logger.info(f"Regulating rod: {self.state.regulating_rod}%")
     
@@ -340,6 +392,63 @@ class PLTNPanelController:
             self.state.pump_secondary_status = 3
             self.state.pump_tertiary_status = 3
             logger.critical("EMERGENCY SHUTDOWN ACTIVATED!")
+    
+    def on_reactor_start(self):
+        """Reactor START button - Initialize reactor system"""
+        logger.info(">>> Callback: on_reactor_start")
+        with self.state_lock:
+            if not self.state.reactor_started:
+                self.state.reactor_started = True
+                logger.info("=" * 60)
+                logger.info("🟢 REACTOR SYSTEM STARTED")
+                logger.info("System is now operational. You may begin operations.")
+                logger.info("=" * 60)
+            else:
+                logger.info("Reactor already started. No action taken.")
+    
+    def on_reactor_stop(self):
+        """Reactor STOP button - Reset to initial state"""
+        logger.info(">>> Callback: on_reactor_stop")
+        with self.state_lock:
+            if self.state.reactor_started:
+                # Check if system is safe to stop (all at initial state)
+                can_stop = (
+                    self.state.pump_primary_status == 0 and
+                    self.state.pump_secondary_status == 0 and
+                    self.state.pump_tertiary_status == 0 and
+                    self.state.safety_rod == 0 and
+                    self.state.shim_rod == 0 and
+                    self.state.regulating_rod == 0 and
+                    self.state.pressure < 5.0
+                )
+                
+                if can_stop:
+                    self.state.reactor_started = False
+                    self.state.emergency_active = False
+                    self.state.pressure = 0.0
+                    self.state.thermal_kw = 0.0
+                    # Reset humidifier commands
+                    self.state.humid_sg1_cmd = 0
+                    self.state.humid_sg2_cmd = 0
+                    self.state.humid_ct1_cmd = 0
+                    self.state.humid_ct2_cmd = 0
+                    self.state.humid_ct3_cmd = 0
+                    self.state.humid_ct4_cmd = 0
+                    logger.info("=" * 60)
+                    logger.info("🔴 REACTOR SYSTEM STOPPED")
+                    logger.info("System reset to initial state.")
+                    logger.info("=" * 60)
+                else:
+                    logger.warning("⚠️  Cannot stop reactor!")
+                    logger.warning("System must be in initial state:")
+                    logger.warning(f"  - All pumps: OFF (Current: P={self.state.pump_primary_status}, "
+                                 f"S={self.state.pump_secondary_status}, T={self.state.pump_tertiary_status})")
+                    logger.warning(f"  - All rods: 0% (Current: Safety={self.state.safety_rod}%, "
+                                 f"Shim={self.state.shim_rod}%, Reg={self.state.regulating_rod}%)")
+                    logger.warning(f"  - Pressure: <5 bar (Current: {self.state.pressure:.1f} bar)")
+                    logger.warning("Please shutdown pumps and lower all rods first!")
+            else:
+                logger.info("Reactor not started. No action taken.")
     
     # ============================================
     # Interlock Logic

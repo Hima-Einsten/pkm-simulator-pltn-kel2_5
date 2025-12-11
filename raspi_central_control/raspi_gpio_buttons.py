@@ -37,10 +37,12 @@ class ButtonPin(IntEnum):
     PRESSURE_UP = 24
     PRESSURE_DOWN = 23
     
-    # Emergency & Spare (3 buttons)
-    EMERGENCY = 18  # RED button - Highest priority!
-    SPARE_1 = 15
-    SPARE_2 = 14
+    # System Control (2 buttons)
+    REACTOR_START = 17  # GREEN button - Start reactor system
+    REACTOR_STOP = 27   # YELLOW button - Stop reactor system
+    
+    # Emergency (1 button)
+    EMERGENCY = 18  # RED button - Emergency shutdown!
 
 # Button names for logging
 BUTTON_NAMES = {
@@ -58,9 +60,9 @@ BUTTON_NAMES = {
     ButtonPin.REGULATING_ROD_DOWN: "Regulating Rod DOWN",
     ButtonPin.PRESSURE_UP: "Pressure UP",
     ButtonPin.PRESSURE_DOWN: "Pressure DOWN",
+    ButtonPin.REACTOR_START: "REACTOR START",
+    ButtonPin.REACTOR_STOP: "REACTOR STOP",
     ButtonPin.EMERGENCY: "EMERGENCY SHUTDOWN",
-    ButtonPin.SPARE_1: "Spare Button 1",
-    ButtonPin.SPARE_2: "Spare Button 2",
 }
 
 # ============================================
