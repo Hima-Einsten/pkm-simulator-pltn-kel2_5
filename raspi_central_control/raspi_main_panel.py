@@ -631,6 +631,28 @@ class PLTNPanelController:
         
         logger.info("Button polling thread stopped")
     
+    def oled_update_thread(self):
+        """Thread for updating 9 OLED displays (200ms cycle)"""
+        logger.info("OLED update thread started")
+        
+        if self.oled_manager is None:
+            logger.warning("OLED manager not available, thread exiting")
+            return
+        
+        while self.state.running:
+            try:
+                with self.state_lock:
+                    # Update all 9 OLED displays
+                    self.oled_manager.update_all(self.state)
+                
+                time.sleep(0.2)  # 200ms update rate
+                
+            except Exception as e:
+                logger.error(f"OLED update error: {e}")
+                time.sleep(0.5)  # Slower retry on error
+        
+        logger.info("OLED update thread stopped")
+    
     # ============================================
     # Main Loop
     # ============================================
