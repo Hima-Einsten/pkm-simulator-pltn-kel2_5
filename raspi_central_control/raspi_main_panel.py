@@ -95,6 +95,7 @@ class PLTNPanelController:
         self.init_i2c_master()
         self.init_buttons()
         self.init_humidifier()
+        self.init_oled_displays()  # Initialize 9 OLED displays
         
         # Threading locks
         self.i2c_lock = threading.Lock()
@@ -173,6 +174,27 @@ class PLTNPanelController:
         except Exception as e:
             logger.error(f"Failed to initialize humidifier: {e}")
             raise
+    
+    def init_oled_displays(self):
+        """Initialize 9 OLED displays (0.91 inch 128x64)"""
+        try:
+            from raspi_oled_manager import OLEDManager
+            
+            self.oled_manager = OLEDManager(
+                mux_manager=self.mux_manager,
+                width=128,
+                height=64  # 0.91 inch OLED
+            )
+            
+            # Initialize all 9 displays
+            self.oled_manager.init_all_displays()
+            
+            logger.info("9 OLED displays initialized (128x64)")
+            
+        except Exception as e:
+            logger.warning(f"Failed to initialize OLED displays: {e}")
+            logger.warning("Continuing without OLED displays...")
+            self.oled_manager = None
     
     # ============================================
     # Button Callbacks
@@ -510,13 +532,15 @@ class PLTNPanelController:
         
         # Start threads
         threads = [
-            threading.Thread(target=self.button_polling_thread, daemon=True),
-            threading.Thread(target=self.control_logic_thread, daemon=True),
-            threading.Thread(target=self.esp_communication_thread, daemon=True)
+            threading.Thread(target=self.button_polling_thread, daemon=True, name="ButtonThread"),
+            threading.Thread(target=self.control_logic_thread, daemon=True, name="ControlThread"),
+            threading.Thread(target=self.esp_communication_thread, daemon=True, name="ESPCommThread"),
+            threading.Thread(target=self.oled_update_thread, daemon=True, name="OLEDThread")  # New thread
         ]
         
         for t in threads:
             t.start()
+            logger.info(f"Thread started: {t.name}")
         
         try:
             while self.state.running:
