@@ -146,11 +146,23 @@ class DualMultiplexerManager:
         logger.info("Dual multiplexer manager initialized")
     
     def select_display_channel(self, channel: int) -> bool:
-        """Select OLED display channel"""
+        """
+        Select OLED display channel on TCA9548A #1 (0x70)
+        Disables ESP multiplexer channels first to avoid conflicts
+        """
+        # Disable ESP mux channels first
+        self.mux_esp.disable_all_channels()
+        # Select display channel
         return self.mux_display.select_channel(channel)
     
     def select_esp_channel(self, channel: int) -> bool:
-        """Select ESP slave channel"""
+        """
+        Select ESP slave channel on TCA9548A #2 (0x71)
+        Disables display multiplexer channels first to avoid conflicts
+        """
+        # Disable display mux channels first
+        self.mux_display.disable_all_channels()
+        # Select ESP channel
         return self.mux_esp.select_channel(channel)
     
     def scan_all(self) -> dict:
