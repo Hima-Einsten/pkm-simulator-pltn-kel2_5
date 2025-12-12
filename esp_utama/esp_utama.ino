@@ -62,10 +62,29 @@ uint8_t sendBuffer[SEND_SIZE];
 #define RELAY_HUMID_SG2       15
 
 // === MOTOR DRIVER PWM (4 motor DC) ===
-#define MOTOR_PUMP_PRIMARY    4    // Pompa Primer
-#define MOTOR_PUMP_SECONDARY  16   // Pompa Sekunder
-#define MOTOR_PUMP_TERTIARY   17   // Pompa Tersier
-#define MOTOR_TURBINE         5    // Motor Turbin
+// PWM Speed Control
+#define MOTOR_PUMP_PRIMARY    4    // Pompa Primer (ENA)
+#define MOTOR_PUMP_SECONDARY  16   // Pompa Sekunder (ENB)
+#define MOTOR_PUMP_TERTIARY   17   // Pompa Tersier (ENA)
+#define MOTOR_TURBINE         5    // Motor Turbin (ENB)
+
+// Direction Control (untuk L298N IN1, IN2, IN3, IN4)
+// L298N #1 - Pompa Primer & Sekunder
+#define MOTOR_PUMP_PRIMARY_IN1    18   // Pompa Primer direction 1
+#define MOTOR_PUMP_PRIMARY_IN2    19   // Pompa Primer direction 2
+#define MOTOR_PUMP_SECONDARY_IN1  23   // Pompa Sekunder direction 1
+#define MOTOR_PUMP_SECONDARY_IN2  22   // Pompa Sekunder direction 2
+
+// L298N #2 - Pompa Tersier & Turbin
+#define MOTOR_PUMP_TERTIARY_IN1   21   // Pompa Tersier direction 1
+#define MOTOR_PUMP_TERTIARY_IN2   3    // Pompa Tersier direction 2
+#define MOTOR_TURBINE_IN1         1    // Motor Turbin direction 1
+#define MOTOR_TURBINE_IN2         0    // Motor Turbin direction 2
+
+// Motor Direction Enum
+#define MOTOR_FORWARD  1
+#define MOTOR_REVERSE  2
+#define MOTOR_STOP     0
 
 // === PWM Configuration (ESP32 Core v3.x) ===
 #define PWM_FREQ       5000  // 5 kHz
@@ -390,6 +409,79 @@ void updateHumidifiers() {
 }
 
 // ================================
+// MOTOR DIRECTION CONTROL
+// ================================
+void setMotorDirection(uint8_t motor_id, uint8_t direction) {
+  /*
+   * Set motor direction for L298N H-Bridge
+   * 
+   * Parameters:
+   *   motor_id: 1=Primer, 2=Sekunder, 3=Tersier, 4=Turbin
+   *   direction: MOTOR_FORWARD, MOTOR_REVERSE, MOTOR_STOP
+   *   
+   * L298N Truth Table:
+   *   IN1=LOW,  IN2=LOW  → STOP (brake)
+   *   IN1=HIGH, IN2=LOW  → FORWARD
+   *   IN1=LOW,  IN2=HIGH → REVERSE
+   *   IN1=HIGH, IN2=HIGH → STOP (brake)
+   */
+  
+  switch(motor_id) {
+    case 1: // Pompa Primer
+      if (direction == MOTOR_FORWARD) {
+        digitalWrite(MOTOR_PUMP_PRIMARY_IN1, HIGH);
+        digitalWrite(MOTOR_PUMP_PRIMARY_IN2, LOW);
+      } else if (direction == MOTOR_REVERSE) {
+        digitalWrite(MOTOR_PUMP_PRIMARY_IN1, LOW);
+        digitalWrite(MOTOR_PUMP_PRIMARY_IN2, HIGH);
+      } else { // MOTOR_STOP
+        digitalWrite(MOTOR_PUMP_PRIMARY_IN1, LOW);
+        digitalWrite(MOTOR_PUMP_PRIMARY_IN2, LOW);
+      }
+      break;
+      
+    case 2: // Pompa Sekunder
+      if (direction == MOTOR_FORWARD) {
+        digitalWrite(MOTOR_PUMP_SECONDARY_IN1, HIGH);
+        digitalWrite(MOTOR_PUMP_SECONDARY_IN2, LOW);
+      } else if (direction == MOTOR_REVERSE) {
+        digitalWrite(MOTOR_PUMP_SECONDARY_IN1, LOW);
+        digitalWrite(MOTOR_PUMP_SECONDARY_IN2, HIGH);
+      } else {
+        digitalWrite(MOTOR_PUMP_SECONDARY_IN1, LOW);
+        digitalWrite(MOTOR_PUMP_SECONDARY_IN2, LOW);
+      }
+      break;
+      
+    case 3: // Pompa Tersier
+      if (direction == MOTOR_FORWARD) {
+        digitalWrite(MOTOR_PUMP_TERTIARY_IN1, HIGH);
+        digitalWrite(MOTOR_PUMP_TERTIARY_IN2, LOW);
+      } else if (direction == MOTOR_REVERSE) {
+        digitalWrite(MOTOR_PUMP_TERTIARY_IN1, LOW);
+        digitalWrite(MOTOR_PUMP_TERTIARY_IN2, HIGH);
+      } else {
+        digitalWrite(MOTOR_PUMP_TERTIARY_IN1, LOW);
+        digitalWrite(MOTOR_PUMP_TERTIARY_IN2, LOW);
+      }
+      break;
+      
+    case 4: // Motor Turbin
+      if (direction == MOTOR_FORWARD) {
+        digitalWrite(MOTOR_TURBINE_IN1, HIGH);
+        digitalWrite(MOTOR_TURBINE_IN2, LOW);
+      } else if (direction == MOTOR_REVERSE) {
+        digitalWrite(MOTOR_TURBINE_IN1, LOW);
+        digitalWrite(MOTOR_TURBINE_IN2, HIGH);
+      } else {
+        digitalWrite(MOTOR_TURBINE_IN1, LOW);
+        digitalWrite(MOTOR_TURBINE_IN2, LOW);
+      }
+      break;
+  }
+}
+
+// ================================
 // PUMP GRADUAL SPEED CONTROL
 // ================================
 void updatePumpSpeeds() {
@@ -433,6 +525,25 @@ void updatePumpSpeeds() {
     if (pump_tertiary_actual < pump_tertiary_target) {
       pump_tertiary_actual = pump_tertiary_target;
     }
+  }
+  
+  // Set direction to FORWARD when speed > 0, STOP when speed = 0
+  if (pump_primary_actual > 0) {
+    setMotorDirection(1, MOTOR_FORWARD);
+  } else {
+    setMotorDirection(1, MOTOR_STOP);
+  }
+  
+  if (pump_secondary_actual > 0) {
+    setMotorDirection(2, MOTOR_FORWARD);
+  } else {
+    setMotorDirection(2, MOTOR_STOP);
+  }
+  
+  if (pump_tertiary_actual > 0) {
+    setMotorDirection(3, MOTOR_FORWARD);
+  } else {
+    setMotorDirection(3, MOTOR_STOP);
   }
   
   // Apply PWM to motor drivers

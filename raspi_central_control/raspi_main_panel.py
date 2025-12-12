@@ -511,29 +511,22 @@ class PLTNPanelController:
                 
                 # Update humidifier commands
                 with self.state_lock:
-                    sg_on, ct_on = self.humidifier.update(
+                    # Update humidifier dengan control bertahap (v3.6)
+                    sg_on, ct1, ct2, ct3, ct4 = self.humidifier.update(
                         self.state.shim_rod,
                         self.state.regulating_rod,
                         self.state.thermal_kw
                     )
-                    # Control semua humidifier berdasarkan logika kontrol
-                    # Steam Generator: 2 humidifier
+                    
+                    # Steam Generator: 2 humidifier (both controlled together)
                     self.state.humid_sg1_cmd = 1 if sg_on else 0
                     self.state.humid_sg2_cmd = 1 if sg_on else 0
                     
-                    # Cooling Tower: 4 humidifier (nyalakan bertahap)
-                    if ct_on:
-                        # Nyalakan semua jika butuh CT humidifier
-                        self.state.humid_ct1_cmd = 1
-                        self.state.humid_ct2_cmd = 1
-                        self.state.humid_ct3_cmd = 1
-                        self.state.humid_ct4_cmd = 1
-                    else:
-                        # Matikan semua
-                        self.state.humid_ct1_cmd = 0
-                        self.state.humid_ct2_cmd = 0
-                        self.state.humid_ct3_cmd = 0
-                        self.state.humid_ct4_cmd = 0
+                    # Cooling Tower: 4 humidifier (STAGED 1-by-1)
+                    self.state.humid_ct1_cmd = 1 if ct1 else 0
+                    self.state.humid_ct2_cmd = 1 if ct2 else 0
+                    self.state.humid_ct3_cmd = 1 if ct3 else 0
+                    self.state.humid_ct4_cmd = 1 if ct4 else 0
                 
                 # Simulate pump startup/shutdown
                 self.update_pump_status()

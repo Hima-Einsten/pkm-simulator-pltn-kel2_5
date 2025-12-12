@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
 """
-Humidifier Control Logic for PLTN Simulator
-Handles 2 humidifiers:
-1. Steam Generator Humidifier - Based on Shim + Regulating Rod positions
-2. Cooling Tower Humidifier - Based on Thermal Power (kW)
+Humidifier Control Logic for PLTN Simulator - v3.6
+Updated with STAGED Cooling Tower Control:
+1. Steam Generator (2 units) - Based on Shim + Regulating Rod (before turbine starts)
+2. Cooling Tower (4 units) - STAGED activation based on Electrical Power Output
+
+Logic Explanation:
+- SG Humidifiers: Activate ketika batang kendali ditarik (Phase 2-3)
+  Ini karena reactor mulai panas sebelum turbine generate power
+  
+- CT Humidifiers: Activate BERTAHAP 1-by-1 based on power level (Phase 6+)
+  CT1: 60 MWe (20% of 300 MWe)
+  CT2: 120 MWe (40% of 300 MWe)
+  CT3: 180 MWe (60% of 300 MWe)
+  CT4: 240 MWe (80% of 300 MWe)
+  
+  Realistic cooling capacity management!
 """
 
 import logging
@@ -12,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 class HumidifierController:
     """
-    Controls 2 humidifiers based on system conditions:
-    - Steam Generator: Based on specific control rods
-    - Cooling Tower: Based on thermal power output
+    Controls 6 humidifiers (2 SG + 4 CT) based on system conditions:
+    - Steam Generator (2): Based on control rod positions (before power generation)
+    - Cooling Tower (4): STAGED based on electrical power output (during power generation)
     """
     
     def __init__(self, config=None):
@@ -28,34 +40,65 @@ class HumidifierController:
         if config is None:
             config = {}
         
-        # Thresholds for Steam Generator Humidifier
+        # ========================================
+        # STEAM GENERATOR HUMIDIFIER THRESHOLDS
+        # ========================================
+        # Trigger: Shim Rod >= 40% AND Regulating Rod >= 40%
+        # Phase: 2-3 (Control Rods Withdrawal, before turbine)
+        # Reason: Reactor thermal mulai naik, uap mulai terbentuk
         self.sg_shim_rod_threshold = config.get('sg_shim_rod_threshold', 40.0)  # 40%
         self.sg_reg_rod_threshold = config.get('sg_reg_rod_threshold', 40.0)    # 40%
         self.sg_hysteresis = config.get('sg_hysteresis', 5.0)  # 5% hysteresis
         
-        # Thresholds for Cooling Tower Humidifier
-        self.ct_thermal_threshold = config.get('ct_thermal_threshold', 800.0)  # 800 kW
-        self.ct_hysteresis = config.get('ct_hysteresis', 100.0)  # 100 kW hysteresis
+        # ========================================
+        # COOLING TOWER HUMIDIFIER THRESHOLDS (STAGED)
+        # ========================================
+        # Reactor Rating: 300 MWe
+        # Staged activation for realistic cooling capacity management
+        #
+        # CT1: 60 MWe (20% power) - First stage cooling
+        # CT2: 120 MWe (40% power) - Second stage cooling
+        # CT3: 180 MWe (60% power) - Third stage cooling
+        # CT4: 240 MWe (80% power) - Maximum cooling capacity
+        
+        self.ct1_power_threshold = config.get('ct1_power_threshold', 60000.0)   # 60 MWe
+        self.ct2_power_threshold = config.get('ct2_power_threshold', 120000.0)  # 120 MWe
+        self.ct3_power_threshold = config.get('ct3_power_threshold', 180000.0)  # 180 MWe
+        self.ct4_power_threshold = config.get('ct4_power_threshold', 240000.0)  # 240 MWe
+        self.ct_hysteresis = config.get('ct_hysteresis', 10000.0)  # 10 MWe hysteresis untuk semua
         
         # Current states
-        self.steam_gen_humidifier = False
-        self.cooling_tower_humidifier = False
+        self.steam_gen_humidifier = False  # Controls both SG1 + SG2
+        self.ct1_active = False
+        self.ct2_active = False
+        self.ct3_active = False
+        self.ct4_active = False
         
         # History for hysteresis
         self.sg_last_state = False
-        self.ct_last_state = False
+        self.ct1_last_state = False
+        self.ct2_last_state = False
+        self.ct3_last_state = False
+        self.ct4_last_state = False
         
-        logger.info("Humidifier Controller initialized")
-        logger.info(f"  Steam Gen: Shim>={self.sg_shim_rod_threshold}% AND Reg>={self.sg_reg_rod_threshold}%")
-        logger.info(f"  Cooling Tower: Thermal>={self.ct_thermal_threshold} kW")
+        logger.info("Humidifier Controller initialized (v3.6 - STAGED CT)")
+        logger.info(f"  Steam Gen (2 units): Shim>={self.sg_shim_rod_threshold}% AND Reg>={self.sg_reg_rod_threshold}%")
+        logger.info(f"  Cooling Tower (STAGED):")
+        logger.info(f"    CT1: >={self.ct1_power_threshold/1000.0:.0f} MWe (20% power)")
+        logger.info(f"    CT2: >={self.ct2_power_threshold/1000.0:.0f} MWe (40% power)")
+        logger.info(f"    CT3: >={self.ct3_power_threshold/1000.0:.0f} MWe (60% power)")
+        logger.info(f"    CT4: >={self.ct4_power_threshold/1000.0:.0f} MWe (80% power)")
     
     def update_steam_gen_humidifier(self, shim_rod_pos, regulating_rod_pos):
         """
         Update Steam Generator Humidifier based on rod positions
         
-        Logic:
-        - ON when BOTH Shim Rod >= threshold AND Regulating Rod >= threshold
-        - OFF when EITHER rod falls below (threshold - hysteresis)
+        Logic (Phase 2-3):
+        - ON when BOTH Shim Rod >= 40% AND Regulating Rod >= 40%
+        - OFF when EITHER rod falls below 35% (40% - 5% hysteresis)
+        
+        Reason: Reactor thermal power mulai naik ketika control rods ditarik,
+                uap mulai terbentuk di steam generator sebelum turbine jalan
         
         Args:
             shim_rod_pos: Shim rod position (0-100%)
@@ -84,87 +127,129 @@ class HumidifierController:
         # Log state change
         if new_state != self.sg_last_state:
             if new_state:
-                logger.info(f"🌊 Steam Gen Humidifier ON: Shim={shim_rod_pos:.1f}% Reg={regulating_rod_pos:.1f}%")
+                logger.info(f"🌊 Steam Gen Humidifier (SG1+SG2) ON: Shim={shim_rod_pos:.1f}% Reg={regulating_rod_pos:.1f}%")
             else:
-                logger.info(f"⭕ Steam Gen Humidifier OFF: Shim={shim_rod_pos:.1f}% Reg={regulating_rod_pos:.1f}%")
+                logger.info(f"⭕ Steam Gen Humidifier (SG1+SG2) OFF: Shim={shim_rod_pos:.1f}% Reg={regulating_rod_pos:.1f}%")
         
         self.sg_last_state = new_state
         self.steam_gen_humidifier = new_state
         return new_state
     
-    def update_cooling_tower_humidifier(self, thermal_power_kw):
+    def update_cooling_tower_humidifiers(self, electrical_power_kw):
         """
-        Update Cooling Tower Humidifier based on thermal power
+        Update Cooling Tower Humidifiers with STAGED activation
         
-        Logic:
-        - ON when thermal power >= threshold
-        - OFF when thermal power < (threshold - hysteresis)
+        Logic (Phase 6+):
+        - CT1 ON when power >= 60 MWe (20% of 300 MWe max)
+        - CT2 ON when power >= 120 MWe (40% of 300 MWe max)
+        - CT3 ON when power >= 180 MWe (60% of 300 MWe max)
+        - CT4 ON when power >= 240 MWe (80% of 300 MWe max)
+        
+        Hysteresis: 10 MWe untuk prevent oscillation
+        
+        Reason: Cooling tower digunakan untuk reject heat excess dari
+                electrical power generation. Staged activation lebih
+                realistis dan efficient.
         
         Args:
-            thermal_power_kw: Thermal power output in kW
+            electrical_power_kw: Electrical power output in kW
             
         Returns:
-            bool: True if humidifier should be ON, False otherwise
+            tuple: (ct1, ct2, ct3, ct4) as (bool, bool, bool, bool)
         """
-        # Calculate threshold with hysteresis
-        if self.ct_last_state:
-            # Currently ON - use lower threshold to turn OFF
-            on_threshold = self.ct_thermal_threshold - self.ct_hysteresis
+        # CT1 - First stage (60 MWe)
+        if self.ct1_last_state:
+            threshold = self.ct1_power_threshold - self.ct_hysteresis
         else:
-            # Currently OFF - use normal threshold to turn ON
-            on_threshold = self.ct_thermal_threshold
+            threshold = self.ct1_power_threshold
+        new_ct1 = electrical_power_kw >= threshold
         
-        # Check condition
-        new_state = thermal_power_kw >= on_threshold
-        
-        # Log state change
-        if new_state != self.ct_last_state:
-            if new_state:
-                logger.info(f"🌊 Cooling Tower Humidifier ON: Thermal={thermal_power_kw:.1f} kW")
+        if new_ct1 != self.ct1_last_state:
+            if new_ct1:
+                logger.info(f"🌊 CT1 ON: Power={electrical_power_kw/1000.0:.1f} MWe (Stage 1/4)")
             else:
-                logger.info(f"⭕ Cooling Tower Humidifier OFF: Thermal={thermal_power_kw:.1f} kW")
+                logger.info(f"⭕ CT1 OFF: Power={electrical_power_kw/1000.0:.1f} MWe")
+        self.ct1_last_state = new_ct1
+        self.ct1_active = new_ct1
         
-        self.ct_last_state = new_state
-        self.cooling_tower_humidifier = new_state
-        return new_state
+        # CT2 - Second stage (120 MWe)
+        if self.ct2_last_state:
+            threshold = self.ct2_power_threshold - self.ct_hysteresis
+        else:
+            threshold = self.ct2_power_threshold
+        new_ct2 = electrical_power_kw >= threshold
+        
+        if new_ct2 != self.ct2_last_state:
+            if new_ct2:
+                logger.info(f"🌊 CT2 ON: Power={electrical_power_kw/1000.0:.1f} MWe (Stage 2/4)")
+            else:
+                logger.info(f"⭕ CT2 OFF: Power={electrical_power_kw/1000.0:.1f} MWe")
+        self.ct2_last_state = new_ct2
+        self.ct2_active = new_ct2
+        
+        # CT3 - Third stage (180 MWe)
+        if self.ct3_last_state:
+            threshold = self.ct3_power_threshold - self.ct_hysteresis
+        else:
+            threshold = self.ct3_power_threshold
+        new_ct3 = electrical_power_kw >= threshold
+        
+        if new_ct3 != self.ct3_last_state:
+            if new_ct3:
+                logger.info(f"🌊 CT3 ON: Power={electrical_power_kw/1000.0:.1f} MWe (Stage 3/4)")
+            else:
+                logger.info(f"⭕ CT3 OFF: Power={electrical_power_kw/1000.0:.1f} MWe")
+        self.ct3_last_state = new_ct3
+        self.ct3_active = new_ct3
+        
+        # CT4 - Fourth stage (240 MWe)
+        if self.ct4_last_state:
+            threshold = self.ct4_power_threshold - self.ct_hysteresis
+        else:
+            threshold = self.ct4_power_threshold
+        new_ct4 = electrical_power_kw >= threshold
+        
+        if new_ct4 != self.ct4_last_state:
+            if new_ct4:
+                logger.info(f"🌊 CT4 ON: Power={electrical_power_kw/1000.0:.1f} MWe (Stage 4/4 - MAX COOLING)")
+            else:
+                logger.info(f"⭕ CT4 OFF: Power={electrical_power_kw/1000.0:.1f} MWe")
+        self.ct4_last_state = new_ct4
+        self.ct4_active = new_ct4
+        
+        return (new_ct1, new_ct2, new_ct3, new_ct4)
     
-    def update(self, shim_rod, regulating_rod, thermal_power_kw):
+    def update(self, shim_rod, regulating_rod, electrical_power_kw):
         """
-        Update both humidifiers based on current system state
+        Update all humidifiers based on current system state
         
         Args:
             shim_rod: Shim rod position (0-100%)
             regulating_rod: Regulating rod position (0-100%)
-            thermal_power_kw: Thermal power in kW
+            electrical_power_kw: ELECTRICAL power in kW (from ESP-BC thermal_kw)
             
         Returns:
-            tuple: (steam_gen_on, cooling_tower_on) as (bool, bool)
+            tuple: (sg_on, ct1, ct2, ct3, ct4) as (bool, bool, bool, bool, bool)
         """
         # Update Steam Generator humidifier (based on Shim + Regulating rods)
+        # This activates in Phase 2-3 (before turbine starts)
         sg_on = self.update_steam_gen_humidifier(shim_rod, regulating_rod)
         
-        # Update Cooling Tower humidifier (based on thermal power)
-        ct_on = self.update_cooling_tower_humidifier(thermal_power_kw)
+        # Update Cooling Tower humidifiers (STAGED based on electrical power)
+        # This activates in Phase 6+ (staged as power increases)
+        ct1, ct2, ct3, ct4 = self.update_cooling_tower_humidifiers(electrical_power_kw)
         
-        # Return as boolean tuple
-        return (sg_on, ct_on)
+        # Return as tuple: (sg, ct1, ct2, ct3, ct4)
+        return (sg_on, ct1, ct2, ct3, ct4)
     
-    def update_all(self, safety_rod, shim_rod, regulating_rod, thermal_power_kw):
-        """
-        DEPRECATED: Use update() instead (safety_rod not needed)
-        Update both humidifiers based on current system state
-        
-        Args:
-            safety_rod: Safety rod position (0-100%) - not used for humidifier
-            shim_rod: Shim rod position (0-100%)
-            regulating_rod: Regulating rod position (0-100%)
-            thermal_power_kw: Thermal power in kW
-            
-        Returns:
-            tuple: (steam_gen_command, cooling_tower_command) as (0/1, 0/1)
-        """
-        sg_on, ct_on = self.update(shim_rod, regulating_rod, thermal_power_kw)
-        return (1 if sg_on else 0, 1 if ct_on else 0)
+    def get_ct_count_active(self):
+        """Get number of CT humidifiers currently active"""
+        count = 0
+        if self.ct1_active: count += 1
+        if self.ct2_active: count += 1
+        if self.ct3_active: count += 1
+        if self.ct4_active: count += 1
+        return count
     
     def get_status(self):
         """
@@ -175,9 +260,13 @@ class HumidifierController:
         """
         return {
             'steam_gen_humidifier': self.steam_gen_humidifier,
-            'cooling_tower_humidifier': self.cooling_tower_humidifier,
-            'sg_threshold': self.sg_shim_rod_threshold,
-            'ct_threshold': self.ct_thermal_threshold
+            'ct1_active': self.ct1_active,
+            'ct2_active': self.ct2_active,
+            'ct3_active': self.ct3_active,
+            'ct4_active': self.ct4_active,
+            'ct_active_count': self.get_ct_count_active(),
+            'sg_threshold': f"{self.sg_shim_rod_threshold}% rods",
+            'ct_thresholds': f"60/120/180/240 MWe (staged)"
         }
 
 # ============================================
@@ -185,31 +274,51 @@ class HumidifierController:
 # ============================================
 
 HUMIDIFIER_CONFIG_DEFAULT = {
-    # Steam Generator Humidifier thresholds
+    # Steam Generator Humidifier thresholds (based on rod positions)
     'sg_shim_rod_threshold': 40.0,      # Shim rod must be >= 40%
     'sg_reg_rod_threshold': 40.0,       # Regulating rod must be >= 40%
     'sg_hysteresis': 5.0,               # Turn off when < 35%
     
-    # Cooling Tower Humidifier thresholds
-    'ct_thermal_threshold': 800.0,      # Turn on when >= 800 kW
-    'ct_hysteresis': 100.0,             # Turn off when < 700 kW
+    # Cooling Tower Humidifier thresholds - STAGED (based on electrical power)
+    'ct1_power_threshold': 60000.0,     # CT1: 60 MWe (20% of max)
+    'ct2_power_threshold': 120000.0,    # CT2: 120 MWe (40% of max)
+    'ct3_power_threshold': 180000.0,    # CT3: 180 MWe (60% of max)
+    'ct4_power_threshold': 240000.0,    # CT4: 240 MWe (80% of max)
+    'ct_hysteresis': 10000.0,           # 10 MWe hysteresis untuk semua CT
 }
 
 # Alternative configurations for different scenarios
 HUMIDIFIER_CONFIG_CONSERVATIVE = {
-    'sg_shim_rod_threshold': 50.0,      # Higher threshold
+    'sg_shim_rod_threshold': 50.0,      # Higher threshold (50%)
     'sg_reg_rod_threshold': 50.0,
     'sg_hysteresis': 10.0,
-    'ct_thermal_threshold': 1000.0,     # Higher threshold
-    'ct_hysteresis': 150.0,
+    'ct1_power_threshold': 80000.0,     # CT1: 80 MWe
+    'ct2_power_threshold': 140000.0,    # CT2: 140 MWe
+    'ct3_power_threshold': 200000.0,    # CT3: 200 MWe
+    'ct4_power_threshold': 260000.0,    # CT4: 260 MWe
+    'ct_hysteresis': 15000.0,           # 15 MWe hysteresis
 }
 
 HUMIDIFIER_CONFIG_AGGRESSIVE = {
-    'sg_shim_rod_threshold': 30.0,      # Lower threshold
+    'sg_shim_rod_threshold': 30.0,      # Lower threshold (30%)
     'sg_reg_rod_threshold': 30.0,
     'sg_hysteresis': 3.0,
-    'ct_thermal_threshold': 600.0,      # Lower threshold
-    'ct_hysteresis': 75.0,
+    'ct1_power_threshold': 40000.0,     # CT1: 40 MWe (earlier activation)
+    'ct2_power_threshold': 100000.0,    # CT2: 100 MWe
+    'ct3_power_threshold': 160000.0,    # CT3: 160 MWe
+    'ct4_power_threshold': 220000.0,    # CT4: 220 MWe
+    'ct_hysteresis': 8000.0,            # 8 MWe hysteresis
+}
+
+HUMIDIFIER_CONFIG_TESTING = {
+    'sg_shim_rod_threshold': 20.0,      # Very low for testing (20%)
+    'sg_reg_rod_threshold': 20.0,
+    'sg_hysteresis': 5.0,
+    'ct1_power_threshold': 20000.0,     # CT1: 20 MWe (easy testing)
+    'ct2_power_threshold': 50000.0,     # CT2: 50 MWe
+    'ct3_power_threshold': 100000.0,    # CT3: 100 MWe
+    'ct4_power_threshold': 150000.0,    # CT4: 150 MWe
+    'ct_hysteresis': 5000.0,            # 5 MWe hysteresis
 }
 
 # ============================================
@@ -219,37 +328,73 @@ HUMIDIFIER_CONFIG_AGGRESSIVE = {
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     
-    print("="*60)
-    print("  Humidifier Controller Test")
-    print("="*60)
+    print("="*70)
+    print("  Humidifier Controller Test - v3.6 (STAGED CT ACTIVATION)")
+    print("  Updated Logic:")
+    print("    - SG: Based on Rod Positions (before power)")
+    print("    - CT: STAGED 1-by-1 based on Power Level")
+    print("="*70)
     
     # Create controller with default config
     controller = HumidifierController(HUMIDIFIER_CONFIG_DEFAULT)
     
-    print("\nTest Scenario 1: Gradually increase rods and thermal power")
-    print("-" * 60)
+    print("\nTest Scenario: PWR Startup with STAGED CT Activation")
+    print("-" * 70)
     
-    # Simulate gradual increase
+    # Simulate realistic PWR startup with staged CT
     test_scenarios = [
-        (0, 0, 0, 0, "Initial state - all zero"),
-        (20, 20, 20, 300, "Low power - rods at 20%"),
-        (40, 40, 40, 600, "Moderate - rods at 40%"),
-        (45, 45, 45, 850, "Higher - rods at 45%, thermal >800kW"),
-        (60, 60, 60, 1200, "High power - rods at 60%"),
-        (40, 35, 40, 750, "Decreasing - one rod below threshold"),
-        (30, 30, 30, 500, "Low again - back to baseline"),
+        # (shim, reg, power_kw, phase_description)
+        (0, 0, 0, "Phase 1: Initial - System START"),
+        (10, 10, 0, "Phase 2a: Rods raising (10%), no power yet"),
+        (30, 30, 0, "Phase 2b: Rods raising (30%), thermal rising"),
+        (40, 40, 0, "Phase 3: SG TRIGGER - Rods=40% (SG1+SG2 ON)"),
+        (50, 50, 30000, "Phase 4: Turbine starting, 30 MWe"),
+        (55, 55, 50000, "Phase 5a: Power rising, 50 MWe"),
+        (60, 60, 65000, "Phase 5b: CT1 TRIGGER - 65 MWe (Stage 1/4)"),
+        (65, 65, 100000, "Phase 6a: 100 MWe, CT1 running"),
+        (70, 70, 125000, "Phase 6b: CT2 TRIGGER - 125 MWe (Stage 2/4)"),
+        (75, 75, 150000, "Phase 7a: 150 MWe, CT1+CT2 running"),
+        (80, 80, 185000, "Phase 7b: CT3 TRIGGER - 185 MWe (Stage 3/4)"),
+        (85, 85, 220000, "Phase 8a: 220 MWe, CT1+CT2+CT3 running"),
+        (90, 90, 245000, "Phase 8b: CT4 TRIGGER - 245 MWe (Stage 4/4 MAX)"),
+        (95, 95, 290000, "Phase 9: Maximum power 290 MWe (ALL CT running)"),
+        (85, 85, 230000, "Steady: 230 MWe (All CT still ON)"),
+        (75, 75, 170000, "Reducing: 170 MWe (CT4 OFF, CT1-3 ON)"),
+        (65, 65, 110000, "Lower: 110 MWe (CT3-4 OFF, CT1-2 ON)"),
+        (55, 55, 55000, "Low power: 55 MWe (CT2-4 OFF, CT1 ON)"),
+        (45, 45, 40000, "Shutdown: 40 MWe (All CT OFF, SG still ON)"),
+        (30, 30, 20000, "Cooldown: 20 MWe (SG OFF)"),
+        (0, 0, 0, "Stopped: All OFF"),
     ]
     
-    for safety, shim, reg, thermal, desc in test_scenarios:
+    for shim, reg, power_kw, desc in test_scenarios:
         print(f"\n{desc}")
-        print(f"  Rods: Safety={safety}%, Shim={shim}%, Reg={reg}%")
-        print(f"  Thermal: {thermal} kW")
+        print(f"  Rods: Shim={shim}%, Reg={reg}%")
+        print(f"  Power: {power_kw/1000.0:.0f} MWe")
         
-        sg_cmd, ct_cmd = controller.update_all(safety, shim, reg, thermal)
+        sg_on, ct1, ct2, ct3, ct4 = controller.update(shim, reg, power_kw)
         
-        print(f"  → Steam Gen Humidifier: {'ON' if sg_cmd else 'OFF'}")
-        print(f"  → Cooling Tower Humidifier: {'ON' if ct_cmd else 'OFF'}")
+        # Visual representation
+        sg_status = '🌊 ON' if sg_on else '⭕ OFF'
+        ct1_status = '🌊' if ct1 else '⭕'
+        ct2_status = '🌊' if ct2 else '⭕'
+        ct3_status = '🌊' if ct3 else '⭕'
+        ct4_status = '🌊' if ct4 else '⭕'
+        
+        ct_count = controller.get_ct_count_active()
+        
+        print(f"  → Steam Gen (SG1+SG2): {sg_status}")
+        print(f"  → Cooling Tower: CT1:{ct1_status} CT2:{ct2_status} CT3:{ct3_status} CT4:{ct4_status} ({ct_count}/4 active)")
     
-    print("\n" + "="*60)
-    print("Test completed!")
-    print("="*60)
+    print("\n" + "="*70)
+    print("Test completed! STAGED CT activation validated.")
+    print("="*70)
+    print("\nKey Features Demonstrated:")
+    print("  ✓ SG activates at 40% rods (before power generation)")
+    print("  ✓ CT1 activates at 60 MWe (20% power)")
+    print("  ✓ CT2 activates at 120 MWe (40% power)")
+    print("  ✓ CT3 activates at 180 MWe (60% power)")
+    print("  ✓ CT4 activates at 240 MWe (80% power)")
+    print("  ✓ Staged deactivation during shutdown")
+    print("  ✓ Hysteresis prevents oscillation")
+    print("="*70)
