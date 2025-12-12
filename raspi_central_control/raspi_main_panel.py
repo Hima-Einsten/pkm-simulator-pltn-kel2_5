@@ -1,6 +1,6 @@
 """
 Main Control Program for PLTN Simulator - 2 ESP Architecture
-Supports 15 buttons, humidifier control, optimized for 2 ESP32
+Supports 17 buttons, humidifier control, buzzer alarm, optimized for 2 ESP32
 """
 
 import time
@@ -17,6 +17,7 @@ from raspi_tca9548a import DualMultiplexerManager
 from raspi_i2c_master import I2CMaster
 from raspi_gpio_buttons import ButtonHandler as ButtonManager
 from raspi_humidifier_control import HumidifierController
+from raspi_buzzer_alarm import BuzzerAlarm
 
 # Try to import GPIO library
 try:
@@ -527,6 +528,9 @@ class PLTNPanelController:
                     self.state.humid_ct2_cmd = 1 if ct2 else 0
                     self.state.humid_ct3_cmd = 1 if ct3 else 0
                     self.state.humid_ct4_cmd = 1 if ct4 else 0
+                    
+                    # Check and update alarm status
+                    self.buzzer.check_alarms(self.state)
                 
                 # Simulate pump startup/shutdown
                 self.update_pump_status()

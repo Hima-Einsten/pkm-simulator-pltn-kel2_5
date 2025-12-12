@@ -50,10 +50,13 @@ BTN_PUMP_TER_ON = 10     # Pompa Tersier ON
 BTN_PUMP_TER_OFF = 9     # Pompa Tersier OFF
 
 # Output Pins
-BUZZER_PIN = 18          # Hardware PWM untuk alarm
-MOTOR_PRIM_PWM = 12      # Hardware PWM Pompa Primer
-MOTOR_SEC_PWM = 13       # Hardware PWM Pompa Sekunder
-MOTOR_TER_PWM = 19       # Hardware PWM Pompa Tersier
+BUZZER_PIN = 22          # GPIO 22 for passive buzzer alarm (software PWM)
+
+# ❌ DEPRECATED - Motor control via ESP32, NOT Raspberry Pi!
+# These pins are NOT used - motor control is done by ESP32 Utama via L298N
+# MOTOR_PRIM_PWM = 12      # NOT USED
+# MOTOR_SEC_PWM = 13       # NOT USED
+# MOTOR_TER_PWM = 19       # NOT USED
 
 # ============================================
 # System Parameters
