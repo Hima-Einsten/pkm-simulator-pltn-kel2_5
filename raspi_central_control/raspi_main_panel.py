@@ -133,18 +133,18 @@ class PLTNPanelController:
             raise
     
     def init_buttons(self):
-        """Initialize button manager with 15 buttons"""
+        """Initialize button manager with 17 buttons"""
         try:
             from raspi_gpio_buttons import ButtonPin
             
             self.button_manager = ButtonManager()
             
             # Register button callbacks using ButtonPin enum
-            # Pressure control
+            # Pressure control (2 buttons)
             self.button_manager.register_callback(ButtonPin.PRESSURE_UP, self.on_pressure_up)
             self.button_manager.register_callback(ButtonPin.PRESSURE_DOWN, self.on_pressure_down)
             
-            # Pump controls
+            # Pump controls (6 buttons)
             self.button_manager.register_callback(ButtonPin.PUMP_PRIMARY_ON, self.on_pump_primary_on)
             self.button_manager.register_callback(ButtonPin.PUMP_PRIMARY_OFF, self.on_pump_primary_off)
             self.button_manager.register_callback(ButtonPin.PUMP_SECONDARY_ON, self.on_pump_secondary_on)
@@ -152,7 +152,7 @@ class PLTNPanelController:
             self.button_manager.register_callback(ButtonPin.PUMP_TERTIARY_ON, self.on_pump_tertiary_on)
             self.button_manager.register_callback(ButtonPin.PUMP_TERTIARY_OFF, self.on_pump_tertiary_off)
             
-            # Rod controls
+            # Rod controls (6 buttons)
             self.button_manager.register_callback(ButtonPin.SAFETY_ROD_UP, self.on_safety_rod_up)
             self.button_manager.register_callback(ButtonPin.SAFETY_ROD_DOWN, self.on_safety_rod_down)
             self.button_manager.register_callback(ButtonPin.SHIM_ROD_UP, self.on_shim_rod_up)
@@ -160,15 +160,17 @@ class PLTNPanelController:
             self.button_manager.register_callback(ButtonPin.REGULATING_ROD_UP, self.on_regulating_rod_up)
             self.button_manager.register_callback(ButtonPin.REGULATING_ROD_DOWN, self.on_regulating_rod_down)
             
-            # Emergency button
-            self.button_manager.register_callback(ButtonPin.EMERGENCY, self.on_emergency)
-            
-            # System control buttons
+            # System control buttons (2 buttons)
             self.button_manager.register_callback(ButtonPin.REACTOR_START, self.on_reactor_start)
-            self.button_manager.register_callback(ButtonPin.REACTOR_STOP, self.on_reactor_stop)
+            self.button_manager.register_callback(ButtonPin.REACTOR_RESET, self.on_reactor_reset)
+            
+            # Emergency button (1 button)
+            self.button_manager.register_callback(ButtonPin.EMERGENCY, self.on_emergency)
             
             callback_count = len(self.button_manager.callbacks)
             logger.info(f"Button manager initialized: {callback_count} callbacks registered")
+            if callback_count != 17:
+                logger.warning(f"Expected 17 callbacks, but {callback_count} registered!")
         except Exception as e:
             logger.error(f"Failed to initialize buttons: {e}")
             raise
@@ -406,49 +408,44 @@ class PLTNPanelController:
             else:
                 logger.info("Reactor already started. No action taken.")
     
-    def on_reactor_stop(self):
-        """Reactor STOP button - Reset to initial state"""
-        logger.info(">>> Callback: on_reactor_stop")
+    def on_reactor_reset(self):
+        """Reactor RESET button - Force reset simulasi ke kondisi awal"""
+        logger.info(">>> Callback: on_reactor_reset (RESET SIMULASI)")
         with self.state_lock:
-            if self.state.reactor_started:
-                # Check if system is safe to stop (all at initial state)
-                can_stop = (
-                    self.state.pump_primary_status == 0 and
-                    self.state.pump_secondary_status == 0 and
-                    self.state.pump_tertiary_status == 0 and
-                    self.state.safety_rod == 0 and
-                    self.state.shim_rod == 0 and
-                    self.state.regulating_rod == 0 and
-                    self.state.pressure < 5.0
-                )
-                
-                if can_stop:
-                    self.state.reactor_started = False
-                    self.state.emergency_active = False
-                    self.state.pressure = 0.0
-                    self.state.thermal_kw = 0.0
-                    # Reset humidifier commands
-                    self.state.humid_sg1_cmd = 0
-                    self.state.humid_sg2_cmd = 0
-                    self.state.humid_ct1_cmd = 0
-                    self.state.humid_ct2_cmd = 0
-                    self.state.humid_ct3_cmd = 0
-                    self.state.humid_ct4_cmd = 0
-                    logger.info("=" * 60)
-                    logger.info("🔴 REACTOR SYSTEM STOPPED")
-                    logger.info("System reset to initial state.")
-                    logger.info("=" * 60)
-                else:
-                    logger.warning("⚠️  Cannot stop reactor!")
-                    logger.warning("System must be in initial state:")
-                    logger.warning(f"  - All pumps: OFF (Current: P={self.state.pump_primary_status}, "
-                                 f"S={self.state.pump_secondary_status}, T={self.state.pump_tertiary_status})")
-                    logger.warning(f"  - All rods: 0% (Current: Safety={self.state.safety_rod}%, "
-                                 f"Shim={self.state.shim_rod}%, Reg={self.state.regulating_rod}%)")
-                    logger.warning(f"  - Pressure: <5 bar (Current: {self.state.pressure:.1f} bar)")
-                    logger.warning("Please shutdown pumps and lower all rods first!")
-            else:
-                logger.info("Reactor not started. No action taken.")
+            # FORCE RESET - tidak perlu check kondisi, langsung reset
+            self.state.reactor_started = False
+            self.state.emergency_active = False
+            
+            # Reset semua parameter ke kondisi awal
+            self.state.pressure = 0.0
+            self.state.thermal_kw = 0.0
+            
+            # Reset pump status
+            self.state.pump_primary_status = 0  # OFF
+            self.state.pump_secondary_status = 0
+            self.state.pump_tertiary_status = 0
+            
+            # Reset rod positions
+            self.state.safety_rod = 0
+            self.state.shim_rod = 0
+            self.state.regulating_rod = 0
+            
+            # Reset humidifier commands
+            self.state.humid_sg1_cmd = 0
+            self.state.humid_sg2_cmd = 0
+            self.state.humid_ct1_cmd = 0
+            self.state.humid_ct2_cmd = 0
+            self.state.humid_ct3_cmd = 0
+            self.state.humid_ct4_cmd = 0
+            
+            # Reset interlock flag
+            self.state.interlock_satisfied = False
+            
+            logger.info("=" * 60)
+            logger.info("🔄 SIMULATION RESET")
+            logger.info("All parameters reset to initial state.")
+            logger.info("Press START button to begin new simulation.")
+            logger.info("=" * 60)
     
     # ============================================
     # Interlock Logic
@@ -458,26 +455,41 @@ class PLTNPanelController:
         """
         Check if interlock conditions are satisfied for rod movement
         
+        NEW LOGIC (v3.2):
+        - Pompa dikontrol otomatis oleh ESP-BC turbine state machine
+        - Tidak perlu check manual pump buttons lagi
+        - Check berdasarkan thermal power (turbine running indicator)
+        
         Returns:
             True if safe to move rods, False otherwise
         """
         with self.state_lock:
-            # Check pressure >= 40 bar
+            # Check 1: Reactor must be started
+            if not self.state.reactor_started:
+                return False
+            
+            # Check 2: Pressure >= 40 bar (minimum for safe operation)
             if self.state.pressure < 40.0:
+                logger.debug(f"Interlock: Pressure too low ({self.state.pressure:.1f} bar < 40 bar)")
                 return False
             
-            # Check primary pump ON
-            if self.state.pump_primary_status != 2:
+            # Check 3: Turbine running (indicated by thermal_kw > 0)
+            # Ketika turbine running, pompa otomatis jalan dari ESP-BC
+            if self.state.thermal_kw <= 0:
+                logger.debug("Interlock: Turbine not running (thermal_kw = 0)")
+                # EXCEPTION: Allow initial rod movement untuk start turbine
+                # Jika rods masih 0%, allow untuk raise pertama kali
+                if self.state.shim_rod == 0 and self.state.regulating_rod == 0:
+                    logger.debug("Interlock: Allowing initial rod raise to start reactor")
+                    return True
                 return False
             
-            # Check secondary pump ON
-            if self.state.pump_secondary_status != 2:
-                return False
-            
-            # Check no emergency
+            # Check 4: No emergency active
             if self.state.emergency_active:
+                logger.debug("Interlock: Emergency active")
                 return False
             
+            # All checks passed
             return True
     
     # ============================================

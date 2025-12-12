@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
 Raspberry Pi GPIO Button Handler for PLTN Control Panel
-Handles 15 physical push buttons with debouncing
+Handles 17 physical push buttons with debouncing
+
+Button Layout:
+- 6 Pump Control buttons (Primary, Secondary, Tertiary ON/OFF)
+- 6 Rod Control buttons (Safety, Shim, Regulating UP/DOWN)
+- 2 Pressure Control buttons (UP/DOWN)
+- 2 System Control buttons (START, RESET)
+- 1 Emergency button (SCRAM)
 """
 
 import RPi.GPIO as GPIO
@@ -39,7 +46,7 @@ class ButtonPin(IntEnum):
     
     # System Control (2 buttons)
     REACTOR_START = 17  # GREEN button - Start reactor system
-    REACTOR_STOP = 27   # YELLOW button - Stop reactor system
+    REACTOR_RESET = 27  # YELLOW button - Reset simulation to initial state
     
     # Emergency (1 button)
     EMERGENCY = 18  # RED button - Emergency shutdown!
@@ -61,7 +68,7 @@ BUTTON_NAMES = {
     ButtonPin.PRESSURE_UP: "Pressure UP",
     ButtonPin.PRESSURE_DOWN: "Pressure DOWN",
     ButtonPin.REACTOR_START: "REACTOR START",
-    ButtonPin.REACTOR_STOP: "REACTOR STOP",
+    ButtonPin.REACTOR_RESET: "REACTOR RESET",
     ButtonPin.EMERGENCY: "EMERGENCY SHUTDOWN",
 }
 
@@ -95,7 +102,7 @@ class ButtonHandler:
             self.last_press_time[pin] = 0
             self.last_state[pin] = GPIO.HIGH
             
-        logger.info("GPIO Button Handler initialized with 15 buttons")
+        logger.info("GPIO Button Handler initialized with 17 buttons")
     
     def register_callback(self, button_pin, callback):
         """

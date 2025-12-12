@@ -1,9 +1,9 @@
 # 📋 TODO LIST - PKM PLTN Simulator Integration
 
-**Last Updated:** 2024-12-08 (Session 5 - Hardware Configuration Updated)  
-**Overall Progress:** 🟢 **98%** Complete  
+**Last Updated:** 2024-12-12 (Session 6 - Alur Simulasi Documented & Issues Identified)  
+**Overall Progress:** 🟢 **95%** Complete (Code done, integration issues found)  
 **Architecture:** ✅ **2 ESP (ESP-BC + ESP-E)** - OPTIMIZED  
-**Status:** Hardware Configuration Finalized - Ready for Testing  
+**Status:** Integration Issues Identified - Need fixes before hardware test  
 **Target Completion:** December 2024
 
 ---
@@ -673,28 +673,25 @@ When you see this TODO.md file, you should:
 - Phase 2: 100% complete ✅
 - Phase 3: 0% complete (9-OLED pending)
 
-**2024-12-08 Session 4:**
-- ✅ **HARDWARE CONFIGURATION CORRECTION**
-- ✅ Clarified relay usage: 6 relays = ALL for humidifiers
-  - 2x Steam Generator (GPIO 13, 15)
-  - 4x Cooling Tower (GPIO 32, 33, 14, 12)
-- ✅ Clarified motor driver: 4 channels = 3 pompa + 1 turbin
-  - Pompa Primer, Sekunder, Tersier (GPIO 4, 16, 17)
-  - Motor Turbin (GPIO 5)
-- ✅ Added pump gradual control (realistic behavior)
-  - Gradual acceleration: +2% per cycle
-  - Gradual deceleration: -1% per cycle
-- ✅ Added dynamic turbine speed control
-  - Speed based on: (Shim + Regulating) / 2
-  - Safety rod tidak mempengaruhi turbine
-- ✅ Updated ESP32 firmware: `esp_utama/esp_utama.ino`
-- ✅ Updated Raspberry Pi I2C: `raspi_i2c_master.py`
-- ✅ Updated main panel: `raspi_main_panel.py`
-- ✅ Created documentation: `HARDWARE_UPDATE_SUMMARY.md`
-- Status: 98% complete overall
-- Phase 1: 100% complete ✅
-- Phase 2: 100% complete ✅
-- Phase 3: 0% complete (9-OLED pending)
+**2024-12-12 Session 6:**
+- ✅ **ALUR SIMULASI UPDATED IN README**
+- ✅ Documented realistic 8-phase PWR startup sequence
+- ✅ Clarified START button requirement
+- ✅ Documented automatic turbine control
+- ✅ Documented gradual pump control behavior
+- ✅ Documented 6 individual humidifier logic
+- ✅ Documented 10 LED power indicator
+- ✅ Documented emergency shutdown sequence
+- ⚠️ **IDENTIFIED 7 CRITICAL ISSUES:**
+  1. 🔴 START button not implemented (flag exists but no callback)
+  2. 🔴 Safety interlock broken (expects manual pump control)
+  3. 🟡 Humidifier threshold mismatch (800 kW vs 80 MWe)
+  4. 🟡 Pump status not communicated from ESP-BC
+  5. 🟢 OLED display manager missing (optional)
+  6. 🟢 Documentation needs updates
+  7. 🟢 Testing scripts incomplete
+- Status: 95% complete (integration fixes needed)
+- **CRITICAL:** Must fix interlock & START button before hardware test!
 
 **Next Session Should:**
 1. Upload updated ESP-BC firmware to ESP32
@@ -707,17 +704,282 @@ When you see this TODO.md file, you should:
 
 ---
 
-**Last Updated By:** AI Assistant  
-**Date:** 2024-12-08 (Session 4 - Hardware Configuration Updated)  
-**Next Review:** Hardware testing + OLED implementation  
-**Version:** 3.1 - Hardware Configuration Finalized
+## 🔧 YANG MASIH PERLU DIBENAHI
 
-✅ **MAJOR ACHIEVEMENT: Hardware Configuration Clarified!**  
-✅ **6 Relay = Humidifiers Only (2 SG + 4 CT)**  
-✅ **4 Motor Driver = 3 Pompa + 1 Turbin**  
-✅ **Pump Gradual Control Implemented (Realistic!)**  
-✅ **Turbine Dynamic Speed Control**  
-✅ **All code updated and ready for testing**  
-✅ **Documentation complete (9 files)**  
-🎯 **Next Focus: Hardware testing + Issue #5 (9-OLED displays)**  
-📊 **Code: 98% Complete | Hardware Testing: Pending**
+### **1. Implementasi START Button** ⚠️ PENTING
+**Status:** ⏳ Belum ada
+
+**Problem:**
+- Code `raspi_main_panel.py` sudah ada flag `reactor_started`
+- Tapi belum ada button callback untuk START
+- User harus manually set `reactor_started = True`
+
+**Action Required:**
+```python
+# Di raspi_main_panel.py tambahkan:
+def on_start_button(self):
+    """START reactor button"""
+    logger.info(">>> Callback: on_start_button")
+    with self.state_lock:
+        if not self.state.reactor_started:
+            self.state.reactor_started = True
+            logger.info("🟢 REACTOR STARTED - All controls active")
+        else:
+            logger.warning("Reactor already started")
+
+# Register button di init_buttons():
+self.buttons.register_callback(config.GPIO_START, self.on_start_button)
+```
+
+**Files to Update:**
+- [ ] `raspi_config.py` - Tambah `GPIO_START = XX`
+- [ ] `raspi_main_panel.py` - Tambah callback `on_start_button()`
+- [ ] `raspi_gpio_buttons.py` - Register GPIO START button
+
+**Priority:** 🔴 HIGH  
+**Estimated Time:** 15 minutes
+
+---
+
+### **2. Humidifier Logic - Threshold Mismatch** ⚠️ PENTING
+**Status:** ⏳ Perlu disesuaikan
+
+**Problem:**
+- ESP-BC expects: `thermal_kw` (electrical power in kW)
+- Humidifier controller checks: `thermal >= 800 kW` untuk CT
+- Tapi code README mengatakan: `≥ 80 MWe` (80,000 kW)
+- Jadi threshold mana yang benar?
+
+**Current Code:**
+```python
+# raspi_humidifier_control.py
+ct_thermal_threshold: 800.0  # 800 kW
+
+# README.md
+Kondisi trigger: Electrical power ≥ 80 MWe (80,000 kW)
+```
+
+**Action Required:**
+Pilih salah satu:
+
+**Option A: Use 80 MWe (80,000 kW)** - Recommended
+```python
+# raspi_humidifier_control.py
+HUMIDIFIER_CONFIG = {
+    'ct_thermal_threshold': 80000.0,  # 80 MWe = 80,000 kW
+    'ct_hysteresis': 5000.0,          # 5 MWe hysteresis
+}
+```
+
+**Option B: Use 800 kW (0.8 MWe)** - Untuk testing
+```python
+# Tetap pakai 800 kW untuk mudah trigger saat testing
+# Update README untuk konsistensi
+```
+
+**Files to Update:**
+- [ ] `raspi_humidifier_control.py` - Update threshold
+- [ ] `README.md` - Konsistensi dengan code
+- [ ] Test dengan reactor thermal output actual
+
+**Priority:** 🟡 MEDIUM  
+**Estimated Time:** 10 minutes  
+**Note:** Testing perlu untuk tentukan threshold realistis
+
+---
+
+### **3. Safety Interlock - Incomplete Logic** ⚠️ CRITICAL
+**Status:** ⏳ Perlu diperbaiki
+
+**Problem:**
+- Current interlock hanya check:
+  - Pressure >= 40 bar
+  - Primary pump ON
+  - Secondary pump ON
+  - Emergency flag False
+- **Tapi pompa sekarang auto-controlled oleh turbine!**
+- User tidak press button "Pump ON" lagi
+
+**Current Code:**
+```python
+def check_interlock(self):
+    with self.state_lock:
+        # Check pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTDOWN)
+        primary_ok = self.state.pump_primary_status == 2  # ON
+        secondary_ok = self.state.pump_secondary_status == 2  # ON
+```
+
+**Issue:**
+- Pompa status tidak di-update dari ESP-BC
+- ESP-BC auto-control pompa berdasarkan turbine state
+- Raspberry Pi tidak tahu status pompa actual
+
+**Action Required:**
+
+**Option A: Remove Pump Interlock** - Recommended
+```python
+def check_interlock(self):
+    """Simplified interlock - pompa auto-controlled"""
+    with self.state_lock:
+        pressure_ok = self.state.pressure >= 40.0
+        turbine_ok = self.state.thermal_kw > 0  # Turbine running
+        emergency_ok = not self.state.emergency_active
+        
+        self.state.interlock_satisfied = (
+            pressure_ok and turbine_ok and emergency_ok
+        )
+        return self.state.interlock_satisfied
+```
+
+**Option B: Add Pump Status from ESP-BC**
+```python
+# Update ESP-BC I2C send buffer to include pump status
+# Update raspi_i2c_master.py to parse pump status
+# Update raspi_main_panel.py to use pump status
+```
+
+**Files to Update:**
+- [ ] `raspi_main_panel.py` - Simplify `check_interlock()`
+- [ ] Test interlock dengan turbine state
+- [ ] Update README interlock logic
+
+**Priority:** 🔴 CRITICAL  
+**Estimated Time:** 20 minutes  
+**Impact:** Interlock tidak bekerja dengan benar!
+
+---
+
+### **4. ESP-BC Communication - Pump Status Missing** ⚠️ MEDIUM
+**Status:** ⏳ Perlu ditambah
+
+**Problem:**
+- ESP-BC mengirim 20 bytes data
+- Tapi Raspberry Pi tidak parse pump status
+- Padahal ESP-BC sudah control pompa gradual
+
+**Current ESP-BC Send Buffer (20 bytes):**
+```cpp
+// Byte 0-3:   Electrical power kW (float)
+// Byte 4-7:   Turbine state (uint32)
+// Byte 8:     Safety rod actual
+// Byte 9:     Shim rod actual
+// Byte 10:    Regulating rod actual
+// Byte 11-16: Humidifier status (6 bytes)
+// Byte 17-19: Reserved
+```
+
+**Missing:** Pump speeds (3 bytes)
+
+**Action Required:**
+```cpp
+// ESP-BC: esp_utama.ino
+// Update prepareSendData():
+sendBuffer[17] = (uint8_t)pump_primary_actual;
+sendBuffer[18] = (uint8_t)pump_secondary_actual;
+sendBuffer[19] = (uint8_t)pump_tertiary_actual;
+```
+
+```python
+# Raspberry Pi: raspi_i2c_master.py
+# Update ESP_BC_Data dataclass:
+@dataclass
+class ESP_BC_Data:
+    ...
+    pump_primary_speed: int = 0
+    pump_secondary_speed: int = 0
+    pump_tertiary_speed: int = 0
+```
+
+**Files to Update:**
+- [ ] `esp_utama/esp_utama.ino` - Add pump speeds to send buffer
+- [ ] `raspi_i2c_master.py` - Parse pump speeds
+- [ ] `raspi_main_panel.py` - Use pump speeds untuk interlock
+
+**Priority:** 🟡 MEDIUM  
+**Estimated Time:** 30 minutes
+
+---
+
+### **5. OLED Display Manager** ⏳ BELUM ADA
+**Status:** Not started (0%)
+
+**Problem:**
+- 9 OLED belum ada implementasi
+- Program main berjalan tapi tidak ada visual feedback
+
+**Action Required:**
+- [ ] Create `raspi_panel_oled_9.py`
+- [ ] Implement `NineOLEDManager` class
+- [ ] Design 9 different layouts
+- [ ] Integrate dengan `raspi_main_panel.py`
+- [ ] Test dengan 2x PCA9548A
+
+**Priority:** 🟢 LOW (optional untuk testing code)  
+**Estimated Time:** 4-6 hours
+
+---
+
+### **6. Documentation Updates Needed** 📝
+**Status:** Partially complete
+
+**Updates Required:**
+- [x] README.md - Alur simulasi (COMPLETED)
+- [ ] README.md - Interlock logic update
+- [ ] README.md - START button procedure
+- [ ] HARDWARE_UPDATE_SUMMARY.md - Pump status communication
+- [ ] I2C_ADDRESS_MAPPING.md - Verify pinout dengan hardware actual
+
+**Priority:** 🟢 LOW  
+**Estimated Time:** 30 minutes
+
+---
+
+### **7. Testing Scripts Needed** 🧪
+**Status:** Basic tests only
+
+**Missing Tests:**
+- [ ] Test START button sequence
+- [ ] Test interlock dengan turbine control
+- [ ] Test humidifier trigger thresholds
+- [ ] Test pump gradual control
+- [ ] Test emergency shutdown sequence
+- [ ] Test full 8-phase startup sequence
+
+**Priority:** 🟡 MEDIUM  
+**Estimated Time:** 2-3 hours
+
+---
+
+## 📊 PRIORITY SUMMARY
+
+### 🔴 CRITICAL (Harus diperbaiki sebelum hardware test):
+1. **Safety Interlock Logic** - Tidak bekerja dengan turbine auto-control
+2. **START Button Implementation** - Required untuk operasi normal
+
+### 🟡 HIGH (Recommended untuk production):
+3. **Humidifier Threshold** - Konsistensi 800 kW vs 80 MWe
+4. **Pump Status Communication** - ESP-BC → RasPi
+5. **Testing Scripts** - Validate all sequences
+
+### 🟢 MEDIUM (Nice to have):
+6. **9-OLED Display Manager** - Visual feedback
+7. **Documentation Updates** - Keep in sync
+
+---
+
+**Last Updated By:** AI Assistant  
+**Date:** 2024-12-12 (Session 6 - Alur Simulasi & Integration Issues)  
+**Next Review:** Fix CRITICAL issues (START button + Interlock logic)  
+**Version:** 3.2 - Integration Issues Identified
+
+✅ **ACHIEVEMENT: Complete Alur Simulasi Documented!**  
+✅ **8-Phase Realistic PWR Startup Sequence**  
+✅ **Automatic Turbine Control Flow**  
+✅ **6 Individual Humidifiers Logic**  
+⚠️ **CRITICAL ISSUES FOUND:**
+  - 🔴 START button callback missing
+  - 🔴 Safety interlock broken (expects manual pumps)
+  - 🟡 Humidifier threshold inconsistency
+  - 🟡 Pump status communication missing
+🎯 **Next Focus: Fix CRITICAL issues before hardware testing**  
+📊 **Code: 95% Complete | Integration: Needs fixes | Hardware Testing: Blocked**

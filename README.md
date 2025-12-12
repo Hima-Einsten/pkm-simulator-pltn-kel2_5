@@ -760,62 +760,116 @@ HUMIDIFIER_CONFIG_CONSERVATIVE = {
 
 ---
 
-### 4. 🔄 PWR Startup Sequence
+### 4. 🔄 PWR Startup Sequence (ALUR SIMULASI TERKINI)
 
-**Realistic Pressurized Water Reactor startup:**
+**Realistic Pressurized Water Reactor startup - 300 MWe PWR:**
 
 ```
-Phase 1: System Check (0-5s)
-├─ All pumps: OFF
-├─ All rods: 0%
+Phase 1: System Initialization (0-5s)
+├─ Operator action: Press START button
+├─ All pumps: OFF (status = 0)
+├─ All rods: 0% (fully inserted)
 ├─ Pressure: 0 bar
-└─ Display: "SYSTEM INITIALIZING"
+├─ Turbine state: IDLE
+├─ Power output: 0 MWe
+├─ Display: "SYSTEM READY - START REACTOR"
+└─ Note: Semua kontrol aktif setelah START
 
-Phase 2: Start Tertiary Cooling (5-15s)
-├─ Operator press: "Pump Tertiary ON"
-├─ Pressure ramp: 0 → 55 bar (gradual)
-├─ LEDs: Tertiary flow animate (slow → fast)
-└─ Display: "TERTIARY COOLING ACTIVE"
+Phase 2: Control Rods Withdrawal (5-30s)
+├─ Operator action: Press Shim Rod UP & Regulating Rod UP
+├─ Shim rod: 0% → 40% (increment +5% per press)
+├─ Regulating rod: 0% → 40% (increment +5% per press)
+├─ Safety rod: Tetap 0% (untuk shutdown/SCRAM only)
+├─ Reactor thermal: Mulai naik (quadratic curve)
+│  └─ Formula: (shim+reg)/2 × (shim+reg)/2 × 90
+├─ Servo motors: Bergerak sesuai target position
+├─ Display: Rod positions update real-time
+└─ Note: Reactor mulai menghasilkan panas thermal
 
-Phase 3: Start Secondary Cooling (15-25s)
-├─ Interlock check: Tertiary = ON ✅
-├─ Operator press: "Pump Secondary ON"
-├─ Pressure ramp: 55 → 105 bar
-├─ LEDs: Secondary flow animate
-└─ Display: "SECONDARY COOLING ACTIVE"
+Phase 3: Steam Generator Humidifiers Activate (30-35s)
+├─ Kondisi trigger: Shim ≥ 40% AND Regulating ≥ 40%
+├─ Action automatic:
+│  ├─ RELAY_HUMID_SG1 → ON (GPIO 13)
+│  └─ RELAY_HUMID_SG2 → ON (GPIO 15)
+├─ Visual effect: Uap keluar dari steam generator mockup 💨
+├─ Hysteresis: OFF ketika < 35% (mencegah oscillation)
+└─ Display: "HUMIDIFIERS: SG1✓ SG2✓"
 
-Phase 4: Start Primary Loop (25-35s)
-├─ Interlock check: Secondary = ON ✅
-├─ Operator press: "Pump Primary ON"
-├─ Pressure ramp: 105 → 155 bar
-├─ LEDs: Primary flow animate
-├─ Rod control: NOW ENABLED 🔓
-└─ Display: "PRIMARY LOOP ACTIVE - READY"
+Phase 4: Turbine Starting (35-60s)
+├─ Kondisi trigger: Reactor thermal > 50 MWth (50,000 kW)
+├─ Turbine state: IDLE → STARTING
+├─ Turbine speed: 0% → 100% (gradual, +0.5% per cycle)
+├─ Motor turbin PWM: Mengikuti turbine speed
+│  └─ Speed = (Shim + Regulating) / 2
+├─ Pompa auto-start (controlled by ESP-BC):
+│  ├─ Primary: 0% → 50% (gradual +2% per cycle)
+│  ├─ Secondary: 0% → 50% (gradual +2% per cycle)
+│  └─ Tertiary: 0% → 50% (gradual +2% per cycle)
+├─ LED Flow: All 3 flows animate (48 LEDs)
+└─ Display: "TURBINE STARTING"
 
-Phase 5: Insert Control Rods (35-50s)
-├─ Operator press: Rod UP buttons
-├─ Rods move: 0% → target%
-├─ Servo motors actuate
-├─ Thermal power increases: 0 → XXX kW
-└─ Display: Rod positions + thermal kW
+Phase 5: Power Generation Begins (60-120s)
+├─ Turbine state: STARTING → RUNNING (ketika speed = 100%)
+├─ Pompa speed: 50% → 100% (gradual)
+├─ Power calculation (realistic PWR physics):
+│  ├─ Reactor thermal: ~900 MWth (dari rod positions)
+│  ├─ Turbine efficiency: 33% (typical PWR)
+│  ├─ Turbine load: 100% (fully loaded)
+│  └─ Electrical output: 900 MWth × 0.33 × 1.0 = ~300 MWe
+├─ Power indicator LEDs: 10 LEDs menyala BERSAMAAN
+│  └─ Brightness: Proporsional dengan output (0-255 PWM)
+├─ Thermal power: Menampilkan electrical output (kW)
+└─ Display: "POWER: 300 MWe - STABLE OPERATION"
 
-Phase 6: Humidifiers Activate (40-60s)
-├─ IF Shim >= 40% AND Reg >= 40%
-│  └─ Steam Gen Humidifier: ON 🌊
-│
-├─ IF Thermal >= 800 kW
-│  └─ Cooling Tower Humidifier: ON 🌊
-│
-└─ Display: "HUMIDIFIERS: SG✓ CT✓"
+Phase 6: Cooling Tower Humidifiers Activate (120s+)
+├─ Kondisi trigger: Electrical power ≥ 80 MWe (80,000 kW)
+├─ Action automatic:
+│  ├─ RELAY_HUMID_CT1 → ON (GPIO 32)
+│  ├─ RELAY_HUMID_CT2 → ON (GPIO 33)
+│  ├─ RELAY_HUMID_CT3 → ON (GPIO 14)
+│  └─ RELAY_HUMID_CT4 → ON (GPIO 12)
+├─ Visual effect: Uap keluar dari 4 cooling tower mockup 💨
+├─ Hysteresis: OFF ketika < 70 MWe
+└─ Display: "HUMIDIFIERS: SG✓ CT(1-4)✓"
 
-Phase 7: Power Generation (50s+)
-├─ ESP-C calculates power level
-├─ Power ramps: 0% → target%
-├─ Turbine: ON
-├─ Generator: ON
-├─ System: STABLE OPERATION
-└─ Display: "GENERATING POWER: XX MW"
+Phase 7: Normal Operation (Stable)
+├─ Operator dapat adjust:
+│  ├─ Control rods: Fine tuning reactivity
+│  ├─ Pressure: Adjust dengan UP/DOWN buttons
+│  └─ Power output: Dikontrol via rod positions
+├─ System monitoring:
+│  ├─ 9 OLED: Real-time status semua parameter
+│  ├─ 48 LED: Flow animation continuous
+│  ├─ 10 LED: Power indicator brightness
+│  ├─ 6 Humidifier: Status sesuai kondisi
+│  └─ Servos: Posisi actual = target
+├─ Safety interlock: Active monitoring
+│  └─ Emergency button: Ready untuk SCRAM
+└─ Status: "REACTOR STABLE - 300 MWe OUTPUT"
+
+Phase 8: Emergency Shutdown (Jika diperlukan)
+├─ Operator action: Press EMERGENCY button (GPIO 18)
+├─ Immediate actions:
+│  ├─ All rods: → 0% (fully inserted - SCRAM)
+│  ├─ Turbine: RUNNING → SHUTDOWN
+│  ├─ Power output: Ramp down ke 0 MWe
+│  ├─ Pompa: Gradual deceleration (-1% per cycle)
+│  ├─ All humidifiers: → OFF
+│  └─ LED flows: Slow down then stop
+├─ System state: Emergency active = True
+├─ Interlock: Semua kontrol locked
+└─ Display: "⚠️ EMERGENCY SHUTDOWN ACTIVE"
 ```
+
+**Key Features Alur Simulasi:**
+- ✅ **START Button Required** - Semua operasi dimulai dengan START
+- ✅ **Automatic Turbine Control** - State machine di ESP-BC
+- ✅ **Gradual Pump Control** - Realistic acceleration/deceleration
+- ✅ **6 Individual Humidifiers** - 2 SG + 4 CT dengan logic berbeda
+- ✅ **Realistic Power Calculation** - 900 MWth × 33% efficiency = 300 MWe
+- ✅ **10 LED Power Indicator** - Simultaneous brightness control
+- ✅ **Safety Interlock** - Mencegah operasi tidak aman
+- ✅ **Emergency SCRAM** - Immediate shutdown capability
 
 ---
 
@@ -1057,9 +1111,44 @@ python3 raspi_main_panel.py
 
 ## 📊 Status Implementasi
 
-**Overall Progress:** 🟢 **98% Complete** (Code Ready - Hardware Testing Pending)  
-**Architecture:** ✅ **v3.1 - Hardware Configuration Finalized**  
-**Last Updated:** 2024-12-08
+**Overall Progress:** 🟡 **95% Complete** (Integration Issues Found - Need Fixes)  
+**Architecture:** ✅ **v3.2 - Alur Simulasi Documented**  
+**Last Updated:** 2024-12-12  
+**Status:** 🟡 **CRITICAL ISSUES IDENTIFIED - Must fix before hardware test**
+
+### ⚠️ CRITICAL ISSUES - Must Fix Before Hardware Test
+
+**Issue #1: START Button Missing** 🔴
+- **Problem:** Flag `reactor_started` ada tapi tidak ada button callback
+- **Impact:** User tidak bisa start reactor secara proper
+- **Fix:** Add `on_start_button()` callback + register GPIO
+- **Priority:** CRITICAL
+- **Files:** `raspi_config.py`, `raspi_main_panel.py`
+
+**Issue #2: Safety Interlock Broken** 🔴
+- **Problem:** Interlock expect manual pump control, tapi pompa auto-controlled
+- **Impact:** Interlock tidak bekerja, rod movement tidak terlindungi
+- **Fix:** Simplify interlock logic, check turbine state instead of pump buttons
+- **Priority:** CRITICAL
+- **Files:** `raspi_main_panel.py` method `check_interlock()`
+
+**Issue #3: Humidifier Threshold Mismatch** 🟡
+- **Problem:** Code pakai 800 kW, README bilang 80 MWe (80,000 kW)
+- **Impact:** Cooling tower humidifier trigger terlalu mudah
+- **Fix:** Decide threshold (recommend 80 MWe) dan konsisten di semua file
+- **Priority:** HIGH
+- **Files:** `raspi_humidifier_control.py`, `README.md`
+
+**Issue #4: Pump Status Not Communicated** 🟡
+- **Problem:** ESP-BC control pompa tapi tidak kirim status ke Raspberry Pi
+- **Impact:** Raspberry Pi tidak tahu pump speeds actual
+- **Fix:** Add pump speeds (3 bytes) to ESP-BC send buffer
+- **Priority:** HIGH
+- **Files:** `esp_utama/esp_utama.ino`, `raspi_i2c_master.py`
+
+**See TODO.md for detailed fix instructions and priorities**
+
+---
 
 ### ✅ Phase 1 & 2: COMPLETED (100%)
 
@@ -1152,12 +1241,22 @@ python3 raspi_main_panel.py
   - Remote control
   - TODO: Design & implementation
 
-### Overall Progress: 🟢 **98% Complete**
+### Overall Progress: 🟡 **95% Complete - Integration Fixes Needed**
 
 **Summary:**
 - ✅ Phase 1 & 2: 100% (All code complete!)
+- ⚠️ Integration Issues: 4 issues identified (2 critical, 2 high)
 - ⏳ Phase 3: 0% (9-OLED pending - optional)
-- 🔧 Hardware Testing: Pending
+- 🔧 Hardware Testing: Blocked by integration issues
+
+**Before Hardware Test:**
+1. 🔴 Fix START button implementation
+2. 🔴 Fix safety interlock logic
+3. 🟡 Fix humidifier threshold consistency
+4. 🟡 Add pump status communication
+5. 🧪 Create integration test scripts
+
+**Estimated Time to Fix:** 2-3 hours
 
 ---
 
@@ -1449,18 +1548,35 @@ for retry in range(3):
 
 ---
 
-## ✅ Final Summary (v3.1 - December 2024)
+## ✅ Final Summary (v3.2 - December 2024)
 
 ### **What's Complete:**
 
 ✅ **2 ESP Architecture** (v3.0 - Cost optimized)  
 ✅ **300 MWe PWR Physics Model** (v3.1 - Realistic)  
+✅ **8-Phase Startup Sequence** (v3.2 - Documented) ⭐ NEW  
 ✅ **6 Individual Humidifiers** (2 SG + 4 CT)  
 ✅ **Gradual Pump Control** (Realistic start/stop)  
 ✅ **Dynamic Turbine Speed** (Based on control rods)  
 ✅ **10 LED Power Indicator** (0-300 MWe visualization)  
 ✅ **Simultaneous LED Brightness** (All LEDs same brightness)  
 ✅ **Power Only When Turbine Runs** (Realistic physics!)
+
+### **⚠️ Integration Issues Found (v3.2):**
+
+🔴 **CRITICAL:**
+1. START button callback missing
+2. Safety interlock logic broken (expects manual pumps)
+
+🟡 **HIGH:**
+3. Humidifier threshold mismatch (800 kW vs 80 MWe)
+4. Pump status not communicated from ESP-BC
+
+🟢 **LOW:**
+5. 9-OLED display manager pending
+6. Testing scripts incomplete
+
+**See TODO.md for detailed fix instructions**
 
 ### **Key Features:**
 
@@ -1477,18 +1593,26 @@ for retry in range(3):
 
 ### **Code Status:**
 
-| Component | Status | Progress |
-|-----------|--------|----------|
-| ESP-BC Firmware | ✅ Complete | 100% |
-| ESP-E Firmware | ✅ Complete | 100% |
-| Raspberry Pi Code | ✅ Complete | 100% |
-| Documentation | ✅ Complete | 100% |
-| OLED Manager | ⏳ Pending | 0% |
-| Hardware Testing | ⏳ Pending | 0% |
-| **Overall** | **✅ Ready** | **98%** |
+| Component | Status | Progress | Issues |
+|-----------|--------|----------|--------|
+| ESP-BC Firmware | ✅ Complete | 100% | Minor: pump status |
+| ESP-E Firmware | ✅ Complete | 100% | None |
+| Raspberry Pi Code | ⚠️ Issues | 95% | 2 critical |
+| Documentation | ✅ Complete | 100% | Minor updates |
+| OLED Manager | ⏳ Pending | 0% | Optional |
+| Hardware Testing | 🔒 Blocked | 0% | Fix issues first |
+| **Overall** | **⚠️ Fixes Needed** | **95%** | **4 issues** |
 
 ### **Next Steps:**
 
+**BEFORE Hardware Test:**
+1. 🔴 Fix START button implementation (15 min)
+2. 🔴 Fix safety interlock logic (20 min)
+3. 🟡 Fix humidifier threshold (10 min)
+4. 🟡 Add pump status communication (30 min)
+5. 🧪 Create integration test scripts (1-2 hrs)
+
+**THEN Hardware Test:**
 1. 🔧 Upload firmware to ESP32 boards
 2. 🔌 Wire all components according to I2C_ADDRESS_MAPPING.md
 3. 🧪 Test individual subsystems
@@ -1506,15 +1630,15 @@ for retry in range(3):
 
 ---
 
-**Status:** ✅ Production Ready (98% Complete)  
-**Version:** 3.1  
-**Last Updated:** December 8, 2024  
-**License:** [Your License]  
-**Authors:** PKM Team 2024
+**Status:** ⚠️ 95% Complete - Integration Fixes Needed  
+**Version:** 3.2  
+**Last Updated:** December 12, 2024  
+**Estimated Fix Time:** 2-3 hours  
+**Blocker:** 2 CRITICAL issues must be fixed before hardware test
 
 ---
 
-**🎉 Selamat! Simulator PLTN PWR 300 MWe siap untuk digunakan!**
+**⚠️ IMPORTANT:** Jangan upload ke hardware sebelum fix CRITICAL issues!
 
 ---
 
@@ -1598,17 +1722,20 @@ Special thanks to:
 ---
 
 **Version:** 2.0  
-**Last Updated:** 2024-12-04  
-**Status:** 🟡 **In Development (75% complete)**
+**Last Updated:** 2024-12-12  
+**Status:** 🟡 **95% Complete - Integration Fixes Needed**
 
 **Remaining Work:**
-- [ ] Integrate all Python modules
-- [ ] Complete OLED display manager
-- [ ] Full system testing
-- [ ] Physical assembly
-- [ ] Documentation finalization
+- [x] All Python modules integrated ✅
+- [x] Complete alur simulasi documented ✅
+- [ ] Fix START button callback (CRITICAL) 🔴
+- [ ] Fix safety interlock logic (CRITICAL) 🔴
+- [ ] Fix humidifier threshold (HIGH) 🟡
+- [ ] Add pump status communication (HIGH) 🟡
+- [ ] Optional: OLED display manager
+- [ ] Full system integration test (after fixes)
 
-**Estimated Completion:** January 2025
+**Estimated Completion:** January 2025 (after fixes + hardware test)
 
 ---
 
