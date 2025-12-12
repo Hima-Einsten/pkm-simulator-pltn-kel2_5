@@ -13,13 +13,22 @@
  * - Servos: GPIO 25, 26, 27 (control rods)
  * - Humidifier Relays Cooling Tower (4): GPIO 32, 33, 14, 12
  * - Humidifier Relays Steam Generator (2): GPIO 13, 15
- * - Motor Driver PWM:
+ * - Motor Driver PWM (Speed Control):
  *   - GPIO 4:  Pompa Primer (Primary Loop)
  *   - GPIO 16: Pompa Sekunder (Secondary Loop)
  *   - GPIO 17: Pompa Tersier (Tertiary/Cooling Loop)
- *   - GPIO 5:  Motor Turbin (berdasarkan shim + regulating rod)
+ *   - GPIO 5:  Motor Turbin
+ * - Motor Direction Control (ONLY Turbine):
+ *   - GPIO 23: Turbine IN1 (direction 1)
+ *   - GPIO 18: Turbine IN2 (direction 2)
+ *   - PUMPS: Hard-wired to FORWARD (IN1=GND, IN2=+3.3V on L298N board)
  * - I2C: GPIO 21 (SDA), 22 (SCL)
  * - Status LED: GPIO 2
+ * 
+ * PIN OPTIMIZATION:
+ * - Saved 6 GPIO pins by hard-wiring pump directions
+ * - Only turbine needs direction control (for rotation adjustment)
+ * - GPIO 21/22 now conflict-free for I2C only
  * 
  * IMPORTANT: Uses ESP32 Arduino Core v3.x API
  * - ledcAttach(pin, freq, resolution) instead of ledcSetup() + ledcAttachPin()
@@ -68,18 +77,10 @@ uint8_t sendBuffer[SEND_SIZE];
 #define MOTOR_PUMP_TERTIARY   17   // Pompa Tersier (ENA)
 #define MOTOR_TURBINE         5    // Motor Turbin (ENB)
 
-// Direction Control (untuk L298N IN1, IN2, IN3, IN4)
-// L298N #1 - Pompa Primer & Sekunder
-#define MOTOR_PUMP_PRIMARY_IN1    18   // Pompa Primer direction 1
-#define MOTOR_PUMP_PRIMARY_IN2    19   // Pompa Primer direction 2
-#define MOTOR_PUMP_SECONDARY_IN1  23   // Pompa Sekunder direction 1
-#define MOTOR_PUMP_SECONDARY_IN2  22   // Pompa Sekunder direction 2
-
-// L298N #2 - Pompa Tersier & Turbin
-#define MOTOR_PUMP_TERTIARY_IN1   21   // Pompa Tersier direction 1
-#define MOTOR_PUMP_TERTIARY_IN2   3    // Pompa Tersier direction 2
-#define MOTOR_TURBINE_IN1         1    // Motor Turbin direction 1
-#define MOTOR_TURBINE_IN2         0    // Motor Turbin direction 2
+// Direction Control - ONLY for Turbine (adjustable direction)
+// Pumps always FORWARD (IN1=GND, IN2=+3.3V - hard-wired on L298N)
+#define MOTOR_TURBINE_IN1     23   // Motor Turbin direction 1
+#define MOTOR_TURBINE_IN2     18   // Motor Turbin direction 2
 
 // Motor Direction Enum
 #define MOTOR_FORWARD  1
@@ -218,6 +219,13 @@ void setup() {
   ledcWrite(MOTOR_PUMP_TERTIARY, 0);
   ledcWrite(MOTOR_TURBINE, 0);
   Serial.println("✓ Motor drivers initialized (3 pumps + turbine = 0%)");
+
+  // Initialize turbine direction control pins (only turbine, pumps are hard-wired)
+  pinMode(MOTOR_TURBINE_IN1, OUTPUT);
+  pinMode(MOTOR_TURBINE_IN2, OUTPUT);
+  digitalWrite(MOTOR_TURBINE_IN1, HIGH);   // Default: FORWARD
+  digitalWrite(MOTOR_TURBINE_IN2, LOW);
+  Serial.println("✓ Turbine direction control initialized (FORWARD)");
 
   // Initialize status LED
   pinMode(STATUS_LED, OUTPUT);
@@ -412,8 +420,9 @@ void updateHumidifiers() {
 // MOTOR DIRECTION CONTROL
 // ================================
 void setMotorDirection(uint8_t motor_id, uint8_t direction) {
-  /*
+  /**
    * Set motor direction for L298N H-Bridge
+   * SIMPLIFIED VERSION: Only turbine has GPIO direction control
    * 
    * Parameters:
    *   motor_id: 1=Primer, 2=Sekunder, 3=Tersier, 4=Turbin
@@ -423,62 +432,25 @@ void setMotorDirection(uint8_t motor_id, uint8_t direction) {
    *   IN1=LOW,  IN2=LOW  → STOP (brake)
    *   IN1=HIGH, IN2=LOW  → FORWARD
    *   IN1=LOW,  IN2=HIGH → REVERSE
-   *   IN1=HIGH, IN2=HIGH → STOP (brake)
    */
   
-  switch(motor_id) {
-    case 1: // Pompa Primer
-      if (direction == MOTOR_FORWARD) {
-        digitalWrite(MOTOR_PUMP_PRIMARY_IN1, HIGH);
-        digitalWrite(MOTOR_PUMP_PRIMARY_IN2, LOW);
-      } else if (direction == MOTOR_REVERSE) {
-        digitalWrite(MOTOR_PUMP_PRIMARY_IN1, LOW);
-        digitalWrite(MOTOR_PUMP_PRIMARY_IN2, HIGH);
-      } else { // MOTOR_STOP
-        digitalWrite(MOTOR_PUMP_PRIMARY_IN1, LOW);
-        digitalWrite(MOTOR_PUMP_PRIMARY_IN2, LOW);
-      }
-      break;
-      
-    case 2: // Pompa Sekunder
-      if (direction == MOTOR_FORWARD) {
-        digitalWrite(MOTOR_PUMP_SECONDARY_IN1, HIGH);
-        digitalWrite(MOTOR_PUMP_SECONDARY_IN2, LOW);
-      } else if (direction == MOTOR_REVERSE) {
-        digitalWrite(MOTOR_PUMP_SECONDARY_IN1, LOW);
-        digitalWrite(MOTOR_PUMP_SECONDARY_IN2, HIGH);
-      } else {
-        digitalWrite(MOTOR_PUMP_SECONDARY_IN1, LOW);
-        digitalWrite(MOTOR_PUMP_SECONDARY_IN2, LOW);
-      }
-      break;
-      
-    case 3: // Pompa Tersier
-      if (direction == MOTOR_FORWARD) {
-        digitalWrite(MOTOR_PUMP_TERTIARY_IN1, HIGH);
-        digitalWrite(MOTOR_PUMP_TERTIARY_IN2, LOW);
-      } else if (direction == MOTOR_REVERSE) {
-        digitalWrite(MOTOR_PUMP_TERTIARY_IN1, LOW);
-        digitalWrite(MOTOR_PUMP_TERTIARY_IN2, HIGH);
-      } else {
-        digitalWrite(MOTOR_PUMP_TERTIARY_IN1, LOW);
-        digitalWrite(MOTOR_PUMP_TERTIARY_IN2, LOW);
-      }
-      break;
-      
-    case 4: // Motor Turbin
-      if (direction == MOTOR_FORWARD) {
-        digitalWrite(MOTOR_TURBINE_IN1, HIGH);
-        digitalWrite(MOTOR_TURBINE_IN2, LOW);
-      } else if (direction == MOTOR_REVERSE) {
-        digitalWrite(MOTOR_TURBINE_IN1, LOW);
-        digitalWrite(MOTOR_TURBINE_IN2, HIGH);
-      } else {
-        digitalWrite(MOTOR_TURBINE_IN1, LOW);
-        digitalWrite(MOTOR_TURBINE_IN2, LOW);
-      }
-      break;
+  // Only turbine (motor_id = 4) has GPIO control
+  if (motor_id == 4) {
+    // Motor Turbin
+    if (direction == MOTOR_FORWARD) {
+      digitalWrite(MOTOR_TURBINE_IN1, HIGH);
+      digitalWrite(MOTOR_TURBINE_IN2, LOW);
+    } else if (direction == MOTOR_REVERSE) {
+      digitalWrite(MOTOR_TURBINE_IN1, LOW);
+      digitalWrite(MOTOR_TURBINE_IN2, HIGH);
+    } else { // MOTOR_STOP
+      digitalWrite(MOTOR_TURBINE_IN1, LOW);
+      digitalWrite(MOTOR_TURBINE_IN2, LOW);
+    }
   }
+  // Pumps 1-3: Direction control is HARD-WIRED on L298N board
+  // IN1 physically connected to GND, IN2 connected to +3.3V (always FORWARD)
+  // No GPIO pins needed for pumps - saves 6 pins!
 }
 
 // ================================
@@ -527,24 +499,15 @@ void updatePumpSpeeds() {
     }
   }
   
-  // Set direction to FORWARD when speed > 0, STOP when speed = 0
-  if (pump_primary_actual > 0) {
-    setMotorDirection(1, MOTOR_FORWARD);
+  // Set direction for turbine only (pumps are hard-wired FORWARD)
+  if (turbine_speed > 0) {
+    setMotorDirection(4, MOTOR_FORWARD);
   } else {
-    setMotorDirection(1, MOTOR_STOP);
+    setMotorDirection(4, MOTOR_STOP);
   }
   
-  if (pump_secondary_actual > 0) {
-    setMotorDirection(2, MOTOR_FORWARD);
-  } else {
-    setMotorDirection(2, MOTOR_STOP);
-  }
-  
-  if (pump_tertiary_actual > 0) {
-    setMotorDirection(3, MOTOR_FORWARD);
-  } else {
-    setMotorDirection(3, MOTOR_STOP);
-  }
+  // Pumps don't need setMotorDirection() - they're always FORWARD
+  // Speed control via PWM is sufficient (0 PWM = stopped)
   
   // Apply PWM to motor drivers
   int pwm_primary = map((int)pump_primary_actual, 0, 100, 0, 255);
