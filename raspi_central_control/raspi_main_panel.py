@@ -455,10 +455,18 @@ class PLTNPanelController:
         """
         Check if interlock conditions are satisfied for rod movement
         
-        NEW LOGIC (v3.2):
-        - Pompa dikontrol otomatis oleh ESP-BC turbine state machine
-        - Tidak perlu check manual pump buttons lagi
-        - Check berdasarkan thermal power (turbine running indicator)
+        INTERLOCK LOGIC v3.3 (FIXED):
+        Berdasarkan alur simulasi 8-phase PWR startup yang realistis:
+        
+        Phase 1-2: Reactor START → Raise pressure → Raise rods
+        - Allow: Pressure >= 40 bar
+        - Allow: Reactor started
+        - Allow: No emergency
+        - NO NEED: Turbine running (turbine belum jalan saat initial rod raise)
+        
+        Phase 3+: Normal operation
+        - Same checks as above
+        - Turbine akan auto-start dari ESP-BC ketika thermal > 50 MWth
         
         Returns:
             True if safe to move rods, False otherwise
@@ -466,30 +474,25 @@ class PLTNPanelController:
         with self.state_lock:
             # Check 1: Reactor must be started
             if not self.state.reactor_started:
+                logger.debug("Interlock: Reactor not started")
                 return False
             
             # Check 2: Pressure >= 40 bar (minimum for safe operation)
+            # Pressure harus dinaikkan dulu sebelum rod movement
             if self.state.pressure < 40.0:
                 logger.debug(f"Interlock: Pressure too low ({self.state.pressure:.1f} bar < 40 bar)")
                 return False
             
-            # Check 3: Turbine running (indicated by thermal_kw > 0)
-            # Ketika turbine running, pompa otomatis jalan dari ESP-BC
-            if self.state.thermal_kw <= 0:
-                logger.debug("Interlock: Turbine not running (thermal_kw = 0)")
-                # EXCEPTION: Allow initial rod movement untuk start turbine
-                # Jika rods masih 0%, allow untuk raise pertama kali
-                if self.state.shim_rod == 0 and self.state.regulating_rod == 0:
-                    logger.debug("Interlock: Allowing initial rod raise to start reactor")
-                    return True
-                return False
-            
-            # Check 4: No emergency active
+            # Check 3: No emergency active
             if self.state.emergency_active:
-                logger.debug("Interlock: Emergency active")
+                logger.debug("Interlock: Emergency shutdown active")
                 return False
             
-            # All checks passed
+            # All checks passed - safe to move rods
+            # NOTE: Tidak check turbine running karena:
+            # - Turbine belum jalan saat initial rod raise (Phase 2)
+            # - Turbine auto-start dari ESP-BC ketika thermal > 50 MWth (Phase 4)
+            # - Pompa auto-controlled dari ESP-BC turbine state machine
             return True
     
     # ============================================
