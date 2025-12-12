@@ -55,7 +55,7 @@ def test_button_simulation():
         if not state.reactor_started:
             print("  → Blocked: Reactor not started!")
             return
-        state.pressure += 5.0
+        state.pressure = min(state.pressure + 5.0, 200.0)
         print(f"  → State: pressure = {state.pressure:.1f} bar")
     
     def on_pump_on():

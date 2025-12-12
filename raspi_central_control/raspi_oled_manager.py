@@ -302,16 +302,24 @@ class OLEDManager:
         
         display_obj.clear()
         
-        # Title
-        display_obj.draw_text_centered(f"PUMP {pump_name}", 0, display_obj.font)
+        # Title - use shorter names
+        title_map = {
+            "PRIMARY": "PUMP 1",
+            "SECONDARY": "PUMP 2",
+            "TERTIARY": "PUMP 3"
+        }
+        title = title_map.get(pump_name, f"PUMP {pump_name}")
+        display_obj.draw_text_centered(title, 0, display_obj.font)
         
-        # Status text
-        status_text = ["OFF", "STARTING", "ON", "SHUTTING DOWN"][status]
-        display_obj.draw_text_centered(status_text, 12, display_obj.font_large)
+        # Status text - use shorter text
+        status_text = ["OFF", "STARTING", "ON", "SHUTDOWN"][status]
+        display_obj.draw_text_centered(status_text, 15, display_obj.font_large)
         
-        # PWM bar
-        display_obj.draw_text("PWM:", 2, 25, display_obj.font)
-        display_obj.draw_progress_bar(30, 25, 95, 6, pwm, 100)
+        # PWM bar with label
+        display_obj.draw_text("PWM:", 2, 38, display_obj.font)
+        pwm_text = f"{pwm}%"
+        display_obj.draw_text(pwm_text, 100, 38, display_obj.font)
+        display_obj.draw_progress_bar(10, 50, 108, 8, pwm, 100)
         
         display_obj.show()
     
@@ -341,8 +349,14 @@ class OLEDManager:
         
         display_obj.clear()
         
-        # Title
-        display_obj.draw_text_centered(f"{rod_name} ROD", 0, display_obj.font)
+        # Title - use shorter names
+        title_map = {
+            "SAFETY": "SAFETY ROD",
+            "SHIM": "SHIM ROD",
+            "REGULATING": "REG. ROD"
+        }
+        title = title_map.get(rod_name, f"{rod_name} ROD")
+        display_obj.draw_text_centered(title, 0, display_obj.font)
         
         # Position value (large)
         position_text = f"{position}%"
@@ -379,8 +393,8 @@ class OLEDManager:
         display = self.oled_thermal_power
         display.clear()
         
-        # Title
-        display.draw_text_centered("ELECTRICAL POWER", 0, display.font)
+        # Title - shorter
+        display.draw_text_centered("POWER OUTPUT", 0, display.font)
         
         # Power in MWe (large)
         power_mwe = power_kw / 1000.0
@@ -419,14 +433,14 @@ class OLEDManager:
         turbine_text = ["IDLE", "STARTING", "RUNNING", "SHUTDOWN"][turbine_state]
         display.draw_text(f"Turbine: {turbine_text}", 2, 15, display.font)
         
-        # Humidifier status
-        sg_status = f"SG: {'✓' if humid_sg1 else '✗'}{'✓' if humid_sg2 else '✗'}"
-        ct_status = f"CT: {'✓' if humid_ct1 else '✗'}{'✓' if humid_ct2 else '✗'}{'✓' if humid_ct3 else '✗'}{'✓' if humid_ct4 else '✗'}"
+        # Humidifier status - more compact
+        sg_status = f"SG:{humid_sg1}{humid_sg2}"
+        ct_status = f"CT:{humid_ct1}{humid_ct2}{humid_ct3}{humid_ct4}"
         display.draw_text(sg_status, 2, 30, display.font)
-        display.draw_text(ct_status, 2, 42, display.font)
+        display.draw_text(ct_status, 70, 30, display.font)
         
-        # Interlock status
-        interlock_text = "Interlock: OK" if interlock else "Interlock: NOT OK"
+        # Interlock status - shorter
+        interlock_text = "Intlk: OK" if interlock else "Intlk: FAIL"
         display.draw_text(interlock_text, 2, 54, display.font)
         
         display.show()
