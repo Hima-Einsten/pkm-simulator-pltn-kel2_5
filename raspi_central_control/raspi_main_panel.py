@@ -186,20 +186,20 @@ class PLTNPanelController:
             raise
     
     def init_oled_displays(self):
-        """Initialize 9 OLED displays (0.91 inch 128x64)"""
+        """Initialize 9 OLED displays (0.91 inch 128x32)"""
         try:
             from raspi_oled_manager import OLEDManager
             
             self.oled_manager = OLEDManager(
                 mux_manager=self.mux_manager,
                 width=128,
-                height=64  # 0.91 inch OLED
+                height=32  # 0.91 inch OLED
             )
             
             # Initialize all 9 displays
             self.oled_manager.init_all_displays()
             
-            logger.info("9 OLED displays initialized (128x64)")
+            logger.info("9 OLED displays initialized (128x32)")
             
         except Exception as e:
             logger.warning(f"Failed to initialize OLED displays: {e}")
