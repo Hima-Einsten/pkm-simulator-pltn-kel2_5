@@ -38,11 +38,13 @@ class OLEDDisplay:
         self.image = Image.new('1', (width, height))
         self.draw = ImageDraw.Draw(self.image)
         
-        # Try to load a font
+        # Try to load a font - smaller sizes for 128x32 display
         try:
-            self.font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 12)
-            self.font_large = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 16)
+            self.font_small = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 8)
+            self.font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 10)
+            self.font_large = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 12)
         except:
+            self.font_small = ImageFont.load_default()
             self.font = ImageFont.load_default()
             self.font_large = ImageFont.load_default()
         
@@ -186,12 +188,12 @@ class OLEDManager:
         # TCA9548A #1 (0x70) - 7 displays
         displays_mux1 = [
             (1, self.oled_pressurizer, "Pressurizer"),
-            (2, self.oled_pump_primary, "Pump Primary"),
-            (3, self.oled_pump_secondary, "Pump Secondary"),
-            (4, self.oled_pump_tertiary, "Pump Tertiary"),
+            (2, self.oled_pump_primary, "Pump Primer"),
+            (3, self.oled_pump_secondary, "Pump Sekunder"),
+            (4, self.oled_pump_tertiary, "Pump Tersier"),
             (5, self.oled_safety_rod, "Safety Rod"),
             (6, self.oled_shim_rod, "Shim Rod"),
-            (7, self.oled_regulating_rod, "Regulating Rod")
+            (7, self.oled_regulating_rod, "Reg Rod")
         ]
         
         # TCA9548A #2 (0x71) - 2 displays
@@ -267,12 +269,22 @@ class OLEDManager:
         display = self.oled_pressurizer
         display.clear()
         
-        # Title
-        display.draw_text_centered("PRESSURIZER", 0, display.font)
+        # Title (small font)
+        display.draw_text_centered("PRESSURIZER", 0, display.font_small)
         
-        # Pressure value (large)
+        # Pressure value (medium font, centered)
         pressure_text = f"{pressure:.1f} bar"
-        display.draw_text_centered(pressure_text, 14, display.font_large)
+        display.draw_text_centered(pressure_text, 10, display.font_large)
+        
+        # Status indicator (small font, bottom)
+        if critical:
+            if self.blink_state:
+                display.draw_text_centered("CRITICAL!", 24, display.font_small)
+        elif warning:
+            if self.blink_state:
+                display.draw_text_centered("WARNING", 24, display.font_small)
+        else:
+            display.draw_text_centered("Normal", 24, display.font_small)
         
         display.show()
     
@@ -292,20 +304,22 @@ class OLEDManager:
         
         display_obj.clear()
         
-        # Title - use shorter names
+        # Title - use shorter names (small font)
         title_map = {
             "PRIMARY": "PUMP 1",
             "SECONDARY": "PUMP 2",
             "TERTIARY": "PUMP 3"
         }
         title = title_map.get(pump_name, f"PUMP {pump_name}")
-        display_obj.draw_text_centered(title, 0, display_obj.font)
+        display_obj.draw_text_centered(title, 0, display_obj.font_small)
         
-        # Status text and PWM on same line
+        # Status text (medium font, centered)
         status_text = ["OFF", "START", "ON", "STOP"][status]
-        display_obj.draw_text(status_text, 2, 16, display_obj.font)
-        pwm_text = f"{pwm}%"
-        display_obj.draw_text(pwm_text, 95, 16, display_obj.font)
+        display_obj.draw_text_centered(status_text, 10, display_obj.font_large)
+        
+        # PWM value (small font, bottom centered)
+        pwm_text = f"PWM: {pwm}%"
+        display_obj.draw_text_centered(pwm_text, 24, display_obj.font_small)
         
         display_obj.show()
     
@@ -335,18 +349,21 @@ class OLEDManager:
         
         display_obj.clear()
         
-        # Title - use shorter names
+        # Title - use shorter names (small font)
         title_map = {
             "SAFETY": "SAFETY ROD",
             "SHIM": "SHIM ROD",
-            "REGULATING": "REG. ROD"
+            "REGULATING": "REG ROD"
         }
         title = title_map.get(rod_name, f"{rod_name} ROD")
-        display_obj.draw_text_centered(title, 0, display_obj.font)
+        display_obj.draw_text_centered(title, 0, display_obj.font_small)
         
-        # Position value (large)
+        # Position value (medium font, centered)
         position_text = f"{position}%"
-        display_obj.draw_text_centered(position_text, 14, display_obj.font_large)
+        display_obj.draw_text_centered(position_text, 10, display_obj.font_large)
+        
+        # Progress bar (small, bottom)
+        display_obj.draw_progress_bar(10, 24, 108, 6, position, 100)
         
         display_obj.show()
     
@@ -375,13 +392,18 @@ class OLEDManager:
         display = self.oled_thermal_power
         display.clear()
         
-        # Title - shorter
-        display.draw_text_centered("THERMAL POWER", 0, display.font)
+        # Title (small font)
+        display.draw_text_centered("THERMAL POWER", 0, display.font_small)
         
-        # Power in MWe (large)
+        # Power in MWe (medium font, centered)
         power_mwe = power_kw / 1000.0
         power_text = f"{power_mwe:.1f} MWe"
-        display.draw_text_centered(power_text, 14, display.font_large)
+        display.draw_text_centered(power_text, 10, display.font_large)
+        
+        # Reactor thermal (small font, bottom)
+        thermal_mwth = power_kw / 0.33  # Reverse calculate thermal
+        thermal_text = f"({thermal_mwth:.0f} MWth)"
+        display.draw_text_centered(thermal_text, 24, display.font_small)
         
         display.show()
     
@@ -403,18 +425,22 @@ class OLEDManager:
         display = self.oled_system_status
         display.clear()
         
-        # Title
-        display.draw_text_centered("SYSTEM STATUS", 0, display.font)
+        # Title (small font)
+        display.draw_text_centered("SYSTEM STATUS", 0, display.font_small)
         
-        # Line 1: Turbine state
+        # Line 1: Turbine state (small font)
         turbine_text = ["IDLE", "START", "RUN", "STOP"][turbine_state]
-        display.draw_text(f"Turb:{turbine_text}", 2, 14, display.font)
+        display.draw_text(f"Turb: {turbine_text}", 0, 10, display.font_small)
         
-        # Line 2: Humidifier status - compact
-        sg_status = f"SG:{humid_sg1}{humid_sg2}"
-        ct_status = f"CT:{humid_ct1}{humid_ct2}{humid_ct3}{humid_ct4}"
-        display.draw_text(sg_status, 2, 23, display.font)
-        display.draw_text(ct_status, 60, 23, display.font)
+        # Line 2: Humidifier status (small font)
+        sg_status = f"SG: {humid_sg1}{humid_sg2}"
+        ct_status = f"CT: {humid_ct1}{humid_ct2}{humid_ct3}{humid_ct4}"
+        display.draw_text(sg_status, 0, 18, display.font_small)
+        display.draw_text(ct_status, 64, 18, display.font_small)
+        
+        # Line 3: Interlock (small font, bottom)
+        interlock_text = "Interlock: OK" if interlock else "Interlock: FAIL"
+        display.draw_text_centered(interlock_text, 26, display.font_small)
         
         display.show()
     
