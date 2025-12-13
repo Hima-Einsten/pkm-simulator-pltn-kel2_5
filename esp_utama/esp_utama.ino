@@ -123,6 +123,7 @@ enum TurbineState {
 
 TurbineState current_state = STATE_IDLE;
 float power_level = 0.0;  // 0-100%
+float turbine_speed = 0.0;  // Current turbine speed (0-100%)
 
 // ================================
 // GLOBAL VARIABLES - Pumps
@@ -530,7 +531,7 @@ void updateTurbineSpeed() {
   
   // Map 0-100% rod position to 0-100% turbine speed
   // Safety rod tidak mempengaruhi turbine speed
-  float turbine_speed = avg_control_rods;
+  turbine_speed = avg_control_rods;  // Update global variable
   
   // Apply minimum threshold
   if (turbine_speed < 10.0) {

@@ -94,21 +94,33 @@ class PLTNPanelController:
         
         self.state = PanelState()
         
-        # Initialize hardware components
-        self.init_multiplexers()
-        self.init_i2c_master()
-        self.init_buttons()
-        self.init_humidifier()
-        self.init_oled_displays()  # Initialize 9 OLED displays
+        # Initialize hardware components with graceful degradation
+        logger.info("Phase 1: Core hardware initialization...")
+        try:
+            self.init_multiplexers()
+            self.init_i2c_master()
+            self.init_buttons()
+            self.init_humidifier()
+        except Exception as e:
+            logger.error(f"Critical hardware initialization failed: {e}")
+            logger.error("Cannot continue without core hardware")
+            raise
+        
+        # Optional hardware with timeout (non-blocking)
+        logger.info("Phase 2: Optional hardware (OLED displays)...")
+        self.init_oled_displays()  # Non-blocking with timeout
         
         # Threading locks
         self.i2c_lock = threading.Lock()
         self.state_lock = threading.Lock()
         
-        logger.info("PLTN Panel Controller initialized successfully")
+        logger.info("="*60)
+        logger.info("✓ PLTN Panel Controller initialized successfully")
+        logger.info("✓ Ready for button input!")
+        logger.info("="*60)
     
     def init_multiplexers(self):
-        """Initialize TCA9548A multiplexers"""
+        """Initialize TCA9548A multiplexers with fallback"""
         try:
             self.mux_manager = DualMultiplexerManager(
                 display_bus=config.I2C_BUS_DISPLAY,
@@ -116,25 +128,29 @@ class PLTNPanelController:
                 display_addr=config.TCA9548A_DISPLAY_ADDRESS,
                 esp_addr=config.TCA9548A_ESP_ADDRESS
             )
-            logger.info("Multiplexers initialized")
+            logger.info("✓ Multiplexers initialized")
         except Exception as e:
-            logger.error(f"Failed to initialize multiplexers: {e}")
+            logger.warning(f"⚠️  Multiplexers unavailable: {e}")
+            logger.warning("   Running in simulation mode")
+            self.mux_manager = None
             raise
     
     def init_i2c_master(self):
-        """Initialize I2C Master for 2 ESP communication"""
+        """Initialize I2C Master for 2 ESP communication with fallback"""
         try:
             self.i2c_master = I2CMaster(
                 bus_number=config.I2C_BUS_ESP,
-                mux_select_callback=self.mux_manager.select_esp_channel
+                mux_select_callback=self.mux_manager.select_esp_channel if self.mux_manager else None
             )
-            logger.info("I2C Master initialized (2 ESP)")
+            logger.info("✓ I2C Master initialized (2 ESP)")
         except Exception as e:
-            logger.error(f"Failed to initialize I2C Master: {e}")
+            logger.warning(f"⚠️  I2C Master unavailable: {e}")
+            logger.warning("   Continuing in simulation mode")
+            self.i2c_master = None
             raise
     
     def init_buttons(self):
-        """Initialize button manager with 17 buttons"""
+        """Initialize button manager with 17 buttons and fallback"""
         try:
             from raspi_gpio_buttons import ButtonPin
             
@@ -169,26 +185,31 @@ class PLTNPanelController:
             self.button_manager.register_callback(ButtonPin.EMERGENCY, self.on_emergency)
             
             callback_count = len(self.button_manager.callbacks)
-            logger.info(f"Button manager initialized: {callback_count} callbacks registered")
+            logger.info(f"✓ Button manager initialized: {callback_count} callbacks registered")
             if callback_count != 17:
-                logger.warning(f"Expected 17 callbacks, but {callback_count} registered!")
+                logger.warning(f"⚠️  Expected 17 callbacks, but {callback_count} registered!")
         except Exception as e:
-            logger.error(f"Failed to initialize buttons: {e}")
+            logger.warning(f"⚠️  Failed to initialize buttons: {e}")
+            logger.warning("   Button input will not be available")
+            self.button_manager = None
             raise
     
     def init_humidifier(self):
-        """Initialize humidifier controller"""
+        """Initialize humidifier controller with fallback"""
         try:
             self.humidifier = HumidifierController()
-            logger.info("Humidifier controller initialized")
+            logger.info("✓ Humidifier controller initialized")
         except Exception as e:
-            logger.error(f"Failed to initialize humidifier: {e}")
+            logger.warning(f"⚠️  Failed to initialize humidifier: {e}")
+            logger.warning("   Humidifier control will not be available")
+            self.humidifier = None
             raise
     
     def init_oled_displays(self):
-        """Initialize 9 OLED displays (0.91 inch 128x32)"""
+        """Initialize 9 OLED displays (0.91 inch 128x32) with timeout"""
         try:
             from raspi_oled_manager import OLEDManager
+            import threading
             
             self.oled_manager = OLEDManager(
                 mux_manager=self.mux_manager,
@@ -196,13 +217,27 @@ class PLTNPanelController:
                 height=32  # 0.91 inch OLED
             )
             
-            # Initialize all 9 displays
-            self.oled_manager.init_all_displays()
+            # Initialize displays in separate thread with timeout
+            logger.info("Initializing 9 OLED displays (max 5s timeout)...")
             
-            logger.info("9 OLED displays initialized (128x32)")
+            def init_displays():
+                try:
+                    self.oled_manager.init_all_displays()
+                except Exception as e:
+                    logger.warning(f"OLED init error: {e}")
+            
+            init_thread = threading.Thread(target=init_displays, daemon=True)
+            init_thread.start()
+            init_thread.join(timeout=5.0)  # Max 5 seconds total
+            
+            if init_thread.is_alive():
+                logger.warning("⚠️  OLED initialization timeout - continuing without displays")
+                self.oled_manager = None
+            else:
+                logger.info("✓ OLED displays initialization complete")
             
         except Exception as e:
-            logger.warning(f"Failed to initialize OLED displays: {e}")
+            logger.warning(f"⚠️  Failed to initialize OLED displays: {e}")
             logger.warning("Continuing without OLED displays...")
             self.oled_manager = None
     

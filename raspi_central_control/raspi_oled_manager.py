@@ -50,27 +50,46 @@ class OLEDDisplay:
         
         self.initialized = False
     
-    def init_hardware(self, i2c, address: int = 0x3C):
+    def init_hardware(self, i2c, address: int = 0x3C, timeout: float = 1.0):
         """
-        Initialize hardware OLED display
+        Initialize hardware OLED display with timeout
         
         Args:
             i2c: I2C bus object
             address: I2C address of OLED
+            timeout: Timeout in seconds (default 1.0s)
         """
         if not ADAFRUIT_AVAILABLE:
             logger.warning("Hardware display not available")
             return False
         
+        import threading
+        import queue
+        
+        result_queue = queue.Queue()
+        
+        def try_init():
+            try:
+                self.device = adafruit_ssd1306.SSD1306_I2C(self.width, self.height, i2c, addr=address)
+                self.device.fill(0)
+                self.device.show()
+                self.initialized = True
+                result_queue.put(True)
+                logger.debug(f"OLED display initialized at 0x{address:02X}")
+            except Exception as e:
+                logger.debug(f"Failed to initialize OLED at 0x{address:02X}: {e}")
+                result_queue.put(False)
+        
+        # Try init with timeout
+        init_thread = threading.Thread(target=try_init, daemon=True)
+        init_thread.start()
+        init_thread.join(timeout=timeout)
+        
+        # Check result
         try:
-            self.device = adafruit_ssd1306.SSD1306_I2C(self.width, self.height, i2c, addr=address)
-            self.device.fill(0)
-            self.device.show()
-            self.initialized = True
-            logger.info(f"OLED display initialized at 0x{address:02X}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to initialize OLED at 0x{address:02X}: {e}")
+            return result_queue.get_nowait()
+        except:
+            logger.debug(f"OLED at 0x{address:02X} timeout after {timeout}s")
             return False
     
     def clear(self):
@@ -184,7 +203,7 @@ class OLEDManager:
         logger.info("OLED Manager initialized for 9 displays (128x32)")
     
     def init_all_displays(self):
-        """Initialize all 9 OLED displays through 2x TCA9548A"""
+        """Initialize all 9 OLED displays through 2x TCA9548A with graceful degradation"""
         # TCA9548A #1 (0x70) - 7 displays
         displays_mux1 = [
             (1, self.oled_pressurizer, "Pressurizer"),
@@ -206,48 +225,65 @@ class OLEDManager:
             logger.warning("Running without hardware displays (simulation mode)")
             return
         
+        success_count = 0
+        
         try:
             i2c = board.I2C()
             
             # Initialize displays on TCA9548A #1 (0x70)
             logger.info("Initializing OLEDs on TCA9548A #1 (0x70)...")
             for channel, display, name in displays_mux1:
-                self.mux.select_display_channel(channel)
-                time.sleep(0.1)
-                display.init_hardware(i2c, 0x3C)
-                
-                # Show startup message (3 lines, max y=24)
-                display.clear()
-                display.draw_text_centered(name, 1, display.font_small)
-                display.draw_text_centered("PLTN v2", 12, display.font)
-                display.draw_text_centered("Ready", 22, display.font_small)
-                display.show()
-                logger.info(f"  ✓ OLED #{channel}: {name}")
-                time.sleep(0.3)
+                try:
+                    self.mux.select_display_channel(channel)
+                    time.sleep(0.05)  # Minimal delay
+                    
+                    # Try to initialize with 0.5s timeout per display
+                    if display.init_hardware(i2c, 0x3C, timeout=0.5):
+                        # Show startup message (3 lines, max y=24)
+                        display.clear()
+                        display.draw_text_centered(name, 1, display.font_small)
+                        display.draw_text_centered("PLTN v2", 12, display.font)
+                        display.draw_text_centered("Ready", 22, display.font_small)
+                        display.show()
+                        logger.info(f"  ✓ OLED #{channel}: {name}")
+                        success_count += 1
+                    else:
+                        logger.warning(f"  ✗ OLED #{channel}: {name} - skipped")
+                    
+                except Exception as e:
+                    logger.warning(f"  ✗ OLED #{channel}: {name} - error: {e}")
+                    continue  # Skip to next display
             
             # Initialize displays on TCA9548A #2 (0x71)
             logger.info("Initializing OLEDs on TCA9548A #2 (0x71)...")
             for channel, display, name in displays_mux2:
-                # Use esp_channel to access second multiplexer (0x71)
-                # Assuming mux_manager has select_esp_channel for TCA9548A #2
-                # For now, we'll use display_channel which should handle both
-                self.mux.select_esp_channel(channel)  # Changed to use ESP mux
-                time.sleep(0.1)
-                display.init_hardware(i2c, 0x3C)
-                
-                # Show startup message (3 lines, max y=24)
-                display.clear()
-                display.draw_text_centered(name, 1, display.font_small)
-                display.draw_text_centered("PLTN v2", 12, display.font)
-                display.draw_text_centered("Ready", 22, display.font_small)
-                display.show()
-                logger.info(f"  ✓ OLED #{channel + 7}: {name}")
-                time.sleep(0.3)
+                try:
+                    # Use esp_channel to access second multiplexer (0x71)
+                    self.mux.select_esp_channel(channel)
+                    time.sleep(0.05)  # Minimal delay
+                    
+                    # Try to initialize with 0.5s timeout per display
+                    if display.init_hardware(i2c, 0x3C, timeout=0.5):
+                        # Show startup message (3 lines, max y=24)
+                        display.clear()
+                        display.draw_text_centered(name, 1, display.font_small)
+                        display.draw_text_centered("PLTN v2", 12, display.font)
+                        display.draw_text_centered("Ready", 22, display.font_small)
+                        display.show()
+                        logger.info(f"  ✓ OLED #{channel + 7}: {name}")
+                        success_count += 1
+                    else:
+                        logger.warning(f"  ✗ OLED #{channel + 7}: {name} - skipped")
+                    
+                except Exception as e:
+                    logger.warning(f"  ✗ OLED #{channel + 7}: {name} - error: {e}")
+                    continue  # Skip to next display
             
-            logger.info("All 9 OLED displays initialized successfully")
+            logger.info(f"OLED initialization complete: {success_count}/9 displays ready")
             
         except Exception as e:
             logger.error(f"Failed to initialize displays: {e}")
+            logger.warning("Continuing without OLED displays...")
     
     def update_blink_state(self, interval: float = 0.25):
         """Update blink state for warning indicators"""
