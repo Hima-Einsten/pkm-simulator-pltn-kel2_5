@@ -270,21 +270,11 @@ class OLEDManager:
         display.clear()
         
         # Title (small font)
-        display.draw_text_centered("PRESSURIZER", 0, display.font_small)
+        display.draw_text_centered("PRESSURIZER", 1, display.font_small)
         
         # Pressure value (medium font, centered)
         pressure_text = f"{pressure:.1f} bar"
-        display.draw_text_centered(pressure_text, 10, display.font_large)
-        
-        # Status indicator (small font, bottom)
-        if critical:
-            if self.blink_state:
-                display.draw_text_centered("CRITICAL!", 24, display.font_small)
-        elif warning:
-            if self.blink_state:
-                display.draw_text_centered("WARNING", 24, display.font_small)
-        else:
-            display.draw_text_centered("Normal", 24, display.font_small)
+        display.draw_text_centered(pressure_text, 12, display.font_large)
         
         display.show()
     
@@ -311,15 +301,12 @@ class OLEDManager:
             "TERTIARY": "PUMP 3"
         }
         title = title_map.get(pump_name, f"PUMP {pump_name}")
-        display_obj.draw_text_centered(title, 0, display_obj.font_small)
+        display_obj.draw_text_centered(title, 1, display_obj.font_small)
         
-        # Status text (medium font, centered)
+        # Status and PWM on one line
         status_text = ["OFF", "START", "ON", "STOP"][status]
-        display_obj.draw_text_centered(status_text, 10, display_obj.font_large)
-        
-        # PWM value (small font, bottom centered)
-        pwm_text = f"PWM: {pwm}%"
-        display_obj.draw_text_centered(pwm_text, 24, display_obj.font_small)
+        status_pwm = f"{status_text} {pwm}%"
+        display_obj.draw_text_centered(status_pwm, 14, display_obj.font)
         
         display_obj.show()
     
@@ -351,19 +338,16 @@ class OLEDManager:
         
         # Title - use shorter names (small font)
         title_map = {
-            "SAFETY": "SAFETY ROD",
-            "SHIM": "SHIM ROD",
-            "REGULATING": "REG ROD"
+            "SAFETY": "SAFETY",
+            "SHIM": "SHIM",
+            "REGULATING": "REG"
         }
-        title = title_map.get(rod_name, f"{rod_name} ROD")
-        display_obj.draw_text_centered(title, 0, display_obj.font_small)
+        title = title_map.get(rod_name, rod_name)
+        display_obj.draw_text_centered(title, 1, display_obj.font_small)
         
         # Position value (medium font, centered)
         position_text = f"{position}%"
-        display_obj.draw_text_centered(position_text, 10, display_obj.font_large)
-        
-        # Progress bar (small, bottom)
-        display_obj.draw_progress_bar(10, 24, 108, 6, position, 100)
+        display_obj.draw_text_centered(position_text, 12, display_obj.font_large)
         
         display_obj.show()
     
@@ -393,17 +377,12 @@ class OLEDManager:
         display.clear()
         
         # Title (small font)
-        display.draw_text_centered("THERMAL POWER", 0, display.font_small)
+        display.draw_text_centered("POWER", 1, display.font_small)
         
         # Power in MWe (medium font, centered)
         power_mwe = power_kw / 1000.0
         power_text = f"{power_mwe:.1f} MWe"
-        display.draw_text_centered(power_text, 10, display.font_large)
-        
-        # Reactor thermal (small font, bottom)
-        thermal_mwth = power_kw / 0.33  # Reverse calculate thermal
-        thermal_text = f"({thermal_mwth:.0f} MWth)"
-        display.draw_text_centered(thermal_text, 24, display.font_small)
+        display.draw_text_centered(power_text, 12, display.font_large)
         
         display.show()
     
@@ -426,21 +405,15 @@ class OLEDManager:
         display.clear()
         
         # Title (small font)
-        display.draw_text_centered("SYSTEM STATUS", 0, display.font_small)
+        display.draw_text_centered("STATUS", 1, display.font_small)
         
         # Line 1: Turbine state (small font)
         turbine_text = ["IDLE", "START", "RUN", "STOP"][turbine_state]
-        display.draw_text(f"Turb: {turbine_text}", 0, 10, display.font_small)
+        display.draw_text(f"T:{turbine_text}", 0, 11, display.font_small)
         
         # Line 2: Humidifier status (small font)
-        sg_status = f"SG: {humid_sg1}{humid_sg2}"
-        ct_status = f"CT: {humid_ct1}{humid_ct2}{humid_ct3}{humid_ct4}"
-        display.draw_text(sg_status, 0, 18, display.font_small)
-        display.draw_text(ct_status, 64, 18, display.font_small)
-        
-        # Line 3: Interlock (small font, bottom)
-        interlock_text = "Interlock: OK" if interlock else "Interlock: FAIL"
-        display.draw_text_centered(interlock_text, 26, display.font_small)
+        sg_ct = f"SG:{humid_sg1}{humid_sg2} CT:{humid_ct1}{humid_ct2}{humid_ct3}{humid_ct4}"
+        display.draw_text(sg_ct, 0, 21, display.font_small)
         
         display.show()
     
