@@ -216,10 +216,11 @@ class OLEDManager:
                 time.sleep(0.1)
                 display.init_hardware(i2c, 0x3C)
                 
-                # Show startup message
+                # Show startup message (3 lines, max y=24)
                 display.clear()
-                display.draw_text_centered(name, 20, display.font_large)
-                display.draw_text_centered("Ready", 40, display.font)
+                display.draw_text_centered(name, 1, display.font_small)
+                display.draw_text_centered("PLTN v2", 12, display.font)
+                display.draw_text_centered("Ready", 22, display.font_small)
                 display.show()
                 logger.info(f"  ✓ OLED #{channel}: {name}")
                 time.sleep(0.3)
@@ -234,10 +235,11 @@ class OLEDManager:
                 time.sleep(0.1)
                 display.init_hardware(i2c, 0x3C)
                 
-                # Show startup message
+                # Show startup message (3 lines, max y=24)
                 display.clear()
-                display.draw_text_centered(name, 20, display.font_large)
-                display.draw_text_centered("Ready", 40, display.font)
+                display.draw_text_centered(name, 1, display.font_small)
+                display.draw_text_centered("PLTN v2", 12, display.font)
+                display.draw_text_centered("Ready", 22, display.font_small)
                 display.show()
                 logger.info(f"  ✓ OLED #{channel + 7}: {name}")
                 time.sleep(0.3)
@@ -453,37 +455,79 @@ class OLEDManager:
         )
     
     def show_startup_screen(self):
-        """Show startup screen on all displays"""
-        screens = [
-            (0, self.oled_pressurizer),
-            (1, self.oled_pump_primary),
-            (2, self.oled_pump_secondary),
-            (3, self.oled_pump_tertiary)
+        """Show startup screen on all 9 displays (128x32 layout)"""
+        screens_mux1 = [
+            (1, self.oled_pressurizer, "PRESSURIZER"),
+            (2, self.oled_pump_primary, "PUMP 1"),
+            (3, self.oled_pump_secondary, "PUMP 2"),
+            (4, self.oled_pump_tertiary, "PUMP 3"),
+            (5, self.oled_safety_rod, "SAFETY ROD"),
+            (6, self.oled_shim_rod, "SHIM ROD"),
+            (7, self.oled_regulating_rod, "REG ROD")
         ]
         
-        for channel, display in screens:
+        screens_mux2 = [
+            (1, self.oled_thermal_power, "POWER"),
+            (2, self.oled_system_status, "STATUS")
+        ]
+        
+        # Show on TCA9548A #1
+        for channel, display, name in screens_mux1:
             self.mux.select_display_channel(channel)
             display.clear()
-            display.draw_text_centered("PLTN Simulator", 8, display.font)
-            display.draw_text_centered("v2.0 - I2C", 20, display.font)
+            # 3 lines layout: y=1, y=12, y=22 (max y=24)
+            display.draw_text_centered(name, 1, display.font_small)
+            display.draw_text_centered("PLTN v2.0", 12, display.font)
+            display.draw_text_centered("Ready", 22, display.font_small)
+            display.show()
+        
+        # Show on TCA9548A #2
+        for channel, display, name in screens_mux2:
+            self.mux.select_esp_channel(channel)
+            display.clear()
+            # 3 lines layout: y=1, y=12, y=22 (max y=24)
+            display.draw_text_centered(name, 1, display.font_small)
+            display.draw_text_centered("PLTN v2.0", 12, display.font)
+            display.draw_text_centered("Ready", 22, display.font_small)
             display.show()
         
         time.sleep(2)
     
     def show_error_screen(self, message: str):
-        """Show error message on all displays"""
-        screens = [
-            (0, self.oled_pressurizer),
-            (1, self.oled_pump_primary),
-            (2, self.oled_pump_secondary),
-            (3, self.oled_pump_tertiary)
+        """Show error message on all 9 displays (128x32 layout)"""
+        screens_mux1 = [
+            (1, self.oled_pressurizer),
+            (2, self.oled_pump_primary),
+            (3, self.oled_pump_secondary),
+            (4, self.oled_pump_tertiary),
+            (5, self.oled_safety_rod),
+            (6, self.oled_shim_rod),
+            (7, self.oled_regulating_rod)
         ]
         
-        for channel, display in screens:
+        screens_mux2 = [
+            (1, self.oled_thermal_power),
+            (2, self.oled_system_status)
+        ]
+        
+        # Show on TCA9548A #1
+        for channel, display in screens_mux1:
             self.mux.select_display_channel(channel)
             display.clear()
-            display.draw_text_centered("ERROR", 8, display.font_large)
-            display.draw_text_centered(message, 24, display.font)
+            # 3 lines layout: y=1, y=12, y=22 (max y=24)
+            display.draw_text_centered("ERROR", 1, display.font_small)
+            display.draw_text_centered("System", 12, display.font)
+            display.draw_text_centered(message[:12], 22, display.font_small)  # Max 12 chars
+            display.show()
+        
+        # Show on TCA9548A #2
+        for channel, display in screens_mux2:
+            self.mux.select_esp_channel(channel)
+            display.clear()
+            # 3 lines layout: y=1, y=12, y=22 (max y=24)
+            display.draw_text_centered("ERROR", 1, display.font_small)
+            display.draw_text_centered("System", 12, display.font)
+            display.draw_text_centered(message[:12], 22, display.font_small)  # Max 12 chars
             display.show()
 
 
@@ -497,10 +541,10 @@ if __name__ == "__main__":
     # Create dummy display
     display = OLEDDisplay()
     
-    # Test drawing
+    # Test drawing (128x32 layout)
     display.clear()
-    display.draw_text_centered("PRESSURIZER", 0)
-    display.draw_text_centered("150.5 bar", 12)
-    display.draw_progress_bar(10, 25, 108, 6, 75, 100)
+    display.draw_text_centered("PRESSURIZER", 1, display.font_small)
+    display.draw_text_centered("150.5 bar", 12, display.font)
+    display.draw_text_centered("Normal", 22, display.font_small)
     
     print("Display test completed (image not shown in simulation)")
