@@ -126,8 +126,16 @@ class TCA9548A:
 class DualMultiplexerManager:
     """
     Manages two TCA9548A multiplexers:
-    - One for OLED displays
-    - One for ESP32 slaves
+    - TCA9548A #1 (0x70): ESP-BC + 7 OLED displays
+    - TCA9548A #2 (0x71): ESP-E + 2 OLED displays
+    
+    Hardware Mapping:
+    - MUX #1 (0x70):
+      - Channel 0: ESP-BC (0x08) - Control Rods + Turbine + Humidifier
+      - Channel 1-7: OLED #1-7 (all at 0x3C)
+    - MUX #2 (0x71):
+      - Channel 0: ESP-E (0x0A) - 48 LED Visualizer
+      - Channel 1-2: OLED #8-9 (all at 0x3C)
     """
     
     def __init__(self, display_bus: int, esp_bus: int, 
@@ -136,51 +144,93 @@ class DualMultiplexerManager:
         Initialize dual multiplexer manager
         
         Args:
-            display_bus: I2C bus for display multiplexer
-            esp_bus: I2C bus for ESP multiplexer
-            display_addr: Address of display multiplexer
-            esp_addr: Address of ESP multiplexer
+            display_bus: I2C bus for multiplexer #1 (0x70)
+            esp_bus: I2C bus for multiplexer #2 (0x71)
+            display_addr: Address of TCA9548A #1 (default 0x70)
+            esp_addr: Address of TCA9548A #2 (default 0x71)
         """
-        self.mux_display = TCA9548A(display_bus, display_addr)
-        self.mux_esp = TCA9548A(esp_bus, esp_addr)
-        logger.info("Dual multiplexer manager initialized")
+        self.mux1 = TCA9548A(display_bus, display_addr)  # TCA9548A #1 (0x70)
+        self.mux2 = TCA9548A(esp_bus, esp_addr)          # TCA9548A #2 (0x71)
+        self.mux1_addr = display_addr
+        self.mux2_addr = esp_addr
+        logger.info(f"Dual multiplexer manager initialized:")
+        logger.info(f"  MUX #1 (ESP-BC + OLED 1-7): 0x{display_addr:02X}")
+        logger.info(f"  MUX #2 (ESP-E + OLED 8-9): 0x{esp_addr:02X}")
+    
+    def select_mux1_channel(self, channel: int) -> bool:
+        """
+        Select channel on TCA9548A #1 (0x70)
+        - Channel 0: ESP-BC
+        - Channel 1-7: OLED #1-7
+        """
+        return self.mux1.select_channel(channel)
+    
+    def select_mux2_channel(self, channel: int) -> bool:
+        """
+        Select channel on TCA9548A #2 (0x71)
+        - Channel 0: ESP-E
+        - Channel 1-2: OLED #8-9
+        """
+        return self.mux2.select_channel(channel)
     
     def select_display_channel(self, channel: int) -> bool:
         """
-        Select OLED display channel on TCA9548A #1 (0x70)
-        Disables ESP multiplexer channels first to avoid conflicts
+        Select OLED display channel (for backward compatibility with OLED manager)
+        
+        Maps OLED manager channel calls to physical multiplexer channels:
+        - Channels 1-7: TCA9548A #1 (0x70), channels 1-7 → OLED #1-7
+        - Channels 8-9 (via select_esp_channel 1-2): TCA9548A #2 (0x71), channels 1-2 → OLED #8-9
+        
+        NOTE: OLED manager code uses:
+        - select_display_channel(1-7) for OLED #1-7 on MUX #1
+        - select_esp_channel(1-2) for OLED #8-9 on MUX #2 (legacy naming, will be fixed)
         """
-        # Disable ESP mux channels first
-        self.mux_esp.disable_all_channels()
-        # Select display channel
-        return self.mux_display.select_channel(channel)
+        if channel < 1 or channel > 7:
+            logger.error(f"Invalid display channel: {channel}. Must be 1-7 for MUX #1")
+            return False
+        
+        # Direct mapping: channel 1-7 → MUX #1 channels 1-7
+        logger.debug(f"OLED #{channel} → MUX #1 (0x{self.mux1_addr:02X}), Channel {channel}")
+        return self.mux1.select_channel(channel)
     
     def select_esp_channel(self, channel: int) -> bool:
         """
-        Select ESP slave channel on TCA9548A #2 (0x71)
-        Disables display multiplexer channels first to avoid conflicts
+        Select channel on TCA9548A #2 (0x71)
+        
+        This is used for TWO purposes (legacy design):
+        1. ESP-E communication: channel 0 (via I2C Master with esp_id=1)
+        2. OLED #8-9 on MUX #2: channel 1-2 (via OLED manager)
+        
+        Args:
+            channel: 0 = ESP-E, 1-2 = OLED #8-9
         """
-        # Disable display mux channels first
-        self.mux_display.disable_all_channels()
-        # Select ESP channel
-        return self.mux_esp.select_channel(channel)
+        if channel < 0 or channel > 2:
+            logger.error(f"Invalid MUX #2 channel: {channel}. Must be 0-2")
+            return False
+        
+        if channel == 0:
+            logger.debug(f"ESP-E → MUX #2 (0x{self.mux2_addr:02X}), Channel 0")
+        else:
+            logger.debug(f"OLED #{channel + 7} → MUX #2 (0x{self.mux2_addr:02X}), Channel {channel}")
+        
+        return self.mux2.select_channel(channel)
     
     def scan_all(self) -> dict:
         """
         Scan all channels on both multiplexers
         
         Returns:
-            Dictionary with 'display' and 'esp' keys containing device maps
+            Dictionary with 'mux1' and 'mux2' keys containing device maps
         """
         return {
-            'display': self.mux_display.scan_channels(),
-            'esp': self.mux_esp.scan_channels()
+            'mux1': self.mux1.scan_channels(),
+            'mux2': self.mux2.scan_channels()
         }
     
     def close(self):
         """Close all multiplexer connections"""
-        self.mux_display.close()
-        self.mux_esp.close()
+        self.mux1.close()
+        self.mux2.close()
         logger.info("Dual multiplexer manager closed")
 
 

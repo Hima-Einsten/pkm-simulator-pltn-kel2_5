@@ -623,6 +623,10 @@ class PLTNPanelController:
             try:
                 with self.i2c_lock:
                     with self.state_lock:
+                        # Select MUX #1 Channel 0 for ESP-BC
+                        if self.mux_manager:
+                            self.mux_manager.select_mux1_channel(0)
+                        
                         # Send to ESP-BC (Control Rods + Turbine + Humidifier)
                         success = self.i2c_master.update_esp_bc(
                             self.state.safety_rod,
@@ -642,6 +646,7 @@ class PLTNPanelController:
                             self.state.thermal_kw = esp_bc_data.kw_thermal
                             
                             # Send to ESP-E (LED Visualizer)
+                            # MUX #2 Channel 0 is selected by mux_select callback in update_esp_e
                             self.i2c_master.update_esp_e(
                                 pressure_primary=self.state.pressure,
                                 pump_status_primary=self.state.pump_primary_status,

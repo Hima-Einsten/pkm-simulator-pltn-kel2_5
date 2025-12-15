@@ -78,7 +78,8 @@ class I2CMaster:
         
         Args:
             bus_number: I2C bus number
-            mux_select_callback: Function to select TCA9548A channel
+            mux_select_callback: Function to select MUX #2 channel (for ESP-E only)
+                                 ESP-BC uses MUX #1 channel 0 (handled separately)
         """
         self.bus_number = bus_number
         self.mux_select = mux_select_callback
@@ -86,6 +87,8 @@ class I2CMaster:
         try:
             self.bus = smbus2.SMBus(bus_number)
             logger.info(f"I2C Master initialized on bus {bus_number} (2 ESP Architecture)")
+            logger.info(f"  ESP-BC: 0x08 (MUX #1, Ch 0) - Control Rods + Turbine + Humidifier")
+            logger.info(f"  ESP-E: 0x0A (MUX #2, Ch 0) - 3-Flow LED Visualizer")
         except Exception as e:
             logger.error(f"Failed to initialize I2C Master: {e}")
             raise
@@ -178,8 +181,11 @@ class I2CMaster:
         Returns:
             True if successful, False otherwise
         """
-        if self.mux_select:
-            self.mux_select(0)  # Select ESP-BC channel
+        # NOTE: ESP-BC is on TCA9548A #1 (0x70), Channel 0
+        # The mux_select callback is for MUX #2 only (ESP-E)
+        # MUX #1 Channel 0 must be selected externally before calling this
+        # OR we need a separate callback for MUX #1
+        # For now, we assume MUX #1 Ch 0 is already selected or handled by main_panel
         
         try:
             # Update internal state
@@ -278,7 +284,8 @@ class I2CMaster:
             True if successful, False otherwise
         """
         if self.mux_select:
-            self.mux_select(2)  # Select ESP-E channel
+            # Select ESP-E: TCA9548A #2 (0x71), Channel 0
+            self.mux_select(0)
         
         try:
             # Update internal state

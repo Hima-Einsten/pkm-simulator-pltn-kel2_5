@@ -26,15 +26,15 @@ OLED_CHANNEL_PUMP_TERTIARY = 3
 SCREEN_WIDTH = 128
 SCREEN_HEIGHT = 32
 
-# ESP32 Slave Addresses (SIMPLIFIED - Only 3 ESP needed)
-ESP_B_ADDRESS = 0x08  # Batang Kendali & Reaktor
-ESP_C_ADDRESS = 0x09  # Turbin & Generator
-ESP_E_ADDRESS = 0x0A  # 3-Flow Visualizer (Primer, Sekunder, Tersier)
+# ESP32 Slave Addresses (2-ESP Architecture MERGED)
+ESP_BC_ADDRESS = 0x08  # ESP-BC: Control Rods + Turbine + Humidifier + Pumps (MERGED B+C)
+ESP_E_ADDRESS = 0x0A   # ESP-E: 3-Flow Visualizer (Primer, Sekunder, Tersier)
 
 # TCA9548A Channel Mapping for ESP
-ESP_B_CHANNEL = 0
-ESP_C_CHANNEL = 1
-ESP_E_CHANNEL = 2  # Single ESP for all 3 flow visualizers
+# ESP-BC is on TCA9548A #1 (0x70), Channel 0
+# ESP-E is on TCA9548A #2 (0x71), Channel 0
+ESP_BC_CHANNEL = 0     # ESP-BC on multiplexer #1 (0x70)
+ESP_E_CHANNEL = 0      # ESP-E on multiplexer #2 (0x71)
 
 # ============================================
 # GPIO Pin Configuration
