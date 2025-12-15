@@ -72,19 +72,21 @@ const int SIG_TERTIARY = 16;  // PWM output untuk Aliran Tersier
 #define NUM_POWER_LEDS 10
 #define MAX_THERMAL_MWE 300.0  // Maximum electrical power (MWe) - Nuclear Reactor Rating
 
-// Power LED pins (PWM capable)
-const int POWER_LED_PINS[NUM_POWER_LEDS] = {
-    23,  // LED 1
-    22,  // LED 2
-    21,  // LED 3
-    19,  // LED 4
-    18,  // LED 5
-    5,   // LED 6
-    17,  // LED 7
-    13,  // LED 8 (Note: Avoid GPIO 12 if using LED strip)
-    12,  // LED 9
-    14   // LED 10
+// POWER LED CONFIGURATION:
+// Instead of using direct GPIO (not enough pins!), we use 3 dedicated outputs
+// connected to a separate 74HC595 shift register or simple transistor array
+// OR reuse one of the flow multiplexers during idle time
+
+// Power LED pins - ONLY 3 direct GPIO needed (rest via multiplexing)
+const int POWER_LED_DIRECT_PINS[3] = {
+    23,  // LED 1-3 (direct control, always on when power > 0)
+    19,  // LED 4-6 (direct control, on when power > 30%)
+    18   // LED 7-10 (direct control, on when power > 70%)
 };
+
+// Alternative: Use virtual LEDs (software brightness level only)
+// Physical implementation can be via shift register or LED driver IC
+#define USE_VIRTUAL_POWER_LEDS true
 
 // PWM settings for brightness control
 const int PWM_FREQ = 5000;
@@ -222,36 +224,19 @@ void prepareSendData() {
 
 void updatePowerIndicatorLEDs() {
     /*
-     * Update 10 LEDs based on electrical power (MWe)
+     * Update power indicator LEDs based on electrical power (MWe)
      * 
-     * CORRECT BEHAVIOR:
-     * - Semua 10 LED menyala bersamaan dengan brightness SAMA
-     * - Brightness proporsional dengan total power output
-     * - 0 MWe = Semua LED OFF
-     * - 150 MWe (50%) = Semua LED DIM (brightness 127)
-     * - 300 MWe (100%) = Semua LED FULL (brightness 255)
+     * SIMPLIFIED VERSION (3 direct GPIO only):
+     * - GPIO 23: LED bar 1-3 (low power indicator)
+     * - GPIO 19: LED bar 4-6 (medium power indicator)
+     * - GPIO 18: LED bar 7-10 (high power indicator)
      * 
-     * Formula:
-     * brightness = (current_power / max_power) × 255
-     * 
-     * Example:
-     * 30 MWe (10%):   Semua LED brightness = 25
-     * 150 MWe (50%):  Semua LED brightness = 127
-     * 225 MWe (75%):  Semua LED brightness = 191
-     * 300 MWe (100%): Semua LED brightness = 255
+     * Brightness proportional to power level
+     * Future: Use shift register for full 10-LED control
      */
     
     // Convert kW to MWe (thermal_power_kw from ESP-BC is in kW)
     float power_mwe = thermal_power_kw / 1000.0;  // kW → MWe
-    
-    // Jika tidak ada power, matikan semua
-    if (power_mwe < 1.0) {  // Less than 1 MWe
-        for (int i = 0; i < NUM_POWER_LEDS; i++) {
-            power_led_brightness[i] = 0;
-            ledcWrite(POWER_LED_PINS[i], 0);
-        }
-        return;
-    }
     
     // Calculate brightness untuk SEMUA LED (SAMA!)
     float ratio = power_mwe / MAX_THERMAL_MWE;
@@ -267,58 +252,87 @@ void updatePowerIndicatorLEDs() {
         brightness = 20;
     }
     
-    // Apply brightness yang SAMA ke SEMUA LED
+    // Apply brightness to 3 direct control LEDs
+    // LED 1-3: Always on when power > 0
+    if (ratio > 0.0) {
+        ledcWrite(POWER_LED_DIRECT_PINS[0], brightness);
+    } else {
+        ledcWrite(POWER_LED_DIRECT_PINS[0], 0);
+    }
+    
+    // LED 4-6: On when power > 30%
+    if (ratio > 0.3) {
+        ledcWrite(POWER_LED_DIRECT_PINS[1], brightness);
+    } else {
+        ledcWrite(POWER_LED_DIRECT_PINS[1], 0);
+    }
+    
+    // LED 7-10: On when power > 70%
+    if (ratio > 0.7) {
+        ledcWrite(POWER_LED_DIRECT_PINS[2], brightness);
+    } else {
+        ledcWrite(POWER_LED_DIRECT_PINS[2], 0);
+    }
+    
+    // Store brightness for monitoring
     for (int i = 0; i < NUM_POWER_LEDS; i++) {
-        power_led_brightness[i] = brightness;
-        ledcWrite(POWER_LED_PINS[i], brightness);
+        if (i < 3 && ratio > 0.0) {
+            power_led_brightness[i] = brightness;
+        } else if (i < 6 && ratio > 0.3) {
+            power_led_brightness[i] = brightness;
+        } else if (i < 10 && ratio > 0.7) {
+            power_led_brightness[i] = brightness;
+        } else {
+            power_led_brightness[i] = 0;
+        }
     }
 }
 
 void initPowerIndicatorLEDs() {
     /*
-     * Initialize all power indicator LEDs
+     * Initialize power indicator LEDs (simplified - 3 GPIO only)
      */
-    Serial.println("Initializing Power Indicator LEDs...");
+    Serial.println("Initializing Power Indicator LEDs (3 direct GPIO)...");
     
-    for (int i = 0; i < NUM_POWER_LEDS; i++) {
+    for (int i = 0; i < 3; i++) {
         // Attach PWM to each LED pin
-        ledcAttach(POWER_LED_PINS[i], PWM_FREQ, PWM_RESOLUTION);
+        ledcAttach(POWER_LED_DIRECT_PINS[i], PWM_FREQ, PWM_RESOLUTION);
         
         // Start with LED off
-        ledcWrite(POWER_LED_PINS[i], 0);
+        ledcWrite(POWER_LED_DIRECT_PINS[i], 0);
         
-        Serial.printf("  Power LED %d (GPIO %d) initialized\n", i + 1, POWER_LED_PINS[i]);
+        Serial.printf("  Power LED group %d (GPIO %d) initialized\n", i + 1, POWER_LED_DIRECT_PINS[i]);
     }
     
-    Serial.println("✓ Power Indicator LEDs initialized");
+    Serial.println("✓ Power Indicator LEDs initialized (3 groups for 10 LEDs)");
 }
 
 void testPowerIndicatorLEDs() {
     /*
-     * Test sequence for power indicator LEDs
+     * Test sequence for power indicator LEDs (simplified)
      */
-    Serial.println("\nTesting Power Indicator LEDs...");
+    Serial.println("\nTesting Power Indicator LEDs (3 groups)...");
     
-    // Test 1: Sequential turn on
-    for (int i = 0; i < NUM_POWER_LEDS; i++) {
-        ledcWrite(POWER_LED_PINS[i], 255);
-        delay(100);
+    // Test 1: Sequential turn on (3 groups)
+    for (int i = 0; i < 3; i++) {
+        ledcWrite(POWER_LED_DIRECT_PINS[i], 255);
+        delay(200);
     }
     
     delay(500);
     
     // Test 2: Sequential turn off
-    for (int i = NUM_POWER_LEDS - 1; i >= 0; i--) {
-        ledcWrite(POWER_LED_PINS[i], 0);
-        delay(100);
+    for (int i = 2; i >= 0; i--) {
+        ledcWrite(POWER_LED_DIRECT_PINS[i], 0);
+        delay(200);
     }
     
     delay(500);
     
-    // Test 3: Brightness sweep on all LEDs
+    // Test 3: Brightness sweep on all 3 groups
     for (int brightness = 0; brightness <= 255; brightness += 5) {
-        for (int i = 0; i < NUM_POWER_LEDS; i++) {
-            ledcWrite(POWER_LED_PINS[i], brightness);
+        for (int i = 0; i < 3; i++) {
+            ledcWrite(POWER_LED_DIRECT_PINS[i], brightness);
         }
         delay(20);
     }
@@ -326,8 +340,8 @@ void testPowerIndicatorLEDs() {
     delay(300);
     
     // Turn off
-    for (int i = 0; i < NUM_POWER_LEDS; i++) {
-        ledcWrite(POWER_LED_PINS[i], 0);
+    for (int i = 0; i < 3; i++) {
+        ledcWrite(POWER_LED_DIRECT_PINS[i], 0);
     }
     
     Serial.println("✓ Power Indicator LED test complete");

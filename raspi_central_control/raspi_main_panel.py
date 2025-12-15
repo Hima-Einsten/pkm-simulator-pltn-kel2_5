@@ -18,6 +18,7 @@ from raspi_i2c_master import I2CMaster
 from raspi_gpio_buttons import ButtonHandler as ButtonManager
 from raspi_humidifier_control import HumidifierController
 from raspi_buzzer_alarm import BuzzerAlarm
+from raspi_system_health import SystemHealthMonitor
 
 # Try to import GPIO library
 try:
@@ -114,9 +115,24 @@ class PLTNPanelController:
         self.i2c_lock = threading.Lock()
         self.state_lock = threading.Lock()
         
+        # System health monitor
+        logger.info("Phase 3: System health check...")
+        self.health_monitor = SystemHealthMonitor()
+        system_ready = self.health_monitor.check_all(self)
+        
+        if not system_ready:
+            logger.error("="*60)
+            logger.error("⚠️  SYSTEM NOT READY - Critical issues detected!")
+            logger.error("   Review health check above and fix critical issues")
+            logger.error("   System will continue in degraded mode")
+            logger.error("="*60)
+        
         logger.info("="*60)
-        logger.info("✓ PLTN Panel Controller initialized successfully")
-        logger.info("✓ Ready for button input!")
+        logger.info("✓ PLTN Panel Controller initialized")
+        if system_ready:
+            logger.info("✅ SYSTEM READY - All critical components operational")
+        else:
+            logger.warning("⚠️  SYSTEM DEGRADED - Some components unavailable")
         logger.info("="*60)
     
     def init_multiplexers(self):
@@ -710,7 +726,7 @@ class PLTNPanelController:
     # ============================================
     
     def run(self):
-        """Main control loop"""
+        """Main control loop with periodic health monitoring"""
         logger.info("Starting PLTN Controller (2 ESP)...")
         
         # Start threads
@@ -718,7 +734,8 @@ class PLTNPanelController:
             threading.Thread(target=self.button_polling_thread, daemon=True, name="ButtonThread"),
             threading.Thread(target=self.control_logic_thread, daemon=True, name="ControlThread"),
             threading.Thread(target=self.esp_communication_thread, daemon=True, name="ESPCommThread"),
-            threading.Thread(target=self.oled_update_thread, daemon=True, name="OLEDThread")  # New thread
+            threading.Thread(target=self.oled_update_thread, daemon=True, name="OLEDThread"),
+            threading.Thread(target=self.health_monitoring_thread, daemon=True, name="HealthThread")
         ]
         
         for t in threads:
@@ -732,20 +749,51 @@ class PLTNPanelController:
                 # Print status every second
                 with self.state_lock:
                     # Get turbine data from ESP-BC
-                    esp_bc_data = self.i2c_master.get_esp_bc_data()
-                    
-                    logger.info(f"Status: P={self.state.pressure:.1f}bar, "
-                              f"Rods=[{self.state.safety_rod},{self.state.shim_rod},"
-                              f"{self.state.regulating_rod}]%, "
-                              f"Thermal={self.state.thermal_kw:.1f}kW, "
-                              f"Turbine={esp_bc_data.power_level:.1f}%, "
-                              f"Humid=[SG:{self.state.humidifier_sg_cmd},"
-                              f"CT:{self.state.humidifier_ct_cmd}]")
+                    if self.i2c_master:
+                        esp_bc_data = self.i2c_master.get_esp_bc_data()
+                        
+                        logger.info(f"Status: P={self.state.pressure:.1f}bar, "
+                                  f"Rods=[{self.state.safety_rod},{self.state.shim_rod},"
+                                  f"{self.state.regulating_rod}]%, "
+                                  f"Thermal={self.state.thermal_kw:.1f}kW, "
+                                  f"Turbine={esp_bc_data.power_level:.1f}%, "
+                                  f"Humid=[SG:{self.state.humid_sg1_cmd},{self.state.humid_sg2_cmd},"
+                                  f"CT:{self.state.humid_ct1_cmd},{self.state.humid_ct2_cmd},"
+                                  f"{self.state.humid_ct3_cmd},{self.state.humid_ct4_cmd}]")
+                    else:
+                        logger.info(f"Status: P={self.state.pressure:.1f}bar (Simulation mode)")
                 
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received")
         finally:
             self.shutdown()
+    
+    def health_monitoring_thread(self):
+        """Thread for periodic system health monitoring"""
+        logger.info("Health monitoring thread started (check every 60s)")
+        
+        last_check = time.time()
+        
+        while self.state.running:
+            try:
+                current_time = time.time()
+                
+                # Run health check every 60 seconds
+                if current_time - last_check >= 60:
+                    logger.info("\n" + "="*70)
+                    logger.info("PERIODIC HEALTH CHECK (60s interval)")
+                    logger.info("="*70)
+                    
+                    with self.i2c_lock:
+                        self.health_monitor.check_all(self)
+                    
+                    last_check = current_time
+                
+                time.sleep(5.0)  # Check timer every 5 seconds
+                
+            except Exception as e:
+                logger.error(f"Health monitoring error: {e}")
+                time.sleep(10.0)
     
     def shutdown(self):
         """Shutdown system gracefully"""
