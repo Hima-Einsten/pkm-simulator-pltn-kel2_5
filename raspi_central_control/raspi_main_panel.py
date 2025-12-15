@@ -14,7 +14,7 @@ from typing import Optional
 # Import our modules
 import raspi_config as config
 from raspi_tca9548a import DualMultiplexerManager
-from raspi_i2c_master import I2CMaster
+from raspi_uart_master import UARTMaster  # UART instead of I2C
 from raspi_gpio_buttons import ButtonHandler as ButtonManager
 from raspi_humidifier_control import HumidifierController
 from raspi_buzzer_alarm import BuzzerAlarm
@@ -99,7 +99,7 @@ class PLTNPanelController:
         logger.info("Phase 1: Core hardware initialization...")
         try:
             self.init_multiplexers()
-            self.init_i2c_master()
+            self.init_uart_master()  # Changed from init_i2c_master
             self.init_buttons()
             self.init_humidifier()
         except Exception as e:
@@ -112,7 +112,7 @@ class PLTNPanelController:
         self.init_oled_displays()  # Non-blocking with timeout
         
         # Threading locks
-        self.i2c_lock = threading.Lock()
+        self.uart_lock = threading.Lock()  # Changed from i2c_lock
         self.state_lock = threading.Lock()
         
         # System health monitor
@@ -136,33 +136,34 @@ class PLTNPanelController:
         logger.info("="*60)
     
     def init_multiplexers(self):
-        """Initialize TCA9548A multiplexers with fallback"""
+        """Initialize TCA9548A multiplexers (for OLEDs only now)"""
         try:
             self.mux_manager = DualMultiplexerManager(
                 display_bus=config.I2C_BUS_DISPLAY,
-                esp_bus=config.I2C_BUS_ESP,
+                esp_bus=config.I2C_BUS_DISPLAY,  # Both on same bus now (OLEDs only)
                 display_addr=config.TCA9548A_DISPLAY_ADDRESS,
                 esp_addr=config.TCA9548A_ESP_ADDRESS
             )
-            logger.info("✓ Multiplexers initialized")
+            logger.info("✓ Multiplexers initialized (OLEDs only)")
         except Exception as e:
             logger.warning(f"⚠️  Multiplexers unavailable: {e}")
-            logger.warning("   Running in simulation mode")
+            logger.warning("   OLED displays will not work")
             self.mux_manager = None
-            raise
+            # Don't raise - OLEDs are optional
     
-    def init_i2c_master(self):
-        """Initialize I2C Master for 2 ESP communication with fallback"""
+    def init_uart_master(self):
+        """Initialize UART Master for 2 ESP communication"""
         try:
-            self.i2c_master = I2CMaster(
-                bus_number=config.I2C_BUS_ESP,
-                mux_select_callback=self.mux_manager.select_esp_channel if self.mux_manager else None
+            self.uart_master = UARTMaster(
+                esp_bc_port=config.UART_ESP_BC_PORT,
+                esp_e_port=config.UART_ESP_E_PORT,
+                baudrate=config.UART_BAUDRATE
             )
-            logger.info("✓ I2C Master initialized (2 ESP)")
+            logger.info("✓ UART Master initialized (2 ESP via Serial)")
         except Exception as e:
-            logger.warning(f"⚠️  I2C Master unavailable: {e}")
-            logger.warning("   Continuing in simulation mode")
-            self.i2c_master = None
+            logger.error(f"❌ UART Master unavailable: {e}")
+            logger.error("   ESPs will not work!")
+            self.uart_master = None
             raise
     
     def init_buttons(self):
@@ -632,19 +633,16 @@ class PLTNPanelController:
     # ============================================
     
     def esp_communication_thread(self):
-        """Thread for ESP communication (100ms cycle)"""
-        logger.info("ESP communication thread started (2 ESP)")
+        """Thread for ESP communication via UART (100ms cycle)"""
+        logger.info("ESP communication thread started (2 ESP via UART)")
         
         while self.state.running:
             try:
-                with self.i2c_lock:
+                with self.uart_lock:
                     with self.state_lock:
-                        # Select MUX #1 Channel 0 for ESP-BC
-                        if self.mux_manager:
-                            self.mux_manager.select_mux1_channel(0)
-                        
                         # Send to ESP-BC (Control Rods + Turbine + Humidifier)
-                        success = self.i2c_master.update_esp_bc(
+                        # No MUX selection needed - direct UART connection
+                        success = self.uart_master.update_esp_bc(
                             self.state.safety_rod,
                             self.state.shim_rod,
                             self.state.regulating_rod,
@@ -658,18 +656,19 @@ class PLTNPanelController:
                         
                         if success:
                             # Get data back from ESP-BC
-                            esp_bc_data = self.i2c_master.get_esp_bc_data()
+                            esp_bc_data = self.uart_master.get_esp_bc_data()
                             self.state.thermal_kw = esp_bc_data.kw_thermal
                             
                             # Send to ESP-E (LED Visualizer)
-                            # MUX #2 Channel 0 is selected by mux_select callback in update_esp_e
-                            self.i2c_master.update_esp_e(
+                            # Direct UART connection - no MUX needed
+                            self.uart_master.update_esp_e(
                                 pressure_primary=self.state.pressure,
                                 pump_status_primary=self.state.pump_primary_status,
                                 pressure_secondary=self.state.pressure * 0.35,
                                 pump_status_secondary=self.state.pump_secondary_status,
                                 pressure_tertiary=self.state.pressure * 0.10,
-                                pump_status_tertiary=self.state.pump_tertiary_status
+                                pump_status_tertiary=self.state.pump_tertiary_status,
+                                thermal_power_kw=self.state.thermal_kw
                             )
                 
                 time.sleep(0.1)  # 100ms
@@ -749,8 +748,8 @@ class PLTNPanelController:
                 # Print status every second
                 with self.state_lock:
                     # Get turbine data from ESP-BC
-                    if self.i2c_master:
-                        esp_bc_data = self.i2c_master.get_esp_bc_data()
+                    if self.uart_master:
+                        esp_bc_data = self.uart_master.get_esp_bc_data()
                         
                         logger.info(f"Status: P={self.state.pressure:.1f}bar, "
                                   f"Rods=[{self.state.safety_rod},{self.state.shim_rod},"
@@ -784,7 +783,7 @@ class PLTNPanelController:
                     logger.info("PERIODIC HEALTH CHECK (60s interval)")
                     logger.info("="*70)
                     
-                    with self.i2c_lock:
+                    with self.uart_lock:
                         self.health_monitor.check_all(self)
                     
                     last_check = current_time
@@ -796,7 +795,7 @@ class PLTNPanelController:
                 time.sleep(10.0)
     
     def shutdown(self):
-        """Shutdown system gracefully with proper I2C cleanup"""
+        """Shutdown system gracefully with proper UART cleanup"""
         logger.info("="*60)
         logger.info("Shutting down PLTN Panel Controller...")
         logger.info("="*60)
@@ -815,39 +814,37 @@ class PLTNPanelController:
             logger.error(f"Error cleaning up buttons: {e}")
         
         try:
-            # 2. Send safe state to ESPs before closing I2C
-            if self.i2c_master and self.mux_manager:
-                logger.info("Sending safe state to ESPs...")
+            # 2. Send safe state to ESPs before closing UART
+            if self.uart_master:
+                logger.info("Sending safe state to ESPs via UART...")
                 
                 # ESP-BC: All rods to 0%, all humidifiers off
-                self.mux_manager.select_mux1_channel(0)
-                time.sleep(0.02)
-                self.i2c_master.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0)
+                self.uart_master.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0)
+                time.sleep(0.05)
                 
                 # ESP-E: All pumps off
-                self.mux_manager.select_mux2_channel(0)
-                time.sleep(0.02)
-                self.i2c_master.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0, 0.0)
+                self.uart_master.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0, 0.0)
+                time.sleep(0.05)
                 
                 logger.info("Safe state sent to ESPs")
         except Exception as e:
             logger.error(f"Error sending safe state: {e}")
         
         try:
-            # 3. Disable all multiplexer channels
+            # 3. Close UART connections
+            if self.uart_master:
+                logger.info("Closing UART connections...")
+                self.uart_master.close()
+        except Exception as e:
+            logger.error(f"Error closing UART: {e}")
+        
+        try:
+            # 4. Close multiplexers (for OLEDs)
             if self.mux_manager:
-                logger.info("Disabling multiplexer channels...")
+                logger.info("Closing multiplexers (OLEDs)...")
                 self.mux_manager.close()
         except Exception as e:
             logger.error(f"Error closing multiplexers: {e}")
-        
-        try:
-            # 4. Close I2C master (this closes the bus)
-            if self.i2c_master:
-                logger.info("Closing I2C master...")
-                self.i2c_master.close()
-        except Exception as e:
-            logger.error(f"Error closing I2C master: {e}")
         
         logger.info("="*60)
         logger.info("✅ PLTN Panel Controller shutdown complete")

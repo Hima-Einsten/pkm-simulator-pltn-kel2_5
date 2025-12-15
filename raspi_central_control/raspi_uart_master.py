@@ -1,0 +1,522 @@
+"""
+UART Master Communication Module
+Replaces I2C communication with UART for ESP32 slaves
+
+Architecture:
+- ESP-BC: /dev/ttyAMA0 (GPIO 14/15) - Control Rods + Turbine + Humidifier
+- ESP-E:  /dev/ttyAMA1 (GPIO 0/1)  - LED Visualizer
+
+Protocol: JSON over UART (115200 baud, 8N1)
+"""
+
+import serial
+import json
+import time
+import logging
+from typing import Optional, Dict
+from dataclasses import dataclass
+import threading
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ESP_BC_Data:
+    """Data structure for ESP-BC (Control Rods + Turbine + Humidifier + Pumps)"""
+    # To ESP-BC
+    safety_target: int = 0
+    shim_target: int = 0
+    regulating_target: int = 0
+    
+    humid_sg1_cmd: int = 0
+    humid_sg2_cmd: int = 0
+    humid_ct1_cmd: int = 0
+    humid_ct2_cmd: int = 0
+    humid_ct3_cmd: int = 0
+    humid_ct4_cmd: int = 0
+    
+    # From ESP-BC
+    safety_actual: int = 0
+    shim_actual: int = 0
+    regulating_actual: int = 0
+    kw_thermal: float = 0.0
+    power_level: float = 0.0
+    state: int = 0
+    generator_status: int = 0
+    turbine_status: int = 0
+    
+    humid_sg1_status: int = 0
+    humid_sg2_status: int = 0
+    humid_ct1_status: int = 0
+    humid_ct2_status: int = 0
+    humid_ct3_status: int = 0
+    humid_ct4_status: int = 0
+
+
+@dataclass
+class ESP_E_Data:
+    """Data structure for ESP-E (3-Flow LED Visualizer)"""
+    # To ESP-E
+    pressure_primary: float = 0.0
+    pump_status_primary: int = 0
+    pressure_secondary: float = 0.0
+    pump_status_secondary: int = 0
+    pressure_tertiary: float = 0.0
+    pump_status_tertiary: int = 0
+    thermal_power_kw: float = 0.0
+    
+    # From ESP-E
+    animation_speed: int = 0
+    led_count: int = 0
+
+
+class UARTDevice:
+    """Base class for UART device communication"""
+    
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.5):
+        """
+        Initialize UART device
+        
+        Args:
+            port: Serial port path (e.g., '/dev/ttyAMA0')
+            baudrate: Communication speed (default 115200)
+            timeout: Read timeout in seconds
+        """
+        self.port = port
+        self.baudrate = baudrate
+        self.timeout = timeout
+        self.serial = None
+        self.lock = threading.Lock()
+        self.error_count = 0
+        self.last_comm_time = 0.0
+        
+    def connect(self) -> bool:
+        """
+        Open serial connection
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.serial = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=self.timeout,
+                write_timeout=1.0
+            )
+            
+            # Flush buffers
+            time.sleep(0.1)
+            self.serial.reset_input_buffer()
+            self.serial.reset_output_buffer()
+            
+            logger.info(f"✅ UART connected: {self.port} at {self.baudrate} baud")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to open {self.port}: {e}")
+            return False
+    
+    def disconnect(self):
+        """Close serial connection"""
+        try:
+            if self.serial and self.serial.is_open:
+                self.serial.close()
+                logger.info(f"UART disconnected: {self.port}")
+        except Exception as e:
+            logger.error(f"Error closing {self.port}: {e}")
+    
+    def send_json(self, data: dict) -> bool:
+        """
+        Send JSON message to device
+        
+        Args:
+            data: Dictionary to send as JSON
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        with self.lock:
+            try:
+                if not self.serial or not self.serial.is_open:
+                    logger.error(f"Serial port {self.port} not open")
+                    return False
+                
+                # Convert to JSON and add newline
+                json_str = json.dumps(data) + '\n'
+                
+                # Send
+                self.serial.write(json_str.encode('utf-8'))
+                self.serial.flush()
+                
+                logger.debug(f"TX {self.port}: {json_str.strip()}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Error sending to {self.port}: {e}")
+                self.error_count += 1
+                return False
+    
+    def receive_json(self, timeout: Optional[float] = None) -> Optional[dict]:
+        """
+        Receive JSON message from device
+        
+        Args:
+            timeout: Optional timeout override
+            
+        Returns:
+            Dictionary if successful, None otherwise
+        """
+        with self.lock:
+            try:
+                if not self.serial or not self.serial.is_open:
+                    logger.error(f"Serial port {self.port} not open")
+                    return None
+                
+                # Set timeout if provided
+                old_timeout = self.serial.timeout
+                if timeout is not None:
+                    self.serial.timeout = timeout
+                
+                # Read line
+                line = self.serial.readline()
+                
+                # Restore timeout
+                if timeout is not None:
+                    self.serial.timeout = old_timeout
+                
+                if not line:
+                    logger.warning(f"No response from {self.port} (timeout)")
+                    self.error_count += 1
+                    return None
+                
+                # Decode and parse JSON
+                json_str = line.decode('utf-8').strip()
+                logger.debug(f"RX {self.port}: {json_str}")
+                
+                data = json.loads(json_str)
+                
+                # Reset error count on success
+                self.last_comm_time = time.time()
+                if self.error_count > 0:
+                    logger.info(f"Communication restored with {self.port}")
+                    self.error_count = 0
+                
+                return data
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error from {self.port}: {e}")
+                self.error_count += 1
+                return None
+                
+            except Exception as e:
+                logger.error(f"Error receiving from {self.port}: {e}")
+                self.error_count += 1
+                return None
+    
+    def send_receive(self, data: dict, timeout: float = 1.0) -> Optional[dict]:
+        """
+        Send command and wait for response
+        
+        Args:
+            data: Dictionary to send
+            timeout: Response timeout
+            
+        Returns:
+            Response dictionary or None
+        """
+        if not self.send_json(data):
+            return None
+        
+        return self.receive_json(timeout)
+
+
+class UARTMaster:
+    """
+    UART Master for ESP32 communication
+    Manages 2 UART devices: ESP-BC and ESP-E
+    """
+    
+    def __init__(self, esp_bc_port: str = '/dev/ttyAMA0', 
+                 esp_e_port: str = '/dev/ttyAMA1',
+                 baudrate: int = 115200):
+        """
+        Initialize UART Master
+        
+        Args:
+            esp_bc_port: Serial port for ESP-BC
+            esp_e_port: Serial port for ESP-E
+            baudrate: Communication speed
+        """
+        logger.info("="*70)
+        logger.info("UART Master Initialization - 2 ESP Architecture")
+        logger.info("="*70)
+        
+        # Create UART devices
+        self.esp_bc = UARTDevice(esp_bc_port, baudrate)
+        self.esp_e = UARTDevice(esp_e_port, baudrate)
+        
+        # Data storage
+        self.esp_bc_data = ESP_BC_Data()
+        self.esp_e_data = ESP_E_Data()
+        
+        # Connect devices
+        self.esp_bc_connected = self.esp_bc.connect()
+        self.esp_e_connected = self.esp_e.connect()
+        
+        if self.esp_bc_connected:
+            logger.info(f"✅ ESP-BC: {esp_bc_port} (Control Rods + Turbine + Humid)")
+        else:
+            logger.error(f"❌ ESP-BC: {esp_bc_port} - NOT CONNECTED!")
+        
+        if self.esp_e_connected:
+            logger.info(f"✅ ESP-E: {esp_e_port} (LED Visualizer)")
+        else:
+            logger.warning(f"⚠️  ESP-E: {esp_e_port} - NOT CONNECTED (non-critical)")
+        
+        logger.info("="*70)
+    
+    def update_esp_bc(self, safety: int, shim: int, regulating: int,
+                      humid_sg1: int = 0, humid_sg2: int = 0,
+                      humid_ct1: int = 0, humid_ct2: int = 0,
+                      humid_ct3: int = 0, humid_ct4: int = 0) -> bool:
+        """
+        Send update to ESP-BC
+        
+        Args:
+            safety: Safety rod target (0-100%)
+            shim: Shim rod target (0-100%)
+            regulating: Regulating rod target (0-100%)
+            humid_sg1-2: Steam Generator humidifiers (0/1)
+            humid_ct1-4: Cooling Tower humidifiers (0/1)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.esp_bc_connected:
+            return False
+        
+        # Update internal state
+        self.esp_bc_data.safety_target = safety
+        self.esp_bc_data.shim_target = shim
+        self.esp_bc_data.regulating_target = regulating
+        self.esp_bc_data.humid_sg1_cmd = humid_sg1
+        self.esp_bc_data.humid_sg2_cmd = humid_sg2
+        self.esp_bc_data.humid_ct1_cmd = humid_ct1
+        self.esp_bc_data.humid_ct2_cmd = humid_ct2
+        self.esp_bc_data.humid_ct3_cmd = humid_ct3
+        self.esp_bc_data.humid_ct4_cmd = humid_ct4
+        
+        # Prepare command
+        command = {
+            "cmd": "update",
+            "rods": [safety, shim, regulating],
+            "humid_sg": [humid_sg1, humid_sg2],
+            "humid_ct": [humid_ct1, humid_ct2, humid_ct3, humid_ct4]
+        }
+        
+        # Send and receive
+        response = self.esp_bc.send_receive(command, timeout=0.5)
+        
+        if response and response.get("status") == "ok":
+            # Parse response
+            self.esp_bc_data.safety_actual = response.get("rods", [0,0,0])[0]
+            self.esp_bc_data.shim_actual = response.get("rods", [0,0,0])[1]
+            self.esp_bc_data.regulating_actual = response.get("rods", [0,0,0])[2]
+            self.esp_bc_data.kw_thermal = response.get("thermal_kw", 0.0)
+            self.esp_bc_data.power_level = response.get("power_level", 0.0)
+            self.esp_bc_data.state = response.get("state", 0)
+            
+            humid_status = response.get("humid_status", [[0,0], [0,0,0,0]])
+            self.esp_bc_data.humid_sg1_status = humid_status[0][0]
+            self.esp_bc_data.humid_sg2_status = humid_status[0][1]
+            self.esp_bc_data.humid_ct1_status = humid_status[1][0]
+            self.esp_bc_data.humid_ct2_status = humid_status[1][1]
+            self.esp_bc_data.humid_ct3_status = humid_status[1][2]
+            self.esp_bc_data.humid_ct4_status = humid_status[1][3]
+            
+            logger.debug(f"ESP-BC: Rods={response.get('rods')}, "
+                        f"Thermal={self.esp_bc_data.kw_thermal:.1f}kW")
+            return True
+        else:
+            logger.warning("ESP-BC: No valid response")
+            return False
+    
+    def update_esp_e(self, pressure_primary: float, pump_status_primary: int,
+                    pressure_secondary: float, pump_status_secondary: int,
+                    pressure_tertiary: float, pump_status_tertiary: int,
+                    thermal_power_kw: float = 0.0) -> bool:
+        """
+        Send update to ESP-E
+        
+        Args:
+            pressure_primary: Primary loop pressure
+            pump_status_primary: Primary pump status (0-3)
+            pressure_secondary: Secondary loop pressure
+            pump_status_secondary: Secondary pump status
+            pressure_tertiary: Tertiary loop pressure
+            pump_status_tertiary: Tertiary pump status
+            thermal_power_kw: Thermal power for LED indicator
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.esp_e_connected:
+            return False
+        
+        # Update internal state
+        self.esp_e_data.pressure_primary = pressure_primary
+        self.esp_e_data.pump_status_primary = pump_status_primary
+        self.esp_e_data.pressure_secondary = pressure_secondary
+        self.esp_e_data.pump_status_secondary = pump_status_secondary
+        self.esp_e_data.pressure_tertiary = pressure_tertiary
+        self.esp_e_data.pump_status_tertiary = pump_status_tertiary
+        self.esp_e_data.thermal_power_kw = thermal_power_kw
+        
+        # Prepare command
+        command = {
+            "cmd": "update",
+            "flows": [
+                {"pressure": pressure_primary, "pump": pump_status_primary},
+                {"pressure": pressure_secondary, "pump": pump_status_secondary},
+                {"pressure": pressure_tertiary, "pump": pump_status_tertiary}
+            ],
+            "thermal_kw": thermal_power_kw
+        }
+        
+        # Send and receive
+        response = self.esp_e.send_receive(command, timeout=0.5)
+        
+        if response and response.get("status") == "ok":
+            self.esp_e_data.animation_speed = response.get("anim_speed", 0)
+            self.esp_e_data.led_count = response.get("led_count", 0)
+            
+            logger.debug(f"ESP-E: Speed={self.esp_e_data.animation_speed}, "
+                        f"LEDs={self.esp_e_data.led_count}")
+            return True
+        else:
+            logger.warning("ESP-E: No valid response (non-critical)")
+            return False
+    
+    def get_esp_bc_data(self) -> ESP_BC_Data:
+        """Get latest data from ESP-BC"""
+        return self.esp_bc_data
+    
+    def get_esp_e_data(self) -> ESP_E_Data:
+        """Get latest data from ESP-E"""
+        return self.esp_e_data
+    
+    def get_health_status(self) -> Dict:
+        """
+        Get health status of both ESP devices
+        
+        Returns:
+            Dictionary with health information
+        """
+        return {
+            'esp_bc': {
+                'connected': self.esp_bc_connected,
+                'port': self.esp_bc.port,
+                'error_count': self.esp_bc.error_count,
+                'last_comm': self.esp_bc.last_comm_time,
+                'status': 'OK' if self.esp_bc.error_count < 5 else 'ERROR'
+            },
+            'esp_e': {
+                'connected': self.esp_e_connected,
+                'port': self.esp_e.port,
+                'error_count': self.esp_e.error_count,
+                'last_comm': self.esp_e.last_comm_time,
+                'status': 'OK' if self.esp_e.error_count < 5 else 'WARNING'
+            }
+        }
+    
+    def close(self):
+        """Close all UART connections"""
+        logger.info("Closing UART connections...")
+        
+        # Send safe state before closing
+        try:
+            if self.esp_bc_connected:
+                logger.info("Sending safe state to ESP-BC...")
+                self.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        except:
+            pass
+        
+        try:
+            if self.esp_e_connected:
+                logger.info("Sending safe state to ESP-E...")
+                self.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0, 0.0)
+        except:
+            pass
+        
+        # Close connections
+        self.esp_bc.disconnect()
+        self.esp_e.disconnect()
+        
+        logger.info("✅ UART Master closed")
+
+
+# Test function
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    
+    print("\n" + "="*70)
+    print("Testing UART Master (2 ESP Architecture)")
+    print("="*70)
+    
+    try:
+        # Initialize
+        master = UARTMaster()
+        
+        # Test ESP-BC
+        print("\n[TEST] ESP-BC Communication...")
+        success = master.update_esp_bc(
+            safety=50, shim=60, regulating=70,
+            humid_sg1=1, humid_sg2=1,
+            humid_ct1=1, humid_ct2=0, humid_ct3=1, humid_ct4=0
+        )
+        
+        if success:
+            data = master.get_esp_bc_data()
+            print(f"  ✅ Rod positions: {data.safety_actual}, {data.shim_actual}, {data.regulating_actual}")
+            print(f"  ✅ Thermal power: {data.kw_thermal} kW")
+            print(f"  ✅ Turbine power: {data.power_level}%")
+        else:
+            print("  ❌ Failed to communicate with ESP-BC")
+        
+        # Test ESP-E
+        print("\n[TEST] ESP-E Communication...")
+        success = master.update_esp_e(
+            pressure_primary=155.0, pump_status_primary=2,
+            pressure_secondary=50.0, pump_status_secondary=2,
+            pressure_tertiary=15.0, pump_status_tertiary=2,
+            thermal_power_kw=50000.0
+        )
+        
+        if success:
+            data = master.get_esp_e_data()
+            print(f"  ✅ Animation speed: {data.animation_speed}")
+            print(f"  ✅ LED count: {data.led_count}")
+        else:
+            print("  ⚠️  Failed to communicate with ESP-E (non-critical)")
+        
+        # Health check
+        print("\n[TEST] Health Status:")
+        health = master.get_health_status()
+        for esp, info in health.items():
+            print(f"  {esp.upper()}: {info['status']} (errors: {info['error_count']})")
+        
+        # Close
+        master.close()
+        
+        print("\n" + "="*70)
+        print("✅ Test complete")
+        print("="*70)
+        
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()

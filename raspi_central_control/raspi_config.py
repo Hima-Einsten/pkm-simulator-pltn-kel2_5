@@ -4,18 +4,28 @@ PLTN Simulator v2.0 with Full I2C Architecture
 """
 
 # ============================================
-# I2C Configuration
+# UART Configuration (NEW - Replaces I2C for ESP)
 # ============================================
-# TCA9548A Multiplexer Addresses
-TCA9548A_DISPLAY_ADDRESS = 0x70  # For OLED displays
-TCA9548A_ESP_ADDRESS = 0x71      # For ESP32 slaves
+# UART Ports for ESP Communication
+UART_ESP_BC_PORT = '/dev/ttyAMA0'    # GPIO 14/15 (UART0)
+UART_ESP_E_PORT = '/dev/ttyAMA1'     # GPIO 0/1 (UART2, needs dtoverlay=uart2)
+UART_BAUDRATE = 115200               # Standard baudrate
+UART_TIMEOUT = 0.5                   # Read timeout in seconds
+UART_UPDATE_INTERVAL = 0.1           # Update interval (100ms)
+
+# ============================================
+# I2C Configuration (OLEDs ONLY now)
+# ============================================
+# TCA9548A Multiplexer Addresses (OLEDs ONLY)
+TCA9548A_DISPLAY_ADDRESS = 0x70  # For OLED displays only
+TCA9548A_ESP_ADDRESS = 0x71      # For OLED displays only (ESP now on UART)
 
 # I2C Bus Configuration
 # NOTE: Raspberry Pi typically only has I2C bus 1 available
 # Both multiplexers will share the same I2C bus
+# ESPs are now on UART, not I2C!
 I2C_BUS = 1          # I2C Bus 1 (GPIO 2=SDA, GPIO 3=SCL)
 I2C_BUS_DISPLAY = 1  # Same bus for displays
-I2C_BUS_ESP = 1      # Same bus for ESP slaves
 
 # OLED Configuration
 OLED_ADDRESS = 0x3C
