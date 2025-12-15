@@ -43,7 +43,7 @@ const int SIG_TERTIARY = 16;
 // ============================================
 // Power Indicator LEDs (3 groups)
 // ============================================
-const int POWER_LED_DIRECT_PINS[3] = {23, 19, 18};
+const int POWER_LED_DIRECT_PINS[3] = { 23, 19, 18 };
 
 // ============================================
 // Flow Data
@@ -80,59 +80,59 @@ void setup() {
   // Initialize USB Serial for debugging
   Serial.begin(115200);
   delay(500);
-  
+
   Serial.println("\n\n===========================================");
   Serial.println("ESP-E UART Communication");
   Serial.println("LED Flow Visualizer (3 Flows)");
   Serial.println("===========================================");
-  
+
   // Initialize UART2
   UartComm.begin(UART_BAUD, SERIAL_8N1, 16, 17);
   Serial.println("✅ UART2 initialized at 115200 baud");
   Serial.println("   RX: GPIO 16");
   Serial.println("   TX: GPIO 17");
-  
+
   // Initialize multiplexer selector pins
   pinMode(S0, OUTPUT);
   pinMode(S1, OUTPUT);
   pinMode(S2, OUTPUT);
   pinMode(S3, OUTPUT);
-  
+
   // Initialize enable pins
   pinMode(EN_PRIMARY, OUTPUT);
   pinMode(EN_SECONDARY, OUTPUT);
   pinMode(EN_TERTIARY, OUTPUT);
-  
+
   // Initialize PWM pins
   ledcAttach(SIG_PRIMARY, 5000, 8);
   ledcAttach(SIG_SECONDARY, 5000, 8);
   ledcAttach(SIG_TERTIARY, 5000, 8);
-  
+
   // All disabled initially
-  digitalWrite(EN_PRIMARY, HIGH);    // Active LOW
+  digitalWrite(EN_PRIMARY, HIGH);  // Active LOW
   digitalWrite(EN_SECONDARY, HIGH);
   digitalWrite(EN_TERTIARY, HIGH);
-  
+
   Serial.println("✅ LED multiplexers initialized");
-  
+
   // Initialize power indicator LEDs
   for (int i = 0; i < 3; i++) {
     ledcAttach(POWER_LED_DIRECT_PINS[i], 5000, 8);
     ledcWrite(POWER_LED_DIRECT_PINS[i], 0);
   }
   Serial.println("✅ Power indicator LEDs initialized");
-  
+
   // Initialize flow data
   for (int i = 0; i < NUM_FLOWS; i++) {
     flows[i].pressure = 0.0;
     flows[i].pump_status = 0;
     flows[i].animation_speed = 0;
   }
-  
+
   Serial.println("===========================================");
   Serial.println("✅ System Ready - Waiting for commands...");
   Serial.println("===========================================\n");
-  
+
   last_command_time = millis();
 }
 
@@ -143,20 +143,20 @@ void loop() {
   // Check for incoming UART data
   if (UartComm.available()) {
     char c = UartComm.read();
-    
+
     if (c == '\n') {
       processCommand(rx_buffer);
       rx_buffer = "";
     } else {
       rx_buffer += c;
-      
+
       if (rx_buffer.length() > 256) {
         Serial.println("⚠️  RX buffer overflow");
         rx_buffer = "";
       }
     }
   }
-  
+
   // Safety timeout
   if (millis() - last_command_time > COMMAND_TIMEOUT) {
     if (thermal_power_kw > 0.0) {
@@ -169,11 +169,11 @@ void loop() {
     }
     last_command_time = millis();
   }
-  
+
   // Update animations
   updateAnimations();
   updatePowerIndicator();
-  
+
   delay(10);
 }
 
@@ -182,21 +182,21 @@ void loop() {
 // ============================================
 void processCommand(String command) {
   if (command.length() == 0) return;
-  
+
   Serial.print("RX: ");
   Serial.println(command);
-  
+
   DeserializationError error = deserializeJson(json_rx, command);
-  
+
   if (error) {
     Serial.print("❌ JSON parse error: ");
     Serial.println(error.c_str());
     sendError("JSON parse error");
     return;
   }
-  
+
   const char* cmd = json_rx["cmd"];
-  
+
   if (strcmp(cmd, "update") == 0) {
     handleUpdateCommand();
     last_command_time = millis();
@@ -214,12 +214,12 @@ void handleUpdateCommand() {
   // Parse flow data
   if (json_rx.containsKey("flows")) {
     JsonArray flows_array = json_rx["flows"];
-    
+
     for (int i = 0; i < NUM_FLOWS && i < flows_array.size(); i++) {
       JsonObject flow = flows_array[i];
       flows[i].pressure = flow["pressure"];
       flows[i].pump_status = flow["pump"];
-      
+
       // Calculate animation speed based on pressure and pump status
       if (flows[i].pump_status == 2) {  // ON
         flows[i].animation_speed = map(flows[i].pressure, 0, 200, 0, 255);
@@ -228,18 +228,18 @@ void handleUpdateCommand() {
       }
     }
   }
-  
+
   // Parse thermal power
   if (json_rx.containsKey("thermal_kw")) {
     thermal_power_kw = json_rx["thermal_kw"];
   }
-  
+
   Serial.printf("Flows: P1=%.1f/%d, P2=%.1f/%d, P3=%.1f/%d, Thermal=%.1fkW\n",
                 flows[0].pressure, flows[0].pump_status,
                 flows[1].pressure, flows[1].pump_status,
                 flows[2].pressure, flows[2].pump_status,
                 thermal_power_kw);
-  
+
   sendStatus();
 }
 
@@ -248,14 +248,14 @@ void handleUpdateCommand() {
 // ============================================
 void sendStatus() {
   json_tx.clear();
-  
+
   json_tx["status"] = "ok";
   json_tx["anim_speed"] = flows[0].animation_speed;  // Primary flow
   json_tx["led_count"] = NUM_LEDS;
-  
+
   serializeJson(json_tx, UartComm);
   UartComm.println();
-  
+
   Serial.print("TX: ");
   serializeJson(json_tx, Serial);
   Serial.println();
@@ -269,10 +269,10 @@ void sendPong() {
   json_tx["status"] = "ok";
   json_tx["message"] = "pong";
   json_tx["device"] = "ESP-E";
-  
+
   serializeJson(json_tx, UartComm);
   UartComm.println();
-  
+
   Serial.println("TX: pong");
 }
 
@@ -283,7 +283,7 @@ void sendError(const char* message) {
   json_tx.clear();
   json_tx["status"] = "error";
   json_tx["message"] = message;
-  
+
   serializeJson(json_tx, UartComm);
   UartComm.println();
 }
@@ -303,35 +303,35 @@ void setMux(int channel) {
 // ============================================
 void updateAnimations() {
   unsigned long current_time = millis();
-  
+
   // Update animation every 50ms
   if (current_time - last_animation_update < 50) {
     return;
   }
   last_animation_update = current_time;
-  
+
   animation_phase++;
   if (animation_phase >= NUM_LEDS) {
     animation_phase = 0;
   }
-  
+
   // Update each flow
   for (int flow_idx = 0; flow_idx < NUM_FLOWS; flow_idx++) {
     if (flows[flow_idx].pump_status == 2) {  // ON
       // Enable this flow's multiplexer
       enableFlow(flow_idx, true);
-      
+
       // Animate LEDs
       for (int led = 0; led < NUM_LEDS; led++) {
         setMux(led);
-        
+
         // Wave effect
         int brightness = 0;
         int distance = abs(led - animation_phase);
         if (distance < 3) {
           brightness = map(3 - distance, 0, 3, 0, flows[flow_idx].animation_speed);
         }
-        
+
         setFlowBrightness(flow_idx, brightness);
         delayMicroseconds(100);
       }
@@ -346,8 +346,8 @@ void updateAnimations() {
 // Enable/Disable Flow
 // ============================================
 void enableFlow(int flow_idx, bool enable) {
-  int pin = (flow_idx == 0) ? EN_PRIMARY : 
-            (flow_idx == 1) ? EN_SECONDARY : EN_TERTIARY;
+  int pin = (flow_idx == 0) ? EN_PRIMARY : (flow_idx == 1) ? EN_SECONDARY
+                                                           : EN_TERTIARY;
   digitalWrite(pin, enable ? LOW : HIGH);  // Active LOW
 }
 
@@ -355,8 +355,8 @@ void enableFlow(int flow_idx, bool enable) {
 // Set Flow Brightness
 // ============================================
 void setFlowBrightness(int flow_idx, int brightness) {
-  int pin = (flow_idx == 0) ? SIG_PRIMARY : 
-            (flow_idx == 1) ? SIG_SECONDARY : SIG_TERTIARY;
+  int pin = (flow_idx == 0) ? SIG_PRIMARY : (flow_idx == 1) ? SIG_SECONDARY
+                                                            : SIG_TERTIARY;
   ledcWrite(pin, brightness);
 }
 
@@ -368,27 +368,27 @@ void updatePowerIndicator() {
   const float MAX_THERMAL_MWE = 300.0;  // 300 MW max
   float power_mwe = thermal_power_kw / 1000.0;
   float ratio = power_mwe / MAX_THERMAL_MWE;
-  
+
   if (ratio > 1.0) ratio = 1.0;
   if (ratio < 0.0) ratio = 0.0;
-  
+
   int brightness = (int)(ratio * 255);
   if (brightness > 0 && brightness < 20) brightness = 20;
-  
+
   // LED group 1 (always on when power > 0%)
   if (ratio > 0.0) {
     ledcWrite(POWER_LED_DIRECT_PINS[0], brightness);
   } else {
     ledcWrite(POWER_LED_DIRECT_PINS[0], 0);
   }
-  
+
   // LED group 2 (on when power > 30%)
   if (ratio > 0.3) {
     ledcWrite(POWER_LED_DIRECT_PINS[1], brightness);
   } else {
     ledcWrite(POWER_LED_DIRECT_PINS[1], 0);
   }
-  
+
   // LED group 3 (on when power > 70%)
   if (ratio > 0.7) {
     ledcWrite(POWER_LED_DIRECT_PINS[2], brightness);
