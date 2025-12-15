@@ -7,8 +7,8 @@ PLTN Simulator v2.0 with Full I2C Architecture
 # UART Configuration (NEW - Replaces I2C for ESP)
 # ============================================
 # UART Ports for ESP Communication
-UART_ESP_BC_PORT = '/dev/ttyAMA0'    # GPIO 14/15 (UART0)
-UART_ESP_E_PORT = '/dev/ttyAMA1'     # GPIO 0/1 (UART2, needs dtoverlay=uart2)
+UART_ESP_BC_PORT = '/dev/ttyAMA0'    # GPIO 14/15 (Built-in UART)
+UART_ESP_E_PORT = '/dev/ttyUSB0'     # USB Serial Adapter (CH340/CP2102/FT232)
 UART_BAUDRATE = 115200               # Standard baudrate
 UART_TIMEOUT = 0.5                   # Read timeout in seconds
 UART_UPDATE_INTERVAL = 0.1           # Update interval (100ms)

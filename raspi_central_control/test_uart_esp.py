@@ -166,12 +166,12 @@ def main():
     print("="*70)
     print("\nThis script will test UART communication with:")
     print("  1. ESP-BC on /dev/ttyAMA0 (GPIO 14/15)")
-    print("  2. ESP-E on /dev/ttyAMA1 (GPIO 0/1)")
+    print("  2. ESP-E on /dev/ttyUSB0 (USB Serial Adapter)")
     print("\nMake sure:")
     print("  - ESPs are powered on")
     print("  - UART firmware uploaded (esp_utama_uart.ino, esp_visualizer_uart.ino)")
     print("  - UART wiring correct")
-    print("  - /boot/config.txt has: dtoverlay=uart2")
+    print("  - USB adapter connected (ESP-E)")
     print("="*70)
     
     input("\nPress ENTER to start testing...")
@@ -180,7 +180,7 @@ def main():
     esp_bc_ok = test_esp_device('/dev/ttyAMA0', 'ESP-BC')
     
     # Test ESP-E
-    esp_e_ok = test_esp_device('/dev/ttyAMA1', 'ESP-E')
+    esp_e_ok = test_esp_device('/dev/ttyUSB0', 'ESP-E')
     
     # Summary
     print("\n" + "="*70)
@@ -200,7 +200,8 @@ def main():
         print("   1. ESP32 firmware uploaded correctly")
         print("   2. UART wiring (RX/TX crossed)")
         print("   3. ESP Serial Monitor shows 'UART Ready'")
-        print("   4. /dev/ttyAMA0 and /dev/ttyAMA1 exist")
+        print("   4. /dev/ttyAMA0 exists")
+        print("   5. /dev/ttyUSB0 exists (USB adapter)")
         return 1
 
 

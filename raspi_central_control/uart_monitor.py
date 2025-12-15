@@ -290,11 +290,11 @@ def main():
     
     # Configuration
     esp_bc_port = '/dev/ttyAMA0'
-    esp_e_port = '/dev/ttyAMA2'
+    esp_e_port = '/dev/ttyUSB0'
     
     print(f"\nConfiguration:")
     print(f"  ESP-BC: {esp_bc_port} (GPIO 14/15)")
-    print(f"  ESP-E:  {esp_e_port} (GPIO 0/1 or 4/9)")
+    print(f"  ESP-E:  {esp_e_port} (USB Serial Adapter)")
     print(f"  Baudrate: 115200")
     
     print("\nSelect test mode:")

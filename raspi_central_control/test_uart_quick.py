@@ -282,9 +282,9 @@ def main():
             'expected_pins': 'GPIO 14/15 (Pin 8/10)'
         },
         {
-            'port': '/dev/ttyAMA2',
+            'port': '/dev/ttyUSB0',
             'name': 'ESP-E (LED Visualizer)',
-            'expected_pins': 'GPIO 0/1 (Pin 27/28) or GPIO 4/9 (Pin 7/21)'
+            'expected_pins': 'USB Serial Adapter'
         }
     ]
     
