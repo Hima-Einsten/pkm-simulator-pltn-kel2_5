@@ -32,6 +32,14 @@ class TCA9548A:
         
         try:
             self.bus = smbus2.SMBus(bus_number)
+            
+            # Disable all channels on init (clear any previous state)
+            try:
+                self.bus.write_byte(self.address, 0x00)
+                logger.debug(f"TCA9548A 0x{address:02X} channels cleared on init")
+            except:
+                pass  # Multiplexer might not be connected yet
+            
             logger.info(f"TCA9548A initialized on bus {bus_number}, address 0x{address:02X}")
         except Exception as e:
             logger.error(f"Failed to initialize TCA9548A: {e}")
@@ -114,10 +122,15 @@ class TCA9548A:
         return devices
     
     def close(self):
-        """Close I2C bus connection"""
+        """Close I2C bus connection with proper cleanup"""
         try:
+            # Disable all channels before closing
             self.disable_all_channels()
-            self.bus.close()
+            
+            # Close bus
+            if hasattr(self, 'bus'):
+                self.bus.close()
+            
             logger.info("TCA9548A closed")
         except Exception as e:
             logger.error(f"Error closing TCA9548A: {e}")
@@ -228,10 +241,20 @@ class DualMultiplexerManager:
         }
     
     def close(self):
-        """Close all multiplexer connections"""
-        self.mux1.close()
-        self.mux2.close()
-        logger.info("Dual multiplexer manager closed")
+        """Close all multiplexer connections with proper cleanup"""
+        try:
+            # Disable all channels on both multiplexers
+            logger.info("Closing multiplexers and disabling all channels...")
+            
+            if hasattr(self, 'mux1'):
+                self.mux1.close()
+            
+            if hasattr(self, 'mux2'):
+                self.mux2.close()
+            
+            logger.info("Dual multiplexer manager closed")
+        except Exception as e:
+            logger.error(f"Error closing multiplexer manager: {e}")
 
 
 # Test function

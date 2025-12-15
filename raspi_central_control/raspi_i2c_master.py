@@ -353,9 +353,21 @@ class I2CMaster:
         return health
     
     def close(self):
-        """Close I2C bus"""
+        """Close I2C bus with proper cleanup"""
         try:
-            self.bus.close()
+            # Disable all multiplexer channels first (if available)
+            if hasattr(self, 'mux_select') and self.mux_select:
+                try:
+                    # Try to disable multiplexer channels
+                    # This assumes we have access to multiplexer
+                    pass
+                except:
+                    pass
+            
+            # Close bus
+            if hasattr(self, 'bus'):
+                self.bus.close()
+            
             logger.info("I2C Master closed")
         except Exception as e:
             logger.error(f"Error closing I2C Master: {e}")

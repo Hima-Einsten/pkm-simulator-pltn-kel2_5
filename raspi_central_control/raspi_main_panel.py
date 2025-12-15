@@ -796,17 +796,62 @@ class PLTNPanelController:
                 time.sleep(10.0)
     
     def shutdown(self):
-        """Shutdown system gracefully"""
+        """Shutdown system gracefully with proper I2C cleanup"""
+        logger.info("="*60)
         logger.info("Shutting down PLTN Panel Controller...")
+        logger.info("="*60)
         
+        # Stop all threads
         self.state.running = False
-        time.sleep(0.5)
+        time.sleep(0.5)  # Give threads time to exit
         
-        self.button_manager.cleanup()
-        self.i2c_master.close()
-        self.mux_manager.close()
+        # Cleanup in reverse order of initialization
+        try:
+            # 1. Cleanup GPIO buttons
+            if self.button_manager:
+                logger.info("Cleaning up GPIO buttons...")
+                self.button_manager.cleanup()
+        except Exception as e:
+            logger.error(f"Error cleaning up buttons: {e}")
         
-        logger.info("PLTN Panel Controller shutdown complete")
+        try:
+            # 2. Send safe state to ESPs before closing I2C
+            if self.i2c_master and self.mux_manager:
+                logger.info("Sending safe state to ESPs...")
+                
+                # ESP-BC: All rods to 0%, all humidifiers off
+                self.mux_manager.select_mux1_channel(0)
+                time.sleep(0.02)
+                self.i2c_master.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0)
+                
+                # ESP-E: All pumps off
+                self.mux_manager.select_mux2_channel(0)
+                time.sleep(0.02)
+                self.i2c_master.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0, 0.0)
+                
+                logger.info("Safe state sent to ESPs")
+        except Exception as e:
+            logger.error(f"Error sending safe state: {e}")
+        
+        try:
+            # 3. Disable all multiplexer channels
+            if self.mux_manager:
+                logger.info("Disabling multiplexer channels...")
+                self.mux_manager.close()
+        except Exception as e:
+            logger.error(f"Error closing multiplexers: {e}")
+        
+        try:
+            # 4. Close I2C master (this closes the bus)
+            if self.i2c_master:
+                logger.info("Closing I2C master...")
+                self.i2c_master.close()
+        except Exception as e:
+            logger.error(f"Error closing I2C master: {e}")
+        
+        logger.info("="*60)
+        logger.info("✅ PLTN Panel Controller shutdown complete")
+        logger.info("="*60)
 
 
 # ============================================
