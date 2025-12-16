@@ -370,16 +370,8 @@ class PLTNPanelController:
     
     def on_shim_rod_up(self):
         """Lightweight callback - just enqueue event"""
-        try:
-            logger.info(f"⚡ Callback triggered: SHIM_ROD_UP")
-            logger.info(f"⚡ Queue size before put: {self.button_event_queue.qsize()}")
-            self.button_event_queue.put(ButtonEvent.SHIM_ROD_UP)
-            logger.info(f"⚡ Queue size after put: {self.button_event_queue.qsize()}")
-            logger.info("⚡ Button event queued: SHIM_ROD_UP")
-        except Exception as e:
-            logger.error(f"❌ Error in on_shim_rod_up: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+        self.button_event_queue.put(ButtonEvent.SHIM_ROD_UP)
+        logger.info("⚡ Event queued: SHIM_ROD_UP")
     
     def on_shim_rod_down(self):
         """Lightweight callback - just enqueue event"""
@@ -403,16 +395,8 @@ class PLTNPanelController:
     
     def on_reactor_start(self):
         """Lightweight callback - just enqueue event"""
-        try:
-            logger.info(f"⚡ Callback triggered: REACTOR_START")
-            logger.info(f"⚡ Queue size before put: {self.button_event_queue.qsize()}")
-            self.button_event_queue.put(ButtonEvent.REACTOR_START)
-            logger.info(f"⚡ Queue size after put: {self.button_event_queue.qsize()}")
-            logger.info("⚡ Button event queued: REACTOR_START")
-        except Exception as e:
-            logger.error(f"❌ Error in on_reactor_start: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+        self.button_event_queue.put(ButtonEvent.REACTOR_START)
+        logger.info("⚡ Event queued: REACTOR_START")
     
     def on_reactor_reset(self):
         """Lightweight callback - just enqueue event"""
@@ -428,10 +412,7 @@ class PLTNPanelController:
         Process button event with proper locking and state update
         This runs in dedicated thread, NOT in interrupt context
         """
-        logger.debug(f"process_button_event: Received {event.value}")
-        
         with self.state_lock:
-            logger.debug(f"process_button_event: Lock acquired for {event.value}")
             
             if event == ButtonEvent.PRESSURE_UP:
                 if not self.state.reactor_started:
@@ -593,8 +574,6 @@ class PLTNPanelController:
             # Log if event not recognized
             else:
                 logger.warning(f"⚠️  Unknown event: {event}")
-        
-        logger.debug(f"process_button_event: Lock released for {event.value}")
     
     def button_event_processor_thread(self):
         """
@@ -624,12 +603,10 @@ class PLTNPanelController:
                     # Wait for event (blocking, with timeout)
                     event = self.button_event_queue.get(timeout=0.1)
                     
-                    logger.info(f"🔹 Processing event: {event.value}")
+                    logger.info(f"🔹 Processing: {event.value}")
                     
                     # Process event with lock
                     self.process_button_event(event)
-                    
-                    logger.info(f"🔹 Event processed: {event.value}")
                     
                     # Mark task done
                     self.button_event_queue.task_done()
@@ -866,12 +843,20 @@ class PLTNPanelController:
         """Thread for ESP communication via UART (100ms cycle)"""
         logger.info("ESP communication thread started (2 ESP via UART)")
         
+        # Verify uart_master exists
+        if not self.uart_master:
+            logger.error("❌ uart_master not initialized! ESP communication disabled.")
+            return
+        
+        logger.info("✓ UART master verified, starting communication loop...")
+        
         while self.state.running:
             try:
                 with self.uart_lock:
                     with self.state_lock:
                         # Send to ESP-BC (Control Rods + Turbine + Humidifier)
-                        # No MUX selection needed - direct UART connection
+                        logger.debug(f"Sending to ESP-BC: rods=[{self.state.safety_rod},{self.state.shim_rod},{self.state.regulating_rod}]")
+                        
                         success = self.uart_master.update_esp_bc(
                             self.state.safety_rod,
                             self.state.shim_rod,
@@ -885,6 +870,7 @@ class PLTNPanelController:
                         )
                         
                         if success:
+                            logger.debug("✓ ESP-BC update success")
                             # Get data back from ESP-BC
                             esp_bc_data = self.uart_master.get_esp_bc_data()
                             self.state.thermal_kw = esp_bc_data.kw_thermal
@@ -893,7 +879,7 @@ class PLTNPanelController:
                             time.sleep(0.05)
                             
                             # Send to ESP-E (LED Visualizer)
-                            # Direct UART connection - no MUX needed
+                            logger.debug(f"Sending to ESP-E: P={self.state.pressure:.1f}bar")
                             self.uart_master.update_esp_e(
                                 pressure_primary=self.state.pressure,
                                 pump_status_primary=self.state.pump_primary_status,
@@ -903,11 +889,16 @@ class PLTNPanelController:
                                 pump_status_tertiary=self.state.pump_tertiary_status,
                                 thermal_power_kw=self.state.thermal_kw
                             )
+                            logger.debug("✓ ESP-E update success")
+                        else:
+                            logger.warning("⚠️  ESP-BC update failed")
                 
                 time.sleep(0.1)  # 100ms
                 
             except Exception as e:
                 logger.error(f"Error in ESP communication thread: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 time.sleep(0.2)
         
         logger.info("ESP communication thread stopped")
@@ -957,7 +948,8 @@ class PLTNPanelController:
                 time.sleep(0.2)  # 200ms update rate
                 
             except Exception as e:
-                logger.error(f"OLED update error: {e}")
+                # Don't spam logs with OLED errors - it's not critical
+                logger.debug(f"OLED update error: {e}")
                 time.sleep(0.5)  # Slower retry on error
         
         logger.info("OLED update thread stopped")
