@@ -302,6 +302,15 @@ class OLEDManager:
             warning: Warning flag (pressure high)
             critical: Critical flag (pressure critical)
         """
+        # Round to 1 decimal
+        pressure_rounded = round(pressure, 1)
+        current_data = (pressure_rounded, warning, critical)
+        
+        if self.last_data['pressurizer'] == current_data:
+            return  # No change, skip update
+        
+        self.last_data['pressurizer'] = current_data
+        
         self.mux.select_display_channel(1)  # Pressurizer on channel 1 (was 0)
         
         display = self.oled_pressurizer
@@ -311,7 +320,7 @@ class OLEDManager:
         display.draw_text_centered("PRESSURIZER", 1, display.font_small)
         
         # Pressure value (medium font, centered)
-        pressure_text = f"{pressure:.1f} bar"
+        pressure_text = f"{pressure_rounded:.1f} bar"
         display.draw_text_centered(pressure_text, 12, display.font_large)
         
         display.show()
@@ -328,6 +337,15 @@ class OLEDManager:
             status: Pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
             pwm: PWM percentage (0-100)
         """
+        # Check if data changed
+        data_key = f'pump_{pump_name.lower()}'
+        current_data = (status, pwm)
+        
+        if self.last_data.get(data_key) == current_data:
+            return  # No change, skip update
+        
+        self.last_data[data_key] = current_data
+        
         self.mux.select_display_channel(channel)
         
         display_obj.clear()
@@ -370,6 +388,14 @@ class OLEDManager:
             display_obj: OLED display object
             position: Rod position (0-100%)
         """
+        # Check if data changed
+        data_key = f'{rod_name.lower()}_rod'
+        
+        if self.last_data.get(data_key) == position:
+            return  # No change, skip update
+        
+        self.last_data[data_key] = position
+        
         self.mux.select_display_channel(channel)
         
         display_obj.clear()
@@ -408,6 +434,14 @@ class OLEDManager:
         Args:
             power_kw: Electrical power in kW (0-300,000 kW = 0-300 MWe)
         """
+        # Round to 1 decimal to avoid unnecessary updates
+        power_kw_rounded = round(power_kw, 1)
+        
+        if self.last_data['thermal_power'] == power_kw_rounded:
+            return  # No change, skip update
+        
+        self.last_data['thermal_power'] = power_kw_rounded
+        
         # Use ESP channel for TCA9548A #2 (0x71), Channel 1
         self.mux.select_esp_channel(1)
         
@@ -418,7 +452,7 @@ class OLEDManager:
         display.draw_text_centered("POWER", 1, display.font_small)
         
         # Power in MWe (medium font, centered)
-        power_mwe = power_kw / 1000.0
+        power_mwe = power_kw_rounded / 1000.0
         power_text = f"{power_mwe:.1f} MWe"
         display.draw_text_centered(power_text, 12, display.font_large)
         
@@ -436,6 +470,15 @@ class OLEDManager:
             humid_ct1-ct4: Cooling tower humidifier status (0/1)
             interlock: Interlock satisfied flag
         """
+        # Check if data changed
+        current_data = (turbine_state, humid_sg1, humid_sg2, humid_ct1, 
+                       humid_ct2, humid_ct3, humid_ct4, interlock)
+        
+        if self.last_data['system_status'] == current_data:
+            return  # No change, skip update
+        
+        self.last_data['system_status'] = current_data
+        
         # Use ESP channel for TCA9548A #2 (0x71), Channel 2
         self.mux.select_esp_channel(2)
         

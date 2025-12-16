@@ -168,13 +168,13 @@ void setup() {
   pinMode(RELAY_CT3, OUTPUT);
   pinMode(RELAY_CT4, OUTPUT);
   
-  // All relays OFF initially
-  digitalWrite(RELAY_SG1, LOW);
-  digitalWrite(RELAY_SG2, LOW);
-  digitalWrite(RELAY_CT1, LOW);
-  digitalWrite(RELAY_CT2, LOW);
-  digitalWrite(RELAY_CT3, LOW);
-  digitalWrite(RELAY_CT4, LOW);
+  // All relays OFF initially (HIGH for low-level trigger)
+  digitalWrite(RELAY_SG1, HIGH);
+  digitalWrite(RELAY_SG2, HIGH);
+  digitalWrite(RELAY_CT1, HIGH);
+  digitalWrite(RELAY_CT2, HIGH);
+  digitalWrite(RELAY_CT3, HIGH);
+  digitalWrite(RELAY_CT4, HIGH);
   Serial.println("✅ Humidifier relays initialized");
   
   // Initialize motor driver PWM channels (ESP32 Core v3.x API)
@@ -548,13 +548,13 @@ void updateTurbineState() {
 // Update Humidifiers
 // ============================================
 void updateHumidifiers() {
-  // Update relay states based on commands
-  digitalWrite(RELAY_SG1, humid_sg1_cmd ? HIGH : LOW);
-  digitalWrite(RELAY_SG2, humid_sg2_cmd ? HIGH : LOW);
-  digitalWrite(RELAY_CT1, humid_ct1_cmd ? HIGH : LOW);
-  digitalWrite(RELAY_CT2, humid_ct2_cmd ? HIGH : LOW);
-  digitalWrite(RELAY_CT3, humid_ct3_cmd ? HIGH : LOW);
-  digitalWrite(RELAY_CT4, humid_ct4_cmd ? HIGH : LOW);
+  // Update relay states based on commands (inverted for low-level trigger)
+  digitalWrite(RELAY_SG1, humid_sg1_cmd ? LOW : HIGH);
+  digitalWrite(RELAY_SG2, humid_sg2_cmd ? LOW : HIGH);
+  digitalWrite(RELAY_CT1, humid_ct1_cmd ? LOW : HIGH);
+  digitalWrite(RELAY_CT2, humid_ct2_cmd ? LOW : HIGH);
+  digitalWrite(RELAY_CT3, humid_ct3_cmd ? LOW : HIGH);
+  digitalWrite(RELAY_CT4, humid_ct4_cmd ? LOW : HIGH);
   
   // Update status (in real system, read actual relay state)
   humid_sg1_status = humid_sg1_cmd;
