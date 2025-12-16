@@ -281,13 +281,19 @@ class PLTNPanelController:
     
     def on_pressure_up(self):
         """Pressure UP button pressed"""
-        logger.info(">>> Callback: on_pressure_up")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            self.state.pressure = min(self.state.pressure + 5.0, 200.0)
-            logger.info(f"Pressure: {self.state.pressure:.1f} bar")
+        logger.info(">>> Callback: on_pressure_up - ENTRY")
+        try:
+            with self.state_lock:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started! Press START button first.")
+                    return
+                self.state.pressure = min(self.state.pressure + 5.0, 200.0)
+                logger.info(f"Pressure updated: {self.state.pressure:.1f} bar")
+            logger.info(">>> Callback: on_pressure_up - EXIT SUCCESS")
+        except Exception as e:
+            logger.error(f">>> Callback: on_pressure_up - EXCEPTION: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def on_pressure_down(self):
         """Pressure DOWN button pressed"""
@@ -467,16 +473,22 @@ class PLTNPanelController:
     
     def on_reactor_start(self):
         """Reactor START button - Initialize reactor system"""
-        logger.info(">>> Callback: on_reactor_start")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                self.state.reactor_started = True
-                logger.info("=" * 60)
-                logger.info("🟢 REACTOR SYSTEM STARTED")
-                logger.info("System is now operational. You may begin operations.")
-                logger.info("=" * 60)
-            else:
-                logger.info("Reactor already started. No action taken.")
+        logger.info(">>> Callback: on_reactor_start - ENTRY")
+        try:
+            with self.state_lock:
+                if not self.state.reactor_started:
+                    self.state.reactor_started = True
+                    logger.info("=" * 60)
+                    logger.info("🟢 REACTOR SYSTEM STARTED")
+                    logger.info("System is now operational. You may begin operations.")
+                    logger.info("=" * 60)
+                else:
+                    logger.info("Reactor already started. No action taken.")
+            logger.info(">>> Callback: on_reactor_start - EXIT SUCCESS")
+        except Exception as e:
+            logger.error(f">>> Callback: on_reactor_start - EXCEPTION: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def on_reactor_reset(self):
         """Reactor RESET button - Force reset simulasi ke kondisi awal"""
@@ -576,15 +588,15 @@ class PLTNPanelController:
         """Thread for control logic (50ms cycle)"""
         logger.info("Control logic thread started")
         
+        loop_count = 0
         while self.state.running:
             try:
-                # Update interlock status
+                # === ATOMIC OPERATION: Update all control logic in ONE lock ===
                 with self.state_lock:
+                    # 1. Update interlock status
                     self.state.interlock_satisfied = self.check_interlock()
-                
-                # Update humidifier commands
-                with self.state_lock:
-                    # Update humidifier dengan control bertahap (v3.6)
+                    
+                    # 2. Update humidifier commands
                     sg_on, ct1, ct2, ct3, ct4 = self.humidifier.update(
                         self.state.shim_rod,
                         self.state.regulating_rod,
@@ -601,26 +613,34 @@ class PLTNPanelController:
                     self.state.humid_ct3_cmd = 1 if ct3 else 0
                     self.state.humid_ct4_cmd = 1 if ct4 else 0
                     
-                    # Check and update alarm status
+                    # 3. Check and update alarm status
                     if self.buzzer:
                         self.buzzer.check_alarms(self.state)
-                
-                # Simulate pump startup/shutdown
-                self.update_pump_status()
+                    
+                    # 4. Update pump status (non-blocking timer check)
+                    self._update_pump_status_internal(time.time())
                 
                 time.sleep(0.05)  # 50ms
                 
+                # Log heartbeat every 10 seconds (200 loops x 50ms)
+                loop_count += 1
+                if loop_count >= 200:
+                    logger.debug("Control logic thread: alive (200 loops)")
+                    loop_count = 0
+                
             except Exception as e:
                 logger.error(f"Error in control logic thread: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 time.sleep(0.1)
         
         logger.info("Control logic thread stopped")
     
-    def update_pump_status(self):
-        """Update pump status (simulate startup/shutdown) - NON-BLOCKING"""
-        current_time = time.time()
-        
-        with self.state_lock:
+    def _update_pump_status_internal(self, current_time):
+        """
+        Update pump status (simulate startup/shutdown) - NON-BLOCKING
+        INTERNAL version - assumes state_lock is already held by caller
+        """
             # Primary pump
             if self.state.pump_primary_status == 1:  # STARTING
                 if self.state.pump_primary_transition_start == 0:
@@ -743,13 +763,22 @@ class PLTNPanelController:
         """Thread for button polling (10ms cycle)"""
         logger.info("Button polling thread started")
         
+        loop_count = 0
         while self.state.running:
             try:
                 self.button_manager.check_all_buttons()
                 time.sleep(0.01)  # 10ms
                 
+                # Log heartbeat every 10 seconds (1000 loops x 10ms)
+                loop_count += 1
+                if loop_count >= 1000:
+                    logger.debug("Button polling thread: alive (1000 loops)")
+                    loop_count = 0
+                
             except Exception as e:
                 logger.error(f"Error in button polling thread: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 time.sleep(0.05)
         
         logger.info("Button polling thread stopped")
