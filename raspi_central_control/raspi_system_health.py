@@ -76,7 +76,7 @@ class SystemHealthMonitor:
         
         # Check each component
         self._check_multiplexers(panel_controller)
-        self._check_i2c_master(panel_controller)
+        self._check_uart_master(panel_controller)
         self._check_esp_bc(panel_controller)
         self._check_esp_e(panel_controller)
         self._check_oled_displays(panel_controller)
@@ -169,50 +169,46 @@ class SystemHealthMonitor:
             )
             logger.error(f"  ❌ CRITICAL: Exception - {e}")
     
-    def _check_i2c_master(self, panel):
-        """Check I2C master initialization"""
-        logger.info("\n[2/8] Checking I2C Master...")
+    def _check_uart_master(self, panel):
+        """Check UART master initialization"""
+        logger.info("\n[2/8] Checking UART Master...")
         
-        if not panel.i2c_master:
-            self.components["i2c_master"] = ComponentHealth(
-                name="I2C Master",
+        if not hasattr(panel, 'uart_master') or not panel.uart_master:
+            self.components["uart_master"] = ComponentHealth(
+                name="UART Master",
                 status=HealthStatus.CRITICAL,
-                message="I2C Master not initialized"
+                message="UART Master not initialized"
             )
-            logger.error("  ❌ CRITICAL: I2C Master not available")
+            logger.error("  ❌ CRITICAL: UART Master not available")
             return
         
-        self.components["i2c_master"] = ComponentHealth(
-            name="I2C Master",
+        self.components["uart_master"] = ComponentHealth(
+            name="UART Master",
             status=HealthStatus.OK,
-            message="I2C Master initialized"
+            message="UART Master initialized"
         )
-        logger.info("  ✅ OK: I2C Master initialized")
+        logger.info("  ✅ OK: UART Master initialized")
     
     def _check_esp_bc(self, panel):
         """Check ESP-BC communication"""
         logger.info("\n[3/8] Checking ESP-BC (Control Rods + Turbine)...")
         
-        if not panel.i2c_master or not panel.mux_manager:
+        if not hasattr(panel, 'uart_master') or not panel.uart_master:
             self.components["esp_bc"] = ComponentHealth(
                 name="ESP-BC",
                 status=HealthStatus.UNKNOWN,
-                message="Cannot test - I2C not available"
+                message="Cannot test - UART not available"
             )
-            logger.warning("  ⚠️  UNKNOWN: Cannot test without I2C")
+            logger.warning("  ⚠️  UNKNOWN: Cannot test without UART")
             return
         
         try:
-            # Select MUX #1 Channel 0
-            panel.mux_manager.select_mux1_channel(0)
-            time.sleep(0.05)
-            
-            # Try communication
-            success = panel.i2c_master.update_esp_bc(0, 0, 0)
+            # Try communication via UART
+            success = panel.uart_master.update_esp_bc(0, 0, 0)
             
             if success:
-                health = panel.i2c_master.get_health_status()
-                esp_bc_health = health.get(0x08, {})
+                health = panel.uart_master.get_health_status()
+                esp_bc_health = health.get('esp_bc', {})
                 error_count = esp_bc_health.get('error_count', 999)
                 
                 if error_count == 0:
@@ -222,7 +218,7 @@ class SystemHealthMonitor:
                         message="Communication successful",
                         details=esp_bc_health
                     )
-                    logger.info("  ✅ OK: ESP-BC responding (0x08)")
+                    logger.info("  ✅ OK: ESP-BC responding via UART")
                 else:
                     self.components["esp_bc"] = ComponentHealth(
                         name="ESP-BC",
@@ -238,7 +234,7 @@ class SystemHealthMonitor:
                     message="Communication failed"
                 )
                 logger.error("  ❌ ERROR: ESP-BC not responding")
-                logger.error("     Check: ESP32 powered on, I2C address 0x08, wiring")
+                logger.error("     Check: ESP32 powered on, UART wiring (GPIO 14/15)")
                 
         except Exception as e:
             self.components["esp_bc"] = ComponentHealth(
@@ -252,22 +248,32 @@ class SystemHealthMonitor:
         """Check ESP-E communication"""
         logger.info("\n[4/8] Checking ESP-E (LED Visualizer)...")
         
-        if not panel.i2c_master or not panel.mux_manager:
+        if not hasattr(panel, 'uart_master') or not panel.uart_master:
             self.components["esp_e"] = ComponentHealth(
                 name="ESP-E",
                 status=HealthStatus.WARNING,
-                message="Cannot test - I2C not available (non-critical)"
+                message="Cannot test - UART not available (non-critical)"
             )
-            logger.warning("  ⚠️  WARNING: Cannot test without I2C (non-critical)")
+            logger.warning("  ⚠️  WARNING: Cannot test without UART (non-critical)")
+            return
+        
+        # Check if ESP-E is enabled
+        if not panel.uart_master.esp_e_enabled:
+            self.components["esp_e"] = ComponentHealth(
+                name="ESP-E",
+                status=HealthStatus.INFO,
+                message="ESP-E disabled (not configured)"
+            )
+            logger.info("  ℹ️  INFO: ESP-E disabled (non-critical)")
             return
         
         try:
-            # Select MUX #2 Channel 0 via callback
-            success = panel.i2c_master.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0)
+            # Try communication via UART
+            success = panel.uart_master.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0)
             
             if success:
-                health = panel.i2c_master.get_health_status()
-                esp_e_health = health.get(0x0A, {})
+                health = panel.uart_master.get_health_status()
+                esp_e_health = health.get('esp_e', {})
                 error_count = esp_e_health.get('error_count', 999)
                 
                 if error_count == 0:
@@ -277,7 +283,7 @@ class SystemHealthMonitor:
                         message="Communication successful",
                         details=esp_e_health
                     )
-                    logger.info("  ✅ OK: ESP-E responding (0x0A)")
+                    logger.info("  ✅ OK: ESP-E responding via UART")
                 else:
                     self.components["esp_e"] = ComponentHealth(
                         name="ESP-E",
