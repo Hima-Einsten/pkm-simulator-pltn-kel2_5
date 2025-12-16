@@ -5,6 +5,7 @@ Manages dual TCA9548A for OLED displays and ESP slaves
 
 import smbus2
 import logging
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -52,12 +53,16 @@ class TCA9548A:
         Optimization: Skip selection if channel is already active
         
         Args:
-            channel: Channel number (0-7)
+            channel: Channel number (0-7) or None to deselect
             force: Force channel selection even if already active
             
         Returns:
             True if successful, False otherwise
         """
+        # Allow None to deselect all channels
+        if channel is None:
+            return self.disable_all_channels()
+        
         if channel < 0 or channel > 7:
             logger.error(f"Invalid channel: {channel}. Must be 0-7")
             return False
@@ -72,6 +77,10 @@ class TCA9548A:
             channel_mask = 1 << channel
             self.bus.write_byte(self.address, channel_mask)
             self.current_channel = channel
+            
+            # Small delay for I2C bus to settle (prevent bus collision)
+            time.sleep(0.001)  # 1ms delay
+            
             logger.debug(f"Selected TCA9548A channel {channel}")
             return True
         except Exception as e:

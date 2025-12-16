@@ -1003,31 +1003,31 @@ class PLTNPanelController:
             self.shutdown()
     
     def health_monitoring_thread(self):
-        """Thread for periodic system health monitoring"""
-        logger.info("Health monitoring thread started (check every 60s)")
+        """Thread for system health monitoring - run once at startup only"""
+        logger.info("Health monitoring: Running initial check...")
         
-        last_check = time.time()
+        # Run health check ONCE at startup
+        try:
+            time.sleep(2.0)  # Wait for system to stabilize
+            
+            logger.info("\n" + "="*70)
+            logger.info("INITIAL SYSTEM HEALTH CHECK")
+            logger.info("="*70)
+            
+            with self.uart_lock:
+                self.health_monitor.check_all(self)
+            
+            logger.info("Initial health check complete - periodic checks disabled")
+            logger.info("(Periodic checks would reset simulation by sending rods=0)")
+            
+        except Exception as e:
+            logger.error(f"Initial health check error: {e}")
         
+        # Thread stays alive but does nothing (just sleeps)
         while self.state.running:
-            try:
-                current_time = time.time()
-                
-                # Run health check every 60 seconds
-                if current_time - last_check >= 60:
-                    logger.info("\n" + "="*70)
-                    logger.info("PERIODIC HEALTH CHECK (60s interval)")
-                    logger.info("="*70)
-                    
-                    with self.uart_lock:
-                        self.health_monitor.check_all(self)
-                    
-                    last_check = current_time
-                
-                time.sleep(5.0)  # Check timer every 5 seconds
-                
-            except Exception as e:
-                logger.error(f"Health monitoring error: {e}")
-                time.sleep(10.0)
+            time.sleep(60.0)  # Just keep thread alive
+        
+        logger.info("Health monitoring thread stopped")
     
     def shutdown(self):
         """Shutdown system gracefully with proper UART cleanup"""

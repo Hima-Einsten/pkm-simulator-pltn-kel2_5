@@ -464,7 +464,11 @@ class OLEDManager:
         """
         self.update_blink_state()
         
-        # Update all displays
+        # ============================================
+        # MUX #1 (0x70) - Channels 1-7
+        # ============================================
+        
+        # Update all displays on MUX #1
         self.update_pressurizer_display(state.pressure, 
                                        warning=(state.pressure > 180),
                                        critical=(state.pressure > 195))
@@ -476,6 +480,21 @@ class OLEDManager:
         self.update_safety_rod(state.safety_rod)
         self.update_shim_rod(state.shim_rod)
         self.update_regulating_rod(state.regulating_rod)
+        
+        # ============================================
+        # CRITICAL: Delay before switching to MUX #2
+        # ============================================
+        # Deselect all channels on MUX #1 before switching
+        try:
+            self.mux.mux1.select_channel(None)  # Deselect
+        except:
+            pass
+        
+        time.sleep(0.02)  # 20ms delay for I2C bus to settle
+        
+        # ============================================
+        # MUX #2 (0x71) - Channels 1-2
+        # ============================================
         
         self.update_thermal_power(state.thermal_kw)
         
