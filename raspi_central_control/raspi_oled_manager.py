@@ -302,7 +302,7 @@ class OLEDManager:
             warning: Warning flag (pressure high)
             critical: Critical flag (pressure critical)
         """
-        self.mux.select_display_channel(0)
+        self.mux.select_display_channel(1)  # Pressurizer on channel 1 (was 0)
         
         display = self.oled_pressurizer
         display.clear()
@@ -350,15 +350,15 @@ class OLEDManager:
     
     def update_pump_primary(self, status: int, pwm: int):
         """Update primary pump display"""
-        self.update_pump_display("PRIMARY", 1, self.oled_pump_primary, status, pwm)
+        self.update_pump_display("PRIMARY", 2, self.oled_pump_primary, status, pwm)  # Channel 2
     
     def update_pump_secondary(self, status: int, pwm: int):
         """Update secondary pump display"""
-        self.update_pump_display("SECONDARY", 2, self.oled_pump_secondary, status, pwm)
+        self.update_pump_display("SECONDARY", 3, self.oled_pump_secondary, status, pwm)  # Channel 3
     
     def update_pump_tertiary(self, status: int, pwm: int):
         """Update tertiary pump display"""
-        self.update_pump_display("TERTIARY", 4, self.oled_pump_tertiary, status, pwm)
+        self.update_pump_display("TERTIARY", 4, self.oled_pump_tertiary, status, pwm)  # Channel 4
     
     def update_rod_display(self, rod_name: str, channel: int, display_obj: OLEDDisplay, position: int):
         """
