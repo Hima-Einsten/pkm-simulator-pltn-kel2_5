@@ -175,6 +175,7 @@ class DualMultiplexerManager:
         self.mux2 = TCA9548A(esp_bus, esp_addr)          # TCA9548A #2 (0x71)
         self.mux1_addr = display_addr
         self.mux2_addr = esp_addr
+        self.last_mux = None  # Track which MUX was last used (1 or 2)
         logger.info(f"Dual multiplexer manager initialized:")
         logger.info(f"  MUX #1 (ESP-BC + OLED 1-7): 0x{display_addr:02X}")
         logger.info(f"  MUX #2 (ESP-E + OLED 8-9): 0x{esp_addr:02X}")
@@ -211,9 +212,16 @@ class DualMultiplexerManager:
             logger.error(f"Invalid display channel: {channel}. Must be 1-7 for MUX #1")
             return False
         
+        # Add delay when switching from MUX #2 to MUX #1
+        if self.last_mux == 2:
+            time.sleep(0.003)  # 3ms delay when switching between MUX
+        
         # Direct mapping: channel 1-7 → MUX #1 channels 1-7
         logger.debug(f"OLED #{channel} → MUX #1 (0x{self.mux1_addr:02X}), Channel {channel}")
-        return self.mux1.select_channel(channel)
+        result = self.mux1.select_channel(channel)
+        if result:
+            self.last_mux = 1
+        return result
     
     def select_esp_channel(self, channel: int) -> bool:
         """
@@ -230,12 +238,19 @@ class DualMultiplexerManager:
             logger.error(f"Invalid MUX #2 channel: {channel}. Must be 0-2")
             return False
         
+        # Add delay when switching from MUX #1 to MUX #2
+        if self.last_mux == 1:
+            time.sleep(0.003)  # 3ms delay when switching between MUX
+        
         if channel == 0:
             logger.debug(f"ESP-E → MUX #2 (0x{self.mux2_addr:02X}), Channel 0")
         else:
             logger.debug(f"OLED #{channel + 7} → MUX #2 (0x{self.mux2_addr:02X}), Channel {channel}")
         
-        return self.mux2.select_channel(channel)
+        result = self.mux2.select_channel(channel)
+        if result:
+            self.last_mux = 2
+        return result
     
     def scan_all(self) -> dict:
         """
