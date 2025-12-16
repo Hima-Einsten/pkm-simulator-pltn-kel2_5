@@ -370,8 +370,16 @@ class PLTNPanelController:
     
     def on_shim_rod_up(self):
         """Lightweight callback - just enqueue event"""
-        self.button_event_queue.put(ButtonEvent.SHIM_ROD_UP)
-        logger.info("⚡ Button event queued: SHIM_ROD_UP")
+        try:
+            logger.info(f"⚡ Callback triggered: SHIM_ROD_UP")
+            logger.info(f"⚡ Queue size before put: {self.button_event_queue.qsize()}")
+            self.button_event_queue.put(ButtonEvent.SHIM_ROD_UP)
+            logger.info(f"⚡ Queue size after put: {self.button_event_queue.qsize()}")
+            logger.info("⚡ Button event queued: SHIM_ROD_UP")
+        except Exception as e:
+            logger.error(f"❌ Error in on_shim_rod_up: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def on_shim_rod_down(self):
         """Lightweight callback - just enqueue event"""
@@ -395,8 +403,16 @@ class PLTNPanelController:
     
     def on_reactor_start(self):
         """Lightweight callback - just enqueue event"""
-        self.button_event_queue.put(ButtonEvent.REACTOR_START)
-        logger.info("⚡ Button event queued: REACTOR_START")
+        try:
+            logger.info(f"⚡ Callback triggered: REACTOR_START")
+            logger.info(f"⚡ Queue size before put: {self.button_event_queue.qsize()}")
+            self.button_event_queue.put(ButtonEvent.REACTOR_START)
+            logger.info(f"⚡ Queue size after put: {self.button_event_queue.qsize()}")
+            logger.info("⚡ Button event queued: REACTOR_START")
+        except Exception as e:
+            logger.error(f"❌ Error in on_reactor_start: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def on_reactor_reset(self):
         """Lightweight callback - just enqueue event"""
@@ -585,32 +601,53 @@ class PLTNPanelController:
         Process button events from queue
         This thread can safely use locks and do heavy work
         """
-        logger.info("Button event processor thread started")
-        
-        while self.state.running:
-            try:
-                # Wait for event (blocking, with timeout)
-                event = self.button_event_queue.get(timeout=0.1)
-                
-                logger.info(f"🔹 Processing event: {event.value}")
-                
-                # Process event with lock
-                self.process_button_event(event)
-                
-                logger.info(f"🔹 Event processed: {event.value}")
-                
-                # Mark task done
-                self.button_event_queue.task_done()
-                
-            except Empty:
-                # No events, continue loop
-                pass
-            except Exception as e:
-                logger.error(f"Event processor error: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-        
-        logger.info("Button event processor thread stopped")
+        try:
+            logger.info("🚀 Button event processor thread STARTING...")
+            
+            # Verify queue exists
+            if not hasattr(self, 'button_event_queue'):
+                logger.error("❌ button_event_queue not initialized!")
+                return
+            
+            logger.info(f"✓ Event queue initialized (max size: 100)")
+            logger.info("✓ Button event processor thread started - waiting for events...")
+            
+            loop_count = 0
+            while self.state.running:
+                try:
+                    # Heartbeat every 10 seconds
+                    loop_count += 1
+                    if loop_count >= 100:  # 100 * 0.1s = 10s
+                        logger.info(f"💓 Event processor alive - Queue size: {self.button_event_queue.qsize()}")
+                        loop_count = 0
+                    
+                    # Wait for event (blocking, with timeout)
+                    event = self.button_event_queue.get(timeout=0.1)
+                    
+                    logger.info(f"🔹 Processing event: {event.value}")
+                    
+                    # Process event with lock
+                    self.process_button_event(event)
+                    
+                    logger.info(f"🔹 Event processed: {event.value}")
+                    
+                    # Mark task done
+                    self.button_event_queue.task_done()
+                    
+                except Empty:
+                    # No events, continue loop
+                    pass
+                except Exception as e:
+                    logger.error(f"Event processor error: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+            
+            logger.info("Button event processor thread stopped")
+            
+        except Exception as e:
+            logger.critical(f"❌ FATAL: Event processor thread crashed on startup: {e}")
+            import traceback
+            logger.critical(traceback.format_exc())
     
     # ============================================
     # Interlock Logic
