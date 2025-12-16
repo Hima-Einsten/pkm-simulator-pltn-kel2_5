@@ -82,14 +82,14 @@ class ESP_E_Data:
 class UARTDevice:
     """Base class for UART device communication"""
     
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.5):
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 1.0):
         """
         Initialize UART device
         
         Args:
             port: Serial port path (e.g., '/dev/ttyAMA0')
             baudrate: Communication speed (default 115200)
-            timeout: Read timeout in seconds
+            timeout: Read timeout in seconds (default 1.0)
         """
         self.port = port
         self.baudrate = baudrate
@@ -117,8 +117,8 @@ class UARTDevice:
                 write_timeout=1.0
             )
             
-            # Flush buffers
-            time.sleep(0.1)
+            # Flush buffers and wait for ESP32 to be ready
+            time.sleep(0.5)  # Increased delay for ESP32 initialization
             self.serial.reset_input_buffer()
             self.serial.reset_output_buffer()
             
@@ -250,23 +250,27 @@ class UARTMaster:
     """
     
     def __init__(self, esp_bc_port: str = '/dev/ttyAMA0', 
-                 esp_e_port: str = '/dev/ttyAMA1',
+                 esp_e_port: str = None,
                  baudrate: int = 115200):
         """
         Initialize UART Master
         
         Args:
-            esp_bc_port: Serial port for ESP-BC
-            esp_e_port: Serial port for ESP-E
+            esp_bc_port: Serial port for ESP-BC (required)
+            esp_e_port: Serial port for ESP-E (optional, None to disable)
             baudrate: Communication speed
         """
         logger.info("="*70)
-        logger.info("UART Master Initialization - 2 ESP Architecture")
+        logger.info("UART Master Initialization")
         logger.info("="*70)
         
         # Create UART devices
         self.esp_bc = UARTDevice(esp_bc_port, baudrate)
-        self.esp_e = UARTDevice(esp_e_port, baudrate)
+        self.esp_e = None
+        self.esp_e_enabled = esp_e_port is not None
+        
+        if self.esp_e_enabled:
+            self.esp_e = UARTDevice(esp_e_port, baudrate)
         
         # Data storage
         self.esp_bc_data = ESP_BC_Data()
@@ -274,10 +278,23 @@ class UARTMaster:
         
         # Connect devices
         self.esp_bc_connected = self.esp_bc.connect()
-        self.esp_e_connected = self.esp_e.connect()
+        self.esp_e_connected = False
         
         if self.esp_bc_connected:
-            logger.info(f"✅ ESP-BC: {esp_bc_port} (Control Rods + Turbine + Humid)")
+            logger.info(f"✅ ESP-BC: {esp_bc_port} (Control Rods + Turbine + Motor + Humid)")
+        else:
+            logger.error(f"❌ ESP-BC: {esp_bc_port} - NOT CONNECTED!")
+        
+        if self.esp_e_enabled:
+            self.esp_e_connected = self.esp_e.connect()
+            if self.esp_e_connected:
+                logger.info(f"✅ ESP-E: {esp_e_port} (LED Visualizer)")
+            else:
+                logger.warning(f"⚠️  ESP-E: {esp_e_port} - NOT CONNECTED (non-critical)")
+        else:
+            logger.info("ℹ️  ESP-E: Disabled (not configured)")
+        
+        logger.info("="*70)
         else:
             logger.error(f"❌ ESP-BC: {esp_bc_port} - NOT CONNECTED!")
         
@@ -386,7 +403,7 @@ class UARTMaster:
         Returns:
             True if successful, False otherwise
         """
-        if not self.esp_e_connected:
+        if not self.esp_e_enabled or not self.esp_e_connected:
             return False
         
         # Update internal state
@@ -468,7 +485,7 @@ class UARTMaster:
             pass
         
         try:
-            if self.esp_e_connected:
+            if self.esp_e_enabled and self.esp_e_connected:
                 logger.info("Sending safe state to ESP-E...")
                 self.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0, 0.0)
         except:
@@ -476,7 +493,8 @@ class UARTMaster:
         
         # Close connections
         self.esp_bc.disconnect()
-        self.esp_e.disconnect()
+        if self.esp_e_enabled:
+            self.esp_e.disconnect()
         
         logger.info("✅ UART Master closed")
 
@@ -486,12 +504,16 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     
     print("\n" + "="*70)
-    print("Testing UART Master (2 ESP Architecture)")
+    print("Testing UART Master - ESP-BC Only")
     print("="*70)
     
     try:
-        # Initialize
-        master = UARTMaster()
+        # Initialize (ESP-E disabled)
+        master = UARTMaster(esp_bc_port='/dev/ttyAMA0', esp_e_port=None)
+        
+        # Wait for ESP to be fully ready
+        print("\n⏳ Waiting 1 second for ESP32 to stabilize...")
+        time.sleep(1.0)
         
         # Test ESP-BC
         print("\n[TEST] ESP-BC Communication...")
@@ -511,22 +533,6 @@ if __name__ == "__main__":
             print(f"  ✅ Turbine state: {data.state} (0=IDLE, 1=STARTING, 2=RUNNING, 3=SHUTDOWN)")
         else:
             print("  ❌ Failed to communicate with ESP-BC")
-        
-        # Test ESP-E
-        print("\n[TEST] ESP-E Communication...")
-        success = master.update_esp_e(
-            pressure_primary=155.0, pump_status_primary=2,
-            pressure_secondary=50.0, pump_status_secondary=2,
-            pressure_tertiary=15.0, pump_status_tertiary=2,
-            thermal_power_kw=50000.0
-        )
-        
-        if success:
-            data = master.get_esp_e_data()
-            print(f"  ✅ Animation speed: {data.animation_speed}")
-            print(f"  ✅ LED count: {data.led_count}")
-        else:
-            print("  ⚠️  Failed to communicate with ESP-E (non-critical)")
         
         # Health check
         print("\n[TEST] Health Status:")
