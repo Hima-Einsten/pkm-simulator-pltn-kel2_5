@@ -499,7 +499,7 @@ class PLTNPanelController:
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
-                if not self.check_interlock():
+                if not self._check_interlock_internal():
                     logger.warning("⚠️  Interlock not satisfied!")
                     return
                 self.state.safety_rod = min(self.state.safety_rod + 5, 100)
@@ -516,7 +516,7 @@ class PLTNPanelController:
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
-                if not self.check_interlock():
+                if not self._check_interlock_internal():
                     logger.warning("⚠️  Interlock not satisfied!")
                     return
                 self.state.shim_rod = min(self.state.shim_rod + 5, 100)
@@ -533,7 +533,7 @@ class PLTNPanelController:
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
-                if not self.check_interlock():
+                if not self._check_interlock_internal():
                     logger.warning("⚠️  Interlock not satisfied!")
                     return
                 self.state.regulating_rod = min(self.state.regulating_rod + 5, 100)
@@ -656,6 +656,18 @@ class PLTNPanelController:
     def check_interlock(self) -> bool:
         """
         Check if interlock conditions are satisfied for rod movement
+        PUBLIC version - acquires lock
+        
+        Returns:
+            True if safe to move rods, False otherwise
+        """
+        with self.state_lock:
+            return self._check_interlock_internal()
+    
+    def _check_interlock_internal(self) -> bool:
+        """
+        Check if interlock conditions are satisfied for rod movement
+        INTERNAL version - assumes caller already holds state_lock
         
         INTERLOCK LOGIC v3.3 (FIXED):
         Berdasarkan alur simulasi 8-phase PWR startup yang realistis:
@@ -673,29 +685,28 @@ class PLTNPanelController:
         Returns:
             True if safe to move rods, False otherwise
         """
-        with self.state_lock:
-            # Check 1: Reactor must be started
-            if not self.state.reactor_started:
-                logger.debug("Interlock: Reactor not started")
-                return False
-            
-            # Check 2: Pressure >= 40 bar (minimum for safe operation)
-            # Pressure harus dinaikkan dulu sebelum rod movement
-            if self.state.pressure < 40.0:
-                logger.debug(f"Interlock: Pressure too low ({self.state.pressure:.1f} bar < 40 bar)")
-                return False
-            
-            # Check 3: No emergency active
-            if self.state.emergency_active:
-                logger.debug("Interlock: Emergency shutdown active")
-                return False
-            
-            # All checks passed - safe to move rods
-            # NOTE: Tidak check turbine running karena:
-            # - Turbine belum jalan saat initial rod raise (Phase 2)
-            # - Turbine auto-start dari ESP-BC ketika thermal > 50 MWth (Phase 4)
-            # - Pompa auto-controlled dari ESP-BC turbine state machine
-            return True
+        # Check 1: Reactor must be started
+        if not self.state.reactor_started:
+            logger.debug("Interlock: Reactor not started")
+            return False
+        
+        # Check 2: Pressure >= 40 bar (minimum for safe operation)
+        # Pressure harus dinaikkan dulu sebelum rod movement
+        if self.state.pressure < 40.0:
+            logger.debug(f"Interlock: Pressure too low ({self.state.pressure:.1f} bar < 40 bar)")
+            return False
+        
+        # Check 3: No emergency active
+        if self.state.emergency_active:
+            logger.debug("Interlock: Emergency shutdown active")
+            return False
+        
+        # All checks passed - safe to move rods
+        # NOTE: Tidak check turbine running karena:
+        # - Turbine belum jalan saat initial rod raise (Phase 2)
+        # - Turbine auto-start dari ESP-BC ketika thermal > 50 MWth (Phase 4)
+        # - Pompa auto-controlled dari ESP-BC turbine state machine
+        return True
     
     # ============================================
     # Control Logic Thread
@@ -716,7 +727,7 @@ class PLTNPanelController:
                     
                     # 1. Update interlock status
                     try:
-                        self.state.interlock_satisfied = self.check_interlock()
+                        self.state.interlock_satisfied = self._check_interlock_internal()
                         logger.debug("Control: Interlock check done")
                     except Exception as e:
                         logger.error(f"Control: Interlock check failed: {e}")
