@@ -10,6 +10,8 @@ import sys
 import threading
 from dataclasses import dataclass
 from typing import Optional
+from queue import Queue, Empty
+from enum import Enum
 
 # Import our modules
 import raspi_config as config
@@ -38,6 +40,31 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# Button Event Enum
+# ============================================
+
+class ButtonEvent(Enum):
+    """Button event types for queue-based processing"""
+    PRESSURE_UP = "PRESSURE_UP"
+    PRESSURE_DOWN = "PRESSURE_DOWN"
+    PUMP_PRIMARY_ON = "PUMP_PRIMARY_ON"
+    PUMP_PRIMARY_OFF = "PUMP_PRIMARY_OFF"
+    PUMP_SECONDARY_ON = "PUMP_SECONDARY_ON"
+    PUMP_SECONDARY_OFF = "PUMP_SECONDARY_OFF"
+    PUMP_TERTIARY_ON = "PUMP_TERTIARY_ON"
+    PUMP_TERTIARY_OFF = "PUMP_TERTIARY_OFF"
+    SAFETY_ROD_UP = "SAFETY_ROD_UP"
+    SAFETY_ROD_DOWN = "SAFETY_ROD_DOWN"
+    SHIM_ROD_UP = "SHIM_ROD_UP"
+    SHIM_ROD_DOWN = "SHIM_ROD_DOWN"
+    REGULATING_ROD_UP = "REGULATING_ROD_UP"
+    REGULATING_ROD_DOWN = "REGULATING_ROD_DOWN"
+    REACTOR_START = "REACTOR_START"
+    REACTOR_RESET = "REACTOR_RESET"
+    EMERGENCY = "EMERGENCY"
 
 
 @dataclass
@@ -90,16 +117,20 @@ class PLTNPanelController:
     """
     Main PLTN Panel Controller Class
     Manages 15 buttons, 9 OLEDs, humidifier control
+    Uses event queue pattern for button handling
     """
     
     def __init__(self):
         """Initialize PLTN Panel Controller"""
         logger.info("="*60)
-        logger.info("PLTN Simulator v3.0 - 2 ESP Architecture")
+        logger.info("PLTN Simulator v3.3 - Event Queue Pattern")
         logger.info("ESP-BC (Rods+Turbine+Humid) | ESP-E (48 LED)")
         logger.info("="*60)
         
         self.state = PanelState()
+        
+        # Event queue for button presses (non-blocking)
+        self.button_event_queue = Queue(maxsize=100)
         
         # Initialize hardware components with graceful degradation
         logger.info("Phase 1: Core hardware initialization...")
@@ -284,261 +315,288 @@ class PLTNPanelController:
             self.oled_manager = None
     
     # ============================================
-    # Button Callbacks
+    # Lightweight Button Callbacks (NO LOCK, NO HEAVY WORK)
     # ============================================
     
     def on_pressure_up(self):
-        """Pressure UP button pressed"""
-        logger.info(">>> Callback: on_pressure_up - ENTRY")
-        try:
-            with self.state_lock:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started! Press START button first.")
-                    return
-                self.state.pressure = min(self.state.pressure + 5.0, 200.0)
-                logger.info(f"Pressure updated: {self.state.pressure:.1f} bar")
-            logger.info(">>> Callback: on_pressure_up - EXIT SUCCESS")
-        except Exception as e:
-            logger.error(f">>> Callback: on_pressure_up - EXCEPTION: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.PRESSURE_UP)
+        logger.info("⚡ Button event queued: PRESSURE_UP")
     
     def on_pressure_down(self):
-        """Pressure DOWN button pressed"""
-        logger.info(">>> Callback: on_pressure_down")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            self.state.pressure = max(self.state.pressure - 5.0, 0.0)
-            logger.info(f"Pressure: {self.state.pressure:.1f} bar")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.PRESSURE_DOWN)
+        logger.info("⚡ Button event queued: PRESSURE_DOWN")
     
     def on_pump_primary_on(self):
-        """Primary pump ON button"""
-        logger.info(">>> Callback: on_pump_primary_on")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            if self.state.pump_primary_status == 0:  # OFF
-                self.state.pump_primary_status = 1  # STARTING
-                logger.info("Primary pump: STARTING")
-            else:
-                logger.info(f"Primary pump already in state: {self.state.pump_primary_status}")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.PUMP_PRIMARY_ON)
+        logger.info("⚡ Button event queued: PUMP_PRIMARY_ON")
     
     def on_pump_primary_off(self):
-        """Primary pump OFF button"""
-        logger.info(">>> Callback: on_pump_primary_off")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            if self.state.pump_primary_status == 2:  # ON
-                self.state.pump_primary_status = 3  # SHUTTING_DOWN
-                logger.info("Primary pump: SHUTTING DOWN")
-            else:
-                logger.info(f"Primary pump not ON (state: {self.state.pump_primary_status})")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.PUMP_PRIMARY_OFF)
+        logger.info("⚡ Button event queued: PUMP_PRIMARY_OFF")
     
     def on_pump_secondary_on(self):
-        """Secondary pump ON button"""
-        logger.info(">>> Callback: on_pump_secondary_on")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            if self.state.pump_secondary_status == 0:
-                self.state.pump_secondary_status = 1
-                logger.info("Secondary pump: STARTING")
-            else:
-                logger.info(f"Secondary pump already in state: {self.state.pump_secondary_status}")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.PUMP_SECONDARY_ON)
+        logger.info("⚡ Button event queued: PUMP_SECONDARY_ON")
     
     def on_pump_secondary_off(self):
-        """Secondary pump OFF button"""
-        logger.info(">>> Callback: on_pump_secondary_off")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            if self.state.pump_secondary_status == 2:
-                self.state.pump_secondary_status = 3
-                logger.info("Secondary pump: SHUTTING DOWN")
-            else:
-                logger.info(f"Secondary pump not ON (state: {self.state.pump_secondary_status})")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.PUMP_SECONDARY_OFF)
+        logger.info("⚡ Button event queued: PUMP_SECONDARY_OFF")
     
     def on_pump_tertiary_on(self):
-        """Tertiary pump ON button"""
-        logger.info(">>> Callback: on_pump_tertiary_on")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            if self.state.pump_tertiary_status == 0:
-                self.state.pump_tertiary_status = 1
-                logger.info("Tertiary pump: STARTING")
-            else:
-                logger.info(f"Tertiary pump already in state: {self.state.pump_tertiary_status}")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.PUMP_TERTIARY_ON)
+        logger.info("⚡ Button event queued: PUMP_TERTIARY_ON")
     
     def on_pump_tertiary_off(self):
-        """Tertiary pump OFF button"""
-        logger.info(">>> Callback: on_pump_tertiary_off")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            if self.state.pump_tertiary_status == 2:
-                self.state.pump_tertiary_status = 3
-                logger.info("Tertiary pump: SHUTTING DOWN")
-            else:
-                logger.info(f"Tertiary pump not ON (state: {self.state.pump_tertiary_status})")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.PUMP_TERTIARY_OFF)
+        logger.info("⚡ Button event queued: PUMP_TERTIARY_OFF")
     
     def on_safety_rod_up(self):
-        """Safety rod UP button"""
-        logger.info(">>> Callback: on_safety_rod_up")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-        if not self.check_interlock():
-            logger.warning("Safety rod UP: Interlock not satisfied!")
-            return
-        
-        with self.state_lock:
-            self.state.safety_rod = min(self.state.safety_rod + 5, 100)
-            logger.info(f"Safety rod: {self.state.safety_rod}%")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.SAFETY_ROD_UP)
+        logger.info("⚡ Button event queued: SAFETY_ROD_UP")
     
     def on_safety_rod_down(self):
-        """Safety rod DOWN button"""
-        logger.info(">>> Callback: on_safety_rod_down")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            self.state.safety_rod = max(self.state.safety_rod - 5, 0)
-            logger.info(f"Safety rod: {self.state.safety_rod}%")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.SAFETY_ROD_DOWN)
+        logger.info("⚡ Button event queued: SAFETY_ROD_DOWN")
     
     def on_shim_rod_up(self):
-        """Shim rod UP button"""
-        logger.info(">>> Callback: on_shim_rod_up")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-        if not self.check_interlock():
-            logger.warning("Shim rod UP: Interlock not satisfied!")
-            return
-        
-        with self.state_lock:
-            self.state.shim_rod = min(self.state.shim_rod + 5, 100)
-            logger.info(f"Shim rod: {self.state.shim_rod}%")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.SHIM_ROD_UP)
+        logger.info("⚡ Button event queued: SHIM_ROD_UP")
     
     def on_shim_rod_down(self):
-        """Shim rod DOWN button"""
-        logger.info(">>> Callback: on_shim_rod_down")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            self.state.shim_rod = max(self.state.shim_rod - 5, 0)
-            logger.info(f"Shim rod: {self.state.shim_rod}%")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.SHIM_ROD_DOWN)
+        logger.info("⚡ Button event queued: SHIM_ROD_DOWN")
     
     def on_regulating_rod_up(self):
-        """Regulating rod UP button"""
-        logger.info(">>> Callback: on_regulating_rod_up")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-        if not self.check_interlock():
-            logger.warning("Regulating rod UP: Interlock not satisfied!")
-            return
-        
-        with self.state_lock:
-            self.state.regulating_rod = min(self.state.regulating_rod + 5, 100)
-            logger.info(f"Regulating rod: {self.state.regulating_rod}%")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.REGULATING_ROD_UP)
+        logger.info("⚡ Button event queued: REGULATING_ROD_UP")
     
     def on_regulating_rod_down(self):
-        """Regulating rod DOWN button"""
-        logger.info(">>> Callback: on_regulating_rod_down")
-        with self.state_lock:
-            if not self.state.reactor_started:
-                logger.warning("⚠️  Reactor not started! Press START button first.")
-                return
-            self.state.regulating_rod = max(self.state.regulating_rod - 5, 0)
-            logger.info(f"Regulating rod: {self.state.regulating_rod}%")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.REGULATING_ROD_DOWN)
+        logger.info("⚡ Button event queued: REGULATING_ROD_DOWN")
     
     def on_emergency(self):
-        """EMERGENCY button pressed"""
-        logger.critical(">>> Callback: on_emergency - EMERGENCY SHUTDOWN!")
-        with self.state_lock:
-            self.state.emergency_active = True
-            self.state.safety_rod = 0
-            self.state.shim_rod = 0
-            self.state.regulating_rod = 0
-            self.state.pump_primary_status = 3  # SHUTTING_DOWN
-            self.state.pump_secondary_status = 3
-            self.state.pump_tertiary_status = 3
-            logger.critical("EMERGENCY SHUTDOWN ACTIVATED!")
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.EMERGENCY)
+        logger.critical("⚡ Button event queued: EMERGENCY")
     
     def on_reactor_start(self):
-        """Reactor START button - Initialize reactor system"""
-        logger.info(">>> Callback: on_reactor_start - ENTRY")
-        try:
-            with self.state_lock:
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.REACTOR_START)
+        logger.info("⚡ Button event queued: REACTOR_START")
+    
+    def on_reactor_reset(self):
+        """Lightweight callback - just enqueue event"""
+        self.button_event_queue.put(ButtonEvent.REACTOR_RESET)
+        logger.info("⚡ Button event queued: REACTOR_RESET")
+    
+    # ============================================
+    # Event Processing (Heavy Work with Lock)
+    # ============================================
+    
+    def process_button_event(self, event: ButtonEvent):
+        """
+        Process button event with proper locking and state update
+        This runs in dedicated thread, NOT in interrupt context
+        """
+        with self.state_lock:
+            if event == ButtonEvent.PRESSURE_UP:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                self.state.pressure = min(self.state.pressure + 5.0, 200.0)
+                logger.info(f"✓ Pressure UP: {self.state.pressure:.1f} bar")
+            
+            elif event == ButtonEvent.PRESSURE_DOWN:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                self.state.pressure = max(self.state.pressure - 5.0, 0.0)
+                logger.info(f"✓ Pressure DOWN: {self.state.pressure:.1f} bar")
+            
+            elif event == ButtonEvent.PUMP_PRIMARY_ON:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                if self.state.pump_primary_status == 0:
+                    self.state.pump_primary_status = 1
+                    logger.info("✓ Primary pump: STARTING")
+            
+            elif event == ButtonEvent.PUMP_PRIMARY_OFF:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                if self.state.pump_primary_status == 2:
+                    self.state.pump_primary_status = 3
+                    logger.info("✓ Primary pump: SHUTTING DOWN")
+            
+            elif event == ButtonEvent.PUMP_SECONDARY_ON:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                if self.state.pump_secondary_status == 0:
+                    self.state.pump_secondary_status = 1
+                    logger.info("✓ Secondary pump: STARTING")
+            
+            elif event == ButtonEvent.PUMP_SECONDARY_OFF:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                if self.state.pump_secondary_status == 2:
+                    self.state.pump_secondary_status = 3
+                    logger.info("✓ Secondary pump: SHUTTING DOWN")
+            
+            elif event == ButtonEvent.PUMP_TERTIARY_ON:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                if self.state.pump_tertiary_status == 0:
+                    self.state.pump_tertiary_status = 1
+                    logger.info("✓ Tertiary pump: STARTING")
+            
+            elif event == ButtonEvent.PUMP_TERTIARY_OFF:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                if self.state.pump_tertiary_status == 2:
+                    self.state.pump_tertiary_status = 3
+                    logger.info("✓ Tertiary pump: SHUTTING DOWN")
+            
+            elif event == ButtonEvent.SAFETY_ROD_UP:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                if not self.check_interlock():
+                    logger.warning("⚠️  Interlock not satisfied!")
+                    return
+                self.state.safety_rod = min(self.state.safety_rod + 5, 100)
+                logger.info(f"✓ Safety rod UP: {self.state.safety_rod}%")
+            
+            elif event == ButtonEvent.SAFETY_ROD_DOWN:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                self.state.safety_rod = max(self.state.safety_rod - 5, 0)
+                logger.info(f"✓ Safety rod DOWN: {self.state.safety_rod}%")
+            
+            elif event == ButtonEvent.SHIM_ROD_UP:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                if not self.check_interlock():
+                    logger.warning("⚠️  Interlock not satisfied!")
+                    return
+                self.state.shim_rod = min(self.state.shim_rod + 5, 100)
+                logger.info(f"✓ Shim rod UP: {self.state.shim_rod}%")
+            
+            elif event == ButtonEvent.SHIM_ROD_DOWN:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                self.state.shim_rod = max(self.state.shim_rod - 5, 0)
+                logger.info(f"✓ Shim rod DOWN: {self.state.shim_rod}%")
+            
+            elif event == ButtonEvent.REGULATING_ROD_UP:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                if not self.check_interlock():
+                    logger.warning("⚠️  Interlock not satisfied!")
+                    return
+                self.state.regulating_rod = min(self.state.regulating_rod + 5, 100)
+                logger.info(f"✓ Regulating rod UP: {self.state.regulating_rod}%")
+            
+            elif event == ButtonEvent.REGULATING_ROD_DOWN:
+                if not self.state.reactor_started:
+                    logger.warning("⚠️  Reactor not started!")
+                    return
+                self.state.regulating_rod = max(self.state.regulating_rod - 5, 0)
+                logger.info(f"✓ Regulating rod DOWN: {self.state.regulating_rod}%")
+            
+            elif event == ButtonEvent.EMERGENCY:
+                self.state.emergency_active = True
+                self.state.safety_rod = 0
+                self.state.shim_rod = 0
+                self.state.regulating_rod = 0
+                self.state.pump_primary_status = 3
+                self.state.pump_secondary_status = 3
+                self.state.pump_tertiary_status = 3
+                logger.critical("✓ EMERGENCY SHUTDOWN ACTIVATED!")
+            
+            elif event == ButtonEvent.REACTOR_START:
                 if not self.state.reactor_started:
                     self.state.reactor_started = True
                     logger.info("=" * 60)
                     logger.info("🟢 REACTOR SYSTEM STARTED")
-                    logger.info("System is now operational. You may begin operations.")
+                    logger.info("System is now operational.")
                     logger.info("=" * 60)
-                else:
-                    logger.info("Reactor already started. No action taken.")
-            logger.info(">>> Callback: on_reactor_start - EXIT SUCCESS")
-        except Exception as e:
-            logger.error(f">>> Callback: on_reactor_start - EXCEPTION: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            
+            elif event == ButtonEvent.REACTOR_RESET:
+                self.state.reactor_started = False
+                self.state.emergency_active = False
+                self.state.pressure = 0.0
+                self.state.thermal_kw = 0.0
+                self.state.pump_primary_status = 0
+                self.state.pump_secondary_status = 0
+                self.state.pump_tertiary_status = 0
+                self.state.pump_primary_transition_start = 0.0
+                self.state.pump_secondary_transition_start = 0.0
+                self.state.pump_tertiary_transition_start = 0.0
+                self.state.safety_rod = 0
+                self.state.shim_rod = 0
+                self.state.regulating_rod = 0
+                self.state.humid_sg1_cmd = 0
+                self.state.humid_sg2_cmd = 0
+                self.state.humid_ct1_cmd = 0
+                self.state.humid_ct2_cmd = 0
+                self.state.humid_ct3_cmd = 0
+                self.state.humid_ct4_cmd = 0
+                self.state.interlock_satisfied = False
+                logger.info("=" * 60)
+                logger.info("🔄 SIMULATION RESET")
+                logger.info("All parameters reset. Press START to begin.")
+                logger.info("=" * 60)
     
-    def on_reactor_reset(self):
-        """Reactor RESET button - Force reset simulasi ke kondisi awal"""
-        logger.info(">>> Callback: on_reactor_reset (RESET SIMULASI)")
-        with self.state_lock:
-            # FORCE RESET - tidak perlu check kondisi, langsung reset
-            self.state.reactor_started = False
-            self.state.emergency_active = False
-            
-            # Reset semua parameter ke kondisi awal
-            self.state.pressure = 0.0
-            self.state.thermal_kw = 0.0
-            
-            # Reset pump status dan transition timers
-            self.state.pump_primary_status = 0  # OFF
-            self.state.pump_secondary_status = 0
-            self.state.pump_tertiary_status = 0
-            self.state.pump_primary_transition_start = 0.0
-            self.state.pump_secondary_transition_start = 0.0
-            self.state.pump_tertiary_transition_start = 0.0
-            
-            # Reset rod positions
-            self.state.safety_rod = 0
-            self.state.shim_rod = 0
-            self.state.regulating_rod = 0
-            
-            # Reset humidifier commands
-            self.state.humid_sg1_cmd = 0
-            self.state.humid_sg2_cmd = 0
-            self.state.humid_ct1_cmd = 0
-            self.state.humid_ct2_cmd = 0
-            self.state.humid_ct3_cmd = 0
-            self.state.humid_ct4_cmd = 0
-            
-            # Reset interlock flag
-            self.state.interlock_satisfied = False
-            
-            logger.info("=" * 60)
-            logger.info("🔄 SIMULATION RESET")
-            logger.info("All parameters reset to initial state.")
-            logger.info("Press START button to begin new simulation.")
-            logger.info("=" * 60)
+    def button_event_processor_thread(self):
+        """
+        Process button events from queue
+        This thread can safely use locks and do heavy work
+        """
+        logger.info("Button event processor thread started")
+        
+        while self.state.running:
+            try:
+                # Wait for event (blocking, with timeout)
+                event = self.button_event_queue.get(timeout=0.1)
+                
+                # Process event with lock
+                self.process_button_event(event)
+                
+                # Mark task done
+                self.button_event_queue.task_done()
+                
+            except Empty:
+                # No events, continue loop
+                pass
+            except Exception as e:
+                logger.error(f"Event processor error: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
+        logger.info("Button event processor thread stopped")
     
     # ============================================
     # Interlock Logic
@@ -848,11 +906,12 @@ class PLTNPanelController:
     
     def run(self):
         """Main control loop with periodic health monitoring"""
-        logger.info("Starting PLTN Controller (2 ESP)...")
+        logger.info("Starting PLTN Controller (2 ESP + Event Queue)...")
         
         # Start threads
         threads = [
             threading.Thread(target=self.button_polling_thread, daemon=True, name="ButtonThread"),
+            threading.Thread(target=self.button_event_processor_thread, daemon=True, name="EventThread"),
             threading.Thread(target=self.control_logic_thread, daemon=True, name="ControlThread"),
             threading.Thread(target=self.esp_communication_thread, daemon=True, name="ESPCommThread"),
             threading.Thread(target=self.oled_update_thread, daemon=True, name="OLEDThread"),
