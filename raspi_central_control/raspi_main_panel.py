@@ -412,7 +412,11 @@ class PLTNPanelController:
         Process button event with proper locking and state update
         This runs in dedicated thread, NOT in interrupt context
         """
+        logger.debug(f"process_button_event: Received {event.value}")
+        
         with self.state_lock:
+            logger.debug(f"process_button_event: Lock acquired for {event.value}")
+            
             if event == ButtonEvent.PRESSURE_UP:
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
@@ -569,6 +573,12 @@ class PLTNPanelController:
                 logger.info("🔄 SIMULATION RESET")
                 logger.info("All parameters reset. Press START to begin.")
                 logger.info("=" * 60)
+            
+            # Log if event not recognized
+            else:
+                logger.warning(f"⚠️  Unknown event: {event}")
+        
+        logger.debug(f"process_button_event: Lock released for {event.value}")
     
     def button_event_processor_thread(self):
         """
@@ -582,8 +592,12 @@ class PLTNPanelController:
                 # Wait for event (blocking, with timeout)
                 event = self.button_event_queue.get(timeout=0.1)
                 
+                logger.info(f"🔹 Processing event: {event.value}")
+                
                 # Process event with lock
                 self.process_button_event(event)
+                
+                logger.info(f"🔹 Event processed: {event.value}")
                 
                 # Mark task done
                 self.button_event_queue.task_done()
