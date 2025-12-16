@@ -107,12 +107,15 @@ class PLTNPanelController:
             self.init_multiplexers()
             self.init_uart_master()  # Changed from init_i2c_master
             self.init_buttons()
-            self.init_humidifier()
-            self.init_buzzer()
         except Exception as e:
             logger.error(f"Critical hardware initialization failed: {e}")
             logger.error("Cannot continue without core hardware")
             raise
+        
+        # Optional hardware (can fail without stopping system)
+        logger.info("Phase 1b: Optional hardware initialization...")
+        self.init_humidifier()  # Won't raise
+        self.init_buzzer()  # Won't raise
         
         # Optional hardware with timeout (non-blocking)
         logger.info("Phase 2: Optional hardware (OLED displays)...")
@@ -224,10 +227,12 @@ class PLTNPanelController:
             self.humidifier = HumidifierController()
             logger.info("✓ Humidifier controller initialized")
         except Exception as e:
-            logger.warning(f"⚠️  Failed to initialize humidifier: {e}")
+            logger.error(f"❌ Failed to initialize humidifier: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             logger.warning("   Humidifier control will not be available")
             self.humidifier = None
-            raise
+            # Don't raise - make it non-critical
     
     def init_buzzer(self):
         """Initialize buzzer alarm system"""
@@ -235,9 +240,12 @@ class PLTNPanelController:
             self.buzzer = BuzzerAlarm()
             logger.info("✓ Buzzer alarm initialized")
         except Exception as e:
-            logger.warning(f"⚠️  Failed to initialize buzzer: {e}")
+            logger.error(f"❌ Failed to initialize buzzer: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             logger.warning("   Alarm buzzer will not be available")
             self.buzzer = None
+            # Don't raise - make it non-critical
     
     def init_oled_displays(self):
         """Initialize 9 OLED displays (0.91 inch 128x32) with timeout"""
@@ -591,41 +599,70 @@ class PLTNPanelController:
         loop_count = 0
         while self.state.running:
             try:
+                logger.debug("Control: About to acquire state_lock...")
+                
                 # === ATOMIC OPERATION: Update all control logic in ONE lock ===
                 with self.state_lock:
+                    logger.debug("Control: Lock acquired, starting updates...")
+                    
                     # 1. Update interlock status
-                    self.state.interlock_satisfied = self.check_interlock()
+                    try:
+                        self.state.interlock_satisfied = self.check_interlock()
+                        logger.debug("Control: Interlock check done")
+                    except Exception as e:
+                        logger.error(f"Control: Interlock check failed: {e}")
                     
                     # 2. Update humidifier commands
-                    sg_on, ct1, ct2, ct3, ct4 = self.humidifier.update(
-                        self.state.shim_rod,
-                        self.state.regulating_rod,
-                        self.state.thermal_kw
-                    )
-                    
-                    # Steam Generator: 2 humidifier (both controlled together)
-                    self.state.humid_sg1_cmd = 1 if sg_on else 0
-                    self.state.humid_sg2_cmd = 1 if sg_on else 0
-                    
-                    # Cooling Tower: 4 humidifier (STAGED 1-by-1)
-                    self.state.humid_ct1_cmd = 1 if ct1 else 0
-                    self.state.humid_ct2_cmd = 1 if ct2 else 0
-                    self.state.humid_ct3_cmd = 1 if ct3 else 0
-                    self.state.humid_ct4_cmd = 1 if ct4 else 0
+                    try:
+                        if self.humidifier:
+                            logger.debug("Control: Calling humidifier.update()...")
+                            sg_on, ct1, ct2, ct3, ct4 = self.humidifier.update(
+                                self.state.shim_rod,
+                                self.state.regulating_rod,
+                                self.state.thermal_kw
+                            )
+                            logger.debug("Control: Humidifier update done")
+                            
+                            # Steam Generator: 2 humidifier (both controlled together)
+                            self.state.humid_sg1_cmd = 1 if sg_on else 0
+                            self.state.humid_sg2_cmd = 1 if sg_on else 0
+                            
+                            # Cooling Tower: 4 humidifier (STAGED 1-by-1)
+                            self.state.humid_ct1_cmd = 1 if ct1 else 0
+                            self.state.humid_ct2_cmd = 1 if ct2 else 0
+                            self.state.humid_ct3_cmd = 1 if ct3 else 0
+                            self.state.humid_ct4_cmd = 1 if ct4 else 0
+                        else:
+                            logger.debug("Control: Humidifier not available, skipping")
+                    except Exception as e:
+                        logger.error(f"Control: Humidifier update failed: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
                     
                     # 3. Check and update alarm status
-                    if self.buzzer:
-                        self.buzzer.check_alarms(self.state)
+                    try:
+                        if self.buzzer:
+                            self.buzzer.check_alarms(self.state)
+                        logger.debug("Control: Buzzer check done")
+                    except Exception as e:
+                        logger.error(f"Control: Buzzer check failed: {e}")
                     
                     # 4. Update pump status (non-blocking timer check)
-                    self._update_pump_status_internal(time.time())
+                    try:
+                        self._update_pump_status_internal(time.time())
+                        logger.debug("Control: Pump status update done")
+                    except Exception as e:
+                        logger.error(f"Control: Pump status update failed: {e}")
+                    
+                    logger.debug("Control: All updates done, releasing lock...")
                 
+                logger.debug("Control: Lock released")
                 time.sleep(0.05)  # 50ms
                 
                 # Log heartbeat every 10 seconds (200 loops x 50ms)
                 loop_count += 1
                 if loop_count >= 200:
-                    logger.debug("Control logic thread: alive (200 loops)")
+                    logger.info("Control logic thread: alive (200 loops)")
                     loop_count = 0
                 
             except Exception as e:
