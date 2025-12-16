@@ -641,65 +641,65 @@ class PLTNPanelController:
         Update pump status (simulate startup/shutdown) - NON-BLOCKING
         INTERNAL version - assumes state_lock is already held by caller
         """
-            # Primary pump
-            if self.state.pump_primary_status == 1:  # STARTING
-                if self.state.pump_primary_transition_start == 0:
-                    self.state.pump_primary_transition_start = current_time
-                    logger.info("Primary pump: STARTING (2s delay)")
-                elif current_time - self.state.pump_primary_transition_start >= 2.0:
-                    self.state.pump_primary_status = 2  # ON
-                    self.state.pump_primary_transition_start = 0
-                    logger.info("Primary pump: ON")
-            elif self.state.pump_primary_status == 3:  # SHUTTING_DOWN
-                if self.state.pump_primary_transition_start == 0:
-                    self.state.pump_primary_transition_start = current_time
-                    logger.info("Primary pump: SHUTTING DOWN (1s delay)")
-                elif current_time - self.state.pump_primary_transition_start >= 1.0:
-                    self.state.pump_primary_status = 0  # OFF
-                    self.state.pump_primary_transition_start = 0
-                    logger.info("Primary pump: OFF")
-            else:
+        # Primary pump
+        if self.state.pump_primary_status == 1:  # STARTING
+            if self.state.pump_primary_transition_start == 0:
+                self.state.pump_primary_transition_start = current_time
+                logger.info("Primary pump: STARTING (2s delay)")
+            elif current_time - self.state.pump_primary_transition_start >= 2.0:
+                self.state.pump_primary_status = 2  # ON
                 self.state.pump_primary_transition_start = 0
-            
-            # Secondary pump
-            if self.state.pump_secondary_status == 1:  # STARTING
-                if self.state.pump_secondary_transition_start == 0:
-                    self.state.pump_secondary_transition_start = current_time
-                    logger.info("Secondary pump: STARTING (2s delay)")
-                elif current_time - self.state.pump_secondary_transition_start >= 2.0:
-                    self.state.pump_secondary_status = 2  # ON
-                    self.state.pump_secondary_transition_start = 0
-                    logger.info("Secondary pump: ON")
-            elif self.state.pump_secondary_status == 3:  # SHUTTING_DOWN
-                if self.state.pump_secondary_transition_start == 0:
-                    self.state.pump_secondary_transition_start = current_time
-                    logger.info("Secondary pump: SHUTTING DOWN (1s delay)")
-                elif current_time - self.state.pump_secondary_transition_start >= 1.0:
-                    self.state.pump_secondary_status = 0  # OFF
-                    self.state.pump_secondary_transition_start = 0
-                    logger.info("Secondary pump: OFF")
-            else:
+                logger.info("Primary pump: ON")
+        elif self.state.pump_primary_status == 3:  # SHUTTING_DOWN
+            if self.state.pump_primary_transition_start == 0:
+                self.state.pump_primary_transition_start = current_time
+                logger.info("Primary pump: SHUTTING DOWN (1s delay)")
+            elif current_time - self.state.pump_primary_transition_start >= 1.0:
+                self.state.pump_primary_status = 0  # OFF
+                self.state.pump_primary_transition_start = 0
+                logger.info("Primary pump: OFF")
+        else:
+            self.state.pump_primary_transition_start = 0
+        
+        # Secondary pump
+        if self.state.pump_secondary_status == 1:  # STARTING
+            if self.state.pump_secondary_transition_start == 0:
+                self.state.pump_secondary_transition_start = current_time
+                logger.info("Secondary pump: STARTING (2s delay)")
+            elif current_time - self.state.pump_secondary_transition_start >= 2.0:
+                self.state.pump_secondary_status = 2  # ON
                 self.state.pump_secondary_transition_start = 0
-            
-            # Tertiary pump
-            if self.state.pump_tertiary_status == 1:  # STARTING
-                if self.state.pump_tertiary_transition_start == 0:
-                    self.state.pump_tertiary_transition_start = current_time
-                    logger.info("Tertiary pump: STARTING (2s delay)")
-                elif current_time - self.state.pump_tertiary_transition_start >= 2.0:
-                    self.state.pump_tertiary_status = 2  # ON
-                    self.state.pump_tertiary_transition_start = 0
-                    logger.info("Tertiary pump: ON")
-            elif self.state.pump_tertiary_status == 3:  # SHUTTING_DOWN
-                if self.state.pump_tertiary_transition_start == 0:
-                    self.state.pump_tertiary_transition_start = current_time
-                    logger.info("Tertiary pump: SHUTTING DOWN (1s delay)")
-                elif current_time - self.state.pump_tertiary_transition_start >= 1.0:
-                    self.state.pump_tertiary_status = 0  # OFF
-                    self.state.pump_tertiary_transition_start = 0
-                    logger.info("Tertiary pump: OFF")
-            else:
+                logger.info("Secondary pump: ON")
+        elif self.state.pump_secondary_status == 3:  # SHUTTING_DOWN
+            if self.state.pump_secondary_transition_start == 0:
+                self.state.pump_secondary_transition_start = current_time
+                logger.info("Secondary pump: SHUTTING DOWN (1s delay)")
+            elif current_time - self.state.pump_secondary_transition_start >= 1.0:
+                self.state.pump_secondary_status = 0  # OFF
+                self.state.pump_secondary_transition_start = 0
+                logger.info("Secondary pump: OFF")
+        else:
+            self.state.pump_secondary_transition_start = 0
+        
+        # Tertiary pump
+        if self.state.pump_tertiary_status == 1:  # STARTING
+            if self.state.pump_tertiary_transition_start == 0:
+                self.state.pump_tertiary_transition_start = current_time
+                logger.info("Tertiary pump: STARTING (2s delay)")
+            elif current_time - self.state.pump_tertiary_transition_start >= 2.0:
+                self.state.pump_tertiary_status = 2  # ON
                 self.state.pump_tertiary_transition_start = 0
+                logger.info("Tertiary pump: ON")
+        elif self.state.pump_tertiary_status == 3:  # SHUTTING_DOWN
+            if self.state.pump_tertiary_transition_start == 0:
+                self.state.pump_tertiary_transition_start = current_time
+                logger.info("Tertiary pump: SHUTTING DOWN (1s delay)")
+            elif current_time - self.state.pump_tertiary_transition_start >= 1.0:
+                self.state.pump_tertiary_status = 0  # OFF
+                self.state.pump_tertiary_transition_start = 0
+                logger.info("Tertiary pump: OFF")
+        else:
+            self.state.pump_tertiary_transition_start = 0
     
     # ============================================
     # ESP Communication Thread
