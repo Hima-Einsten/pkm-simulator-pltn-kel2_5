@@ -659,6 +659,9 @@ class PLTNPanelController:
                             esp_bc_data = self.uart_master.get_esp_bc_data()
                             self.state.thermal_kw = esp_bc_data.kw_thermal
                             
+                            # Small delay between ESP commands for stability
+                            time.sleep(0.05)
+                            
                             # Send to ESP-E (LED Visualizer)
                             # Direct UART connection - no MUX needed
                             self.uart_master.update_esp_e(

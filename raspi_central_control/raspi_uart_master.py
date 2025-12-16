@@ -118,7 +118,7 @@ class UARTDevice:
             )
             
             # Flush buffers and wait for ESP32 to be ready
-            time.sleep(0.5)  # Increased delay for ESP32 initialization
+            time.sleep(2.0)  # Wait for ESP32 to fully initialize (same as test_uart_timing)
             self.serial.reset_input_buffer()
             self.serial.reset_output_buffer()
             
@@ -280,6 +280,11 @@ class UARTMaster:
         self.esp_bc_connected = self.esp_bc.connect()
         self.esp_e_connected = False
         
+        # Additional stabilization delay after connection (critical for reliability)
+        if self.esp_bc_connected:
+            logger.info("⏳ Waiting 1 second for ESP32 to stabilize...")
+            time.sleep(1.0)
+        
         if self.esp_bc_connected:
             logger.info(f"✅ ESP-BC: {esp_bc_port} (Control Rods + Turbine + Motor + Humid)")
         else:
@@ -288,6 +293,8 @@ class UARTMaster:
         if self.esp_e_enabled:
             self.esp_e_connected = self.esp_e.connect()
             if self.esp_e_connected:
+                logger.info("⏳ Waiting 1 second for ESP32 to stabilize...")
+                time.sleep(1.0)
                 logger.info(f"✅ ESP-E: {esp_e_port} (LED Visualizer)")
             else:
                 logger.warning(f"⚠️  ESP-E: {esp_e_port} - NOT CONNECTED (non-critical)")
@@ -335,8 +342,8 @@ class UARTMaster:
             "humid_ct": [humid_ct1, humid_ct2, humid_ct3, humid_ct4]
         }
         
-        # Send and receive
-        response = self.esp_bc.send_receive(command, timeout=0.5)
+        # Send and receive (increased timeout for reliability)
+        response = self.esp_bc.send_receive(command, timeout=2.0)
         
         if response and response.get("status") == "ok":
             # Parse response - Control Rods
@@ -417,8 +424,8 @@ class UARTMaster:
             "thermal_kw": thermal_power_kw
         }
         
-        # Send and receive
-        response = self.esp_e.send_receive(command, timeout=0.5)
+        # Send and receive (increased timeout for reliability)
+        response = self.esp_e.send_receive(command, timeout=2.0)
         
         if response and response.get("status") == "ok":
             self.esp_e_data.animation_speed = response.get("anim_speed", 0)

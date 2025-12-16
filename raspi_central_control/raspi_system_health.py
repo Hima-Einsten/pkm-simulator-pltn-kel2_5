@@ -203,6 +203,10 @@ class SystemHealthMonitor:
             return
         
         try:
+            # Small delay before communication (stability)
+            logger.info("  ⏳ Waiting 0.3s before communication...")
+            time.sleep(0.3)
+            
             # Try communication via UART
             success = panel.uart_master.update_esp_bc(0, 0, 0)
             
@@ -268,6 +272,10 @@ class SystemHealthMonitor:
             return
         
         try:
+            # Small delay before communication (stability)
+            logger.info("  ⏳ Waiting 0.3s before communication...")
+            time.sleep(0.3)
+            
             # Try communication via UART
             success = panel.uart_master.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0)
             
