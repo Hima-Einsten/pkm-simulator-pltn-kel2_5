@@ -295,15 +295,6 @@ class UARTMaster:
             logger.info("ℹ️  ESP-E: Disabled (not configured)")
         
         logger.info("="*70)
-        else:
-            logger.error(f"❌ ESP-BC: {esp_bc_port} - NOT CONNECTED!")
-        
-        if self.esp_e_connected:
-            logger.info(f"✅ ESP-E: {esp_e_port} (LED Visualizer)")
-        else:
-            logger.warning(f"⚠️  ESP-E: {esp_e_port} - NOT CONNECTED (non-critical)")
-        
-        logger.info("="*70)
     
     def update_esp_bc(self, safety: int, shim: int, regulating: int,
                       humid_sg1: int = 0, humid_sg2: int = 0,
