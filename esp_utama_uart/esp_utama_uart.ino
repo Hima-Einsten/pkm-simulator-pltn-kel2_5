@@ -1,12 +1,22 @@
 /*
- * ESP32 UART Communication - ESP-BC (Control Rods + Turbine + Humidifier)
+ * ESP32 UART Communication - ESP-BC (Control Rods + Turbine + Humidifier + Motor Driver)
  * Replaces I2C slave with UART communication
  * 
  * Hardware:
  * - UART2 (GPIO 16=RX, GPIO 17=TX) for communication with Raspberry Pi
  * - Serial (USB) for debugging
+ * - 4x Motor DC dengan L298N motor driver (3 pompa + 1 turbin)
+ * - 3x Servo motors (control rods)
+ * - 6x Relay untuk humidifier
  * 
  * Protocol: JSON over UART (115200 baud, 8N1)
+ * 
+ * Pin Configuration:
+ * - UART: GPIO 16 (RX), 17 (TX) - Communication with RasPi
+ * - Servos: GPIO 13, 12, 14 (control rods)
+ * - Humidifier Relays: GPIO 25, 26, 27, 32, 33, 34
+ * - Motor Driver PWM: GPIO 4, 5, 18, 19 (3 pompa + turbin)
+ * - Motor Direction: GPIO 23, 15 (turbine only, pumps hard-wired)
  */
 
 #include <ArduinoJson.h>
@@ -39,6 +49,30 @@ int shim_actual = 0;
 int regulating_actual = 0;
 
 // ============================================
+// Motor Driver PWM Configuration
+// ============================================
+// NOTE: GPIO 16, 17 digunakan untuk UART, tidak boleh digunakan untuk motor
+// Motor Driver PWM pins (speed control)
+#define MOTOR_PUMP_PRIMARY    4    // Pompa Primer (Primary Loop)
+#define MOTOR_PUMP_SECONDARY  5    // Pompa Sekunder (Secondary Loop)
+#define MOTOR_PUMP_TERTIARY   18   // Pompa Tersier (Tertiary/Cooling Loop)
+#define MOTOR_TURBINE         19   // Motor Turbin
+
+// Motor Direction Control - ONLY for Turbine
+// Pumps always FORWARD (IN1=GND, IN2=+3.3V hard-wired on L298N)
+#define MOTOR_TURBINE_IN1     23   // Turbine direction 1
+#define MOTOR_TURBINE_IN2     15   // Turbine direction 2
+
+// Motor Direction Enum
+#define MOTOR_FORWARD  1
+#define MOTOR_REVERSE  2
+#define MOTOR_STOP     0
+
+// PWM Configuration
+#define PWM_FREQ       5000  // 5 kHz
+#define PWM_RESOLUTION 8     // 8-bit (0-255)
+
+// ============================================
 // Humidifier Relays
 // ============================================
 const int RELAY_SG1 = 25;  // Steam Generator 1
@@ -65,9 +99,28 @@ uint8_t humid_ct4_status = 0;
 // ============================================
 // Turbine & Generator Simulation
 // ============================================
-int current_state = 0;      // 0=OFF, 1=STARTUP, 2=RUNNING, 3=SHUTDOWN
+enum TurbineState {
+  STATE_IDLE = 0,
+  STATE_STARTING = 1,
+  STATE_RUNNING = 2,
+  STATE_SHUTDOWN = 3
+};
+
+TurbineState current_state = STATE_IDLE;
 float power_level = 0.0;    // Turbine power (0-100%)
 float thermal_kw_calculated = 0.0;
+float turbine_speed = 0.0;  // Current turbine speed (0-100%)
+
+// ============================================
+// Pump Variables
+// ============================================
+float pump_primary_actual = 0.0;    // Current PWM (0-100%)
+float pump_secondary_actual = 0.0;
+float pump_tertiary_actual = 0.0;
+
+float pump_primary_target = 0.0;    // Target PWM from state machine
+float pump_secondary_target = 0.0;
+float pump_tertiary_target = 0.0;
 
 // ============================================
 // JSON Communication
@@ -89,7 +142,7 @@ void setup() {
   
   Serial.println("\n\n===========================================");
   Serial.println("ESP-BC UART Communication");
-  Serial.println("Control Rods + Turbine + Humidifier");
+  Serial.println("Control Rods + Turbine + Humidifier + Motor Driver");
   Serial.println("===========================================");
   
   // Initialize UART2 for Raspberry Pi communication
@@ -123,6 +176,29 @@ void setup() {
   digitalWrite(RELAY_CT3, LOW);
   digitalWrite(RELAY_CT4, LOW);
   Serial.println("✅ Humidifier relays initialized");
+  
+  // Initialize motor driver PWM channels (ESP32 Core v3.x API)
+  ledcAttach(MOTOR_PUMP_PRIMARY, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(MOTOR_PUMP_SECONDARY, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(MOTOR_PUMP_TERTIARY, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(MOTOR_TURBINE, PWM_FREQ, PWM_RESOLUTION);
+  
+  // All motor drivers OFF initially
+  ledcWrite(MOTOR_PUMP_PRIMARY, 0);
+  ledcWrite(MOTOR_PUMP_SECONDARY, 0);
+  ledcWrite(MOTOR_PUMP_TERTIARY, 0);
+  ledcWrite(MOTOR_TURBINE, 0);
+  Serial.println("✅ Motor drivers initialized (3 pumps + turbine)");
+  Serial.println("   PWM Pins: GPIO 4, 5, 18, 19");
+  
+  // Initialize turbine direction control pins
+  pinMode(MOTOR_TURBINE_IN1, OUTPUT);
+  pinMode(MOTOR_TURBINE_IN2, OUTPUT);
+  digitalWrite(MOTOR_TURBINE_IN1, HIGH);  // Default: FORWARD
+  digitalWrite(MOTOR_TURBINE_IN2, LOW);
+  Serial.println("✅ Turbine direction control initialized");
+  Serial.println("   Direction Pins: GPIO 23, 15");
+  Serial.println("   Pumps: Hard-wired FORWARD (no GPIO needed)");
   
   Serial.println("===========================================");
   Serial.println("✅ System Ready - Waiting for commands...");
@@ -176,6 +252,8 @@ void loop() {
   calculateThermalPower();
   updateTurbineState();
   updateHumidifiers();
+  updatePumpSpeeds();
+  updateTurbineSpeed();
   
   delay(10);
 }
@@ -265,10 +343,17 @@ void sendStatus() {
   rods.add(shim_actual);
   rods.add(regulating_actual);
   
-  // Thermal power
+  // Thermal power and turbine
   json_tx["thermal_kw"] = thermal_kw_calculated;
   json_tx["power_level"] = power_level;
   json_tx["state"] = current_state;
+  json_tx["turbine_speed"] = turbine_speed;
+  
+  // Pump speeds (automatic control by ESP)
+  JsonArray pump_speeds = json_tx.createNestedArray("pump_speeds");
+  pump_speeds.add(pump_primary_actual);
+  pump_speeds.add(pump_secondary_actual);
+  pump_speeds.add(pump_tertiary_actual);
   
   // Humidifier status
   JsonArray humid_status = json_tx.createNestedArray("humid_status");
@@ -346,35 +431,117 @@ void updateServos() {
 // Calculate Thermal Power
 // ============================================
 void calculateThermalPower() {
-  // Average rod insertion
-  float avg_insertion = (safety_actual + shim_actual + regulating_actual) / 3.0;
+  /*
+   * Electrical Power Calculation - PWR Nuclear Reactor Model
+   * Reactor Rating: 300 MWe (300,000 kW electrical)
+   * 
+   * Realistic Physics:
+   * - Reactor menghasilkan panas thermal (dari fisi nuklir)
+   * - Turbine efficiency ~33% (typical PWR)
+   * - Electrical output = Thermal × Turbine Efficiency × Load
+   */
   
-  // Thermal power calculation (simplified)
-  // Max thermal: 300 MW = 300,000 kW
-  // Power increases with rod insertion
-  const float MAX_THERMAL_KW = 300000.0;
-  thermal_kw_calculated = (avg_insertion / 100.0) * MAX_THERMAL_KW;
+  // Calculate reactivity from control rods
+  float avgRodPosition = (shim_actual + regulating_actual) / 2.0;
+  
+  // Reactor thermal power capacity (0 - 900 MWth = 900,000 kW thermal)
+  float reactor_thermal_kw = 0.0;
+  
+  if (avgRodPosition > 10.0) {
+    // Non-linear power curve (quadratic untuk simulasi reaktivitas)
+    reactor_thermal_kw = avgRodPosition * avgRodPosition * 90.0;
+    
+    // Individual rod contributions
+    reactor_thermal_kw += shim_actual * 150.0;       // Coarse control
+    reactor_thermal_kw += regulating_actual * 200.0; // Fine control
+  }
+  
+  // Clamp reactor thermal output (0 - 900 MWth)
+  if (reactor_thermal_kw > 900000.0) reactor_thermal_kw = 900000.0;
+  
+  // Turbine Conversion: Thermal → Electrical
+  float turbine_load = power_level / 100.0;  // 0.0 to 1.0
+  const float TURBINE_EFFICIENCY = 0.33;     // 33% thermal to electrical
+  
+  // Final electrical power output (MWe)
+  thermal_kw_calculated = reactor_thermal_kw * TURBINE_EFFICIENCY * turbine_load;
+  
+  // Clamp electrical output (0 - 300 MWe)
+  if (thermal_kw_calculated < 0.0) thermal_kw_calculated = 0.0;
+  if (thermal_kw_calculated > 300000.0) thermal_kw_calculated = 300000.0;
 }
 
 // ============================================
 // Update Turbine State
 // ============================================
 void updateTurbineState() {
-  // Simplified turbine state machine
-  if (thermal_kw_calculated > 50000.0) {
-    current_state = 2;  // RUNNING
-    power_level = (thermal_kw_calculated / 300000.0) * 100.0;
-  } else if (thermal_kw_calculated > 10000.0) {
-    current_state = 1;  // STARTUP
-    power_level = 10.0;
-  } else {
-    current_state = 0;  // OFF
-    power_level = 0.0;
+  // Calculate reactor thermal capacity for state machine
+  float avgRodPosition = (shim_actual + regulating_actual) / 2.0;
+  float reactor_thermal_capacity = 0.0;
+  
+  if (avgRodPosition > 10.0) {
+    reactor_thermal_capacity = avgRodPosition * avgRodPosition * 90.0;
+    reactor_thermal_capacity += shim_actual * 150.0;
+    reactor_thermal_capacity += regulating_actual * 200.0;
   }
   
-  // Clamp power level
-  if (power_level > 100.0) power_level = 100.0;
-  if (power_level < 0.0) power_level = 0.0;
+  switch (current_state) {
+    case STATE_IDLE:
+      // Start turbine when reactor thermal > 50 MWth
+      if (reactor_thermal_capacity > 50000.0) {
+        current_state = STATE_STARTING;
+        Serial.println("Turbine: IDLE → STARTING");
+      }
+      power_level = 0.0;
+      break;
+      
+    case STATE_STARTING:
+      // Gradual turbine spin-up
+      power_level += 0.5;
+      if (power_level >= 100.0) {
+        power_level = 100.0;
+        current_state = STATE_RUNNING;
+        Serial.println("Turbine: STARTING → RUNNING");
+      }
+      break;
+      
+    case STATE_RUNNING:
+      // Shutdown if reactor thermal too low
+      if (reactor_thermal_capacity < 20000.0) {
+        current_state = STATE_SHUTDOWN;
+        Serial.println("Turbine: RUNNING → SHUTDOWN");
+      }
+      power_level = 100.0;
+      break;
+      
+    case STATE_SHUTDOWN:
+      power_level -= 1.0;
+      if (power_level <= 0.0) {
+        power_level = 0.0;
+        current_state = STATE_IDLE;
+        Serial.println("Turbine: SHUTDOWN → IDLE");
+      }
+      break;
+  }
+  
+  // Update pump targets based on turbine state
+  if (current_state == STATE_IDLE) {
+    pump_primary_target = 0.0;
+    pump_secondary_target = 0.0;
+    pump_tertiary_target = 0.0;
+  } else if (current_state == STATE_STARTING) {
+    pump_primary_target = 50.0;
+    pump_secondary_target = 50.0;
+    pump_tertiary_target = 50.0;
+  } else if (current_state == STATE_RUNNING) {
+    pump_primary_target = 100.0;
+    pump_secondary_target = 100.0;
+    pump_tertiary_target = 100.0;
+  } else if (current_state == STATE_SHUTDOWN) {
+    pump_primary_target = 20.0;
+    pump_secondary_target = 20.0;
+    pump_tertiary_target = 20.0;
+  }
 }
 
 // ============================================
@@ -396,4 +563,109 @@ void updateHumidifiers() {
   humid_ct2_status = humid_ct2_cmd;
   humid_ct3_status = humid_ct3_cmd;
   humid_ct4_status = humid_ct4_cmd;
+}
+
+// ============================================
+// Motor Direction Control
+// ============================================
+void setMotorDirection(uint8_t motor_id, uint8_t direction) {
+  /*
+   * Set motor direction for L298N H-Bridge
+   * Only turbine has GPIO direction control
+   * 
+   * Parameters:
+   *   motor_id: 1=Primer, 2=Sekunder, 3=Tersier, 4=Turbin
+   *   direction: MOTOR_FORWARD, MOTOR_REVERSE, MOTOR_STOP
+   */
+  
+  // Only turbine (motor_id = 4) has GPIO control
+  if (motor_id == 4) {
+    if (direction == MOTOR_FORWARD) {
+      digitalWrite(MOTOR_TURBINE_IN1, HIGH);
+      digitalWrite(MOTOR_TURBINE_IN2, LOW);
+    } else if (direction == MOTOR_REVERSE) {
+      digitalWrite(MOTOR_TURBINE_IN1, LOW);
+      digitalWrite(MOTOR_TURBINE_IN2, HIGH);
+    } else { // MOTOR_STOP
+      digitalWrite(MOTOR_TURBINE_IN1, LOW);
+      digitalWrite(MOTOR_TURBINE_IN2, LOW);
+    }
+  }
+  // Pumps 1-3: Direction hard-wired on L298N (always FORWARD)
+}
+
+// ============================================
+// Pump Gradual Speed Control
+// ============================================
+void updatePumpSpeeds() {
+  // Primary pump
+  if (pump_primary_actual < pump_primary_target) {
+    pump_primary_actual += 2.0;  // +2% per cycle
+    if (pump_primary_actual > pump_primary_target) {
+      pump_primary_actual = pump_primary_target;
+    }
+  } else if (pump_primary_actual > pump_primary_target) {
+    pump_primary_actual -= 1.0;  // -1% per cycle
+    if (pump_primary_actual < pump_primary_target) {
+      pump_primary_actual = pump_primary_target;
+    }
+  }
+  
+  // Secondary pump
+  if (pump_secondary_actual < pump_secondary_target) {
+    pump_secondary_actual += 2.0;
+    if (pump_secondary_actual > pump_secondary_target) {
+      pump_secondary_actual = pump_secondary_target;
+    }
+  } else if (pump_secondary_actual > pump_secondary_target) {
+    pump_secondary_actual -= 1.0;
+    if (pump_secondary_actual < pump_secondary_target) {
+      pump_secondary_actual = pump_secondary_target;
+    }
+  }
+  
+  // Tertiary pump
+  if (pump_tertiary_actual < pump_tertiary_target) {
+    pump_tertiary_actual += 2.0;
+    if (pump_tertiary_actual > pump_tertiary_target) {
+      pump_tertiary_actual = pump_tertiary_target;
+    }
+  } else if (pump_tertiary_actual > pump_tertiary_target) {
+    pump_tertiary_actual -= 1.0;
+    if (pump_tertiary_actual < pump_tertiary_target) {
+      pump_tertiary_actual = pump_tertiary_target;
+    }
+  }
+  
+  // Apply PWM to motor drivers
+  int pwm_primary = map((int)pump_primary_actual, 0, 100, 0, 255);
+  int pwm_secondary = map((int)pump_secondary_actual, 0, 100, 0, 255);
+  int pwm_tertiary = map((int)pump_tertiary_actual, 0, 100, 0, 255);
+  
+  ledcWrite(MOTOR_PUMP_PRIMARY, pwm_primary);
+  ledcWrite(MOTOR_PUMP_SECONDARY, pwm_secondary);
+  ledcWrite(MOTOR_PUMP_TERTIARY, pwm_tertiary);
+}
+
+// ============================================
+// Turbine Motor Speed Control
+// ============================================
+void updateTurbineSpeed() {
+  // Turbine speed based on shim and regulating rod position
+  float avg_control_rods = (shim_actual + regulating_actual) / 2.0;
+  
+  turbine_speed = avg_control_rods;
+  
+  // Minimum threshold
+  if (turbine_speed < 10.0) {
+    turbine_speed = 0.0;
+    setMotorDirection(4, MOTOR_STOP);
+  } else {
+    setMotorDirection(4, MOTOR_FORWARD);
+  }
+  
+  // Convert to PWM (0-255)
+  int pwm_turbine = map((int)turbine_speed, 0, 100, 0, 255);
+  
+  ledcWrite(MOTOR_TURBINE, pwm_turbine);
 }

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ESP_BC_Data:
-    """Data structure for ESP-BC (Control Rods + Turbine + Humidifier + Pumps)"""
+    """Data structure for ESP-BC (Control Rods + Turbine + Humidifier + Pumps + Motor Driver)"""
     # To ESP-BC
     safety_target: int = 0
     shim_target: int = 0
@@ -35,16 +35,25 @@ class ESP_BC_Data:
     humid_ct3_cmd: int = 0
     humid_ct4_cmd: int = 0
     
-    # From ESP-BC
+    # From ESP-BC - Control Rods
     safety_actual: int = 0
     shim_actual: int = 0
     regulating_actual: int = 0
+    
+    # From ESP-BC - Turbine & Power
     kw_thermal: float = 0.0
     power_level: float = 0.0
     state: int = 0
     generator_status: int = 0
     turbine_status: int = 0
+    turbine_speed: float = 0.0
     
+    # From ESP-BC - Pump Speeds (automatic control by ESP)
+    pump_primary_speed: float = 0.0
+    pump_secondary_speed: float = 0.0
+    pump_tertiary_speed: float = 0.0
+    
+    # From ESP-BC - Humidifier Status
     humid_sg1_status: int = 0
     humid_sg2_status: int = 0
     humid_ct1_status: int = 0
@@ -322,14 +331,24 @@ class UARTMaster:
         response = self.esp_bc.send_receive(command, timeout=0.5)
         
         if response and response.get("status") == "ok":
-            # Parse response
+            # Parse response - Control Rods
             self.esp_bc_data.safety_actual = response.get("rods", [0,0,0])[0]
             self.esp_bc_data.shim_actual = response.get("rods", [0,0,0])[1]
             self.esp_bc_data.regulating_actual = response.get("rods", [0,0,0])[2]
+            
+            # Parse response - Turbine & Power
             self.esp_bc_data.kw_thermal = response.get("thermal_kw", 0.0)
             self.esp_bc_data.power_level = response.get("power_level", 0.0)
             self.esp_bc_data.state = response.get("state", 0)
+            self.esp_bc_data.turbine_speed = response.get("turbine_speed", 0.0)
             
+            # Parse response - Pump Speeds (automatic by ESP)
+            pump_speeds = response.get("pump_speeds", [0.0, 0.0, 0.0])
+            self.esp_bc_data.pump_primary_speed = pump_speeds[0]
+            self.esp_bc_data.pump_secondary_speed = pump_speeds[1]
+            self.esp_bc_data.pump_tertiary_speed = pump_speeds[2]
+            
+            # Parse response - Humidifier Status
             humid_status = response.get("humid_status", [[0,0], [0,0,0,0]])
             self.esp_bc_data.humid_sg1_status = humid_status[0][0]
             self.esp_bc_data.humid_sg2_status = humid_status[0][1]
@@ -339,7 +358,10 @@ class UARTMaster:
             self.esp_bc_data.humid_ct4_status = humid_status[1][3]
             
             logger.debug(f"ESP-BC: Rods={response.get('rods')}, "
-                        f"Thermal={self.esp_bc_data.kw_thermal:.1f}kW")
+                        f"Thermal={self.esp_bc_data.kw_thermal:.1f}kW, "
+                        f"Pumps=[{self.esp_bc_data.pump_primary_speed:.1f}%, "
+                        f"{self.esp_bc_data.pump_secondary_speed:.1f}%, "
+                        f"{self.esp_bc_data.pump_tertiary_speed:.1f}%]")
             return True
         else:
             logger.warning("ESP-BC: No valid response")
@@ -484,6 +506,9 @@ if __name__ == "__main__":
             print(f"  ✅ Rod positions: {data.safety_actual}, {data.shim_actual}, {data.regulating_actual}")
             print(f"  ✅ Thermal power: {data.kw_thermal} kW")
             print(f"  ✅ Turbine power: {data.power_level}%")
+            print(f"  ✅ Turbine speed: {data.turbine_speed}%")
+            print(f"  ✅ Pump speeds: Primary={data.pump_primary_speed}%, Secondary={data.pump_secondary_speed}%, Tertiary={data.pump_tertiary_speed}%")
+            print(f"  ✅ Turbine state: {data.state} (0=IDLE, 1=STARTING, 2=RUNNING, 3=SHUTDOWN)")
         else:
             print("  ❌ Failed to communicate with ESP-BC")
         
