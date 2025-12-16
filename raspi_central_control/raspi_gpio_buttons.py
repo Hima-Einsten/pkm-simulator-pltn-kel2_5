@@ -79,12 +79,12 @@ BUTTON_NAMES = {
 class ButtonHandler:
     """Handles all physical push buttons with debouncing"""
     
-    def __init__(self, debounce_time=0.2):
+    def __init__(self, debounce_time=0.1):
         """
         Initialize GPIO buttons
         
         Args:
-            debounce_time: Debounce delay in seconds (default: 200ms)
+            debounce_time: Debounce delay in seconds (default: 100ms, optimized for fast response)
         """
         self.debounce_time = debounce_time
         self.last_press_time = {}

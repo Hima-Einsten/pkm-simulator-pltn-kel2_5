@@ -132,6 +132,9 @@ class PLTNPanelController:
         # Event queue for button presses (non-blocking)
         self.button_event_queue = Queue(maxsize=100)
         
+        # Flag for immediate ESP communication (bypass cycle wait)
+        self.esp_send_immediate = threading.Event()
+        
         # Initialize hardware components with graceful degradation
         logger.info("Phase 1: Core hardware initialization...")
         try:
@@ -600,13 +603,16 @@ class PLTNPanelController:
                         logger.info(f"💓 Event processor alive - Queue size: {self.button_event_queue.qsize()}")
                         loop_count = 0
                     
-                    # Wait for event (blocking, with timeout)
-                    event = self.button_event_queue.get(timeout=0.1)
+                    # Wait for event (blocking, with timeout) - optimized to 10ms for fast response
+                    event = self.button_event_queue.get(timeout=0.01)
                     
                     logger.info(f"🔹 Processing: {event.value}")
                     
                     # Process event with lock
                     self.process_button_event(event)
+                    
+                    # Trigger immediate ESP communication for fast response
+                    self.esp_send_immediate.set()
                     
                     # Mark task done
                     self.button_event_queue.task_done()
@@ -840,7 +846,7 @@ class PLTNPanelController:
     # ============================================
     
     def esp_communication_thread(self):
-        """Thread for ESP communication via UART (100ms cycle)"""
+        """Thread for ESP communication via UART (50ms cycle with immediate trigger)"""
         logger.info("ESP communication thread started (2 ESP via UART)")
         
         # Verify uart_master exists
@@ -852,6 +858,13 @@ class PLTNPanelController:
         
         while self.state.running:
             try:
+                # Wait for either timeout (50ms) OR immediate trigger from button event
+                triggered = self.esp_send_immediate.wait(timeout=0.05)  # 50ms optimized cycle
+                
+                if triggered:
+                    logger.debug("⚡ Immediate ESP send triggered by button event")
+                    self.esp_send_immediate.clear()  # Reset flag
+                
                 with self.uart_lock:
                     with self.state_lock:
                         # Send to ESP-BC (Control Rods + Turbine + Humidifier)
@@ -876,7 +889,7 @@ class PLTNPanelController:
                             self.state.thermal_kw = esp_bc_data.kw_thermal
                             
                             # Small delay between ESP commands for stability
-                            time.sleep(0.05)
+                            time.sleep(0.02)  # Reduced to 20ms for faster response
                             
                             # Send to ESP-E (LED Visualizer)
                             logger.debug(f"Sending to ESP-E: P={self.state.pressure:.1f}bar")
@@ -893,13 +906,11 @@ class PLTNPanelController:
                         else:
                             logger.warning("⚠️  ESP-BC update failed")
                 
-                time.sleep(0.1)  # 100ms
-                
             except Exception as e:
                 logger.error(f"Error in ESP communication thread: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
-                time.sleep(0.2)
+                time.sleep(0.1)
         
         logger.info("ESP communication thread stopped")
     
@@ -932,7 +943,7 @@ class PLTNPanelController:
         logger.info("Button polling thread stopped")
     
     def oled_update_thread(self):
-        """Thread for updating 9 OLED displays (200ms cycle)"""
+        """Thread for updating 9 OLED displays (100ms cycle - optimized for faster visual feedback)"""
         logger.info("OLED update thread started")
         
         if self.oled_manager is None:
@@ -945,7 +956,7 @@ class PLTNPanelController:
                     # Update all 9 OLED displays
                     self.oled_manager.update_all(self.state)
                 
-                time.sleep(0.2)  # 200ms update rate
+                time.sleep(0.1)  # 100ms update rate (faster visual feedback)
                 
             except Exception as e:
                 # Don't spam logs with OLED errors - it's not critical
