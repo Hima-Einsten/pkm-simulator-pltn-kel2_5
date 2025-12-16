@@ -54,6 +54,11 @@ class PanelState:
     pump_secondary_status: int = 0
     pump_tertiary_status: int = 0
     
+    # Pump transition timers (untuk tracking waktu startup/shutdown)
+    pump_primary_transition_start: float = 0.0
+    pump_secondary_transition_start: float = 0.0
+    pump_tertiary_transition_start: float = 0.0
+    
     # Rod positions (0-100%)
     safety_rod: int = 0
     shim_rod: int = 0
@@ -80,6 +85,7 @@ class PanelState:
     running: bool = True
 
 
+
 class PLTNPanelController:
     """
     Main PLTN Panel Controller Class
@@ -102,6 +108,7 @@ class PLTNPanelController:
             self.init_uart_master()  # Changed from init_i2c_master
             self.init_buttons()
             self.init_humidifier()
+            self.init_buzzer()
         except Exception as e:
             logger.error(f"Critical hardware initialization failed: {e}")
             logger.error("Cannot continue without core hardware")
@@ -221,6 +228,16 @@ class PLTNPanelController:
             logger.warning("   Humidifier control will not be available")
             self.humidifier = None
             raise
+    
+    def init_buzzer(self):
+        """Initialize buzzer alarm system"""
+        try:
+            self.buzzer = BuzzerAlarm()
+            logger.info("✓ Buzzer alarm initialized")
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to initialize buzzer: {e}")
+            logger.warning("   Alarm buzzer will not be available")
+            self.buzzer = None
     
     def init_oled_displays(self):
         """Initialize 9 OLED displays (0.91 inch 128x32) with timeout"""
@@ -473,10 +490,13 @@ class PLTNPanelController:
             self.state.pressure = 0.0
             self.state.thermal_kw = 0.0
             
-            # Reset pump status
+            # Reset pump status dan transition timers
             self.state.pump_primary_status = 0  # OFF
             self.state.pump_secondary_status = 0
             self.state.pump_tertiary_status = 0
+            self.state.pump_primary_transition_start = 0.0
+            self.state.pump_secondary_transition_start = 0.0
+            self.state.pump_tertiary_transition_start = 0.0
             
             # Reset rod positions
             self.state.safety_rod = 0
@@ -582,7 +602,8 @@ class PLTNPanelController:
                     self.state.humid_ct4_cmd = 1 if ct4 else 0
                     
                     # Check and update alarm status
-                    self.buzzer.check_alarms(self.state)
+                    if self.buzzer:
+                        self.buzzer.check_alarms(self.state)
                 
                 # Simulate pump startup/shutdown
                 self.update_pump_status()
@@ -596,37 +617,69 @@ class PLTNPanelController:
         logger.info("Control logic thread stopped")
     
     def update_pump_status(self):
-        """Update pump status (simulate startup/shutdown)"""
+        """Update pump status (simulate startup/shutdown) - NON-BLOCKING"""
+        current_time = time.time()
+        
         with self.state_lock:
             # Primary pump
             if self.state.pump_primary_status == 1:  # STARTING
-                time.sleep(2.0)  # Simulate startup delay
-                self.state.pump_primary_status = 2  # ON
-                logger.info("Primary pump: ON")
+                if self.state.pump_primary_transition_start == 0:
+                    self.state.pump_primary_transition_start = current_time
+                    logger.info("Primary pump: STARTING (2s delay)")
+                elif current_time - self.state.pump_primary_transition_start >= 2.0:
+                    self.state.pump_primary_status = 2  # ON
+                    self.state.pump_primary_transition_start = 0
+                    logger.info("Primary pump: ON")
             elif self.state.pump_primary_status == 3:  # SHUTTING_DOWN
-                time.sleep(1.0)
-                self.state.pump_primary_status = 0  # OFF
-                logger.info("Primary pump: OFF")
+                if self.state.pump_primary_transition_start == 0:
+                    self.state.pump_primary_transition_start = current_time
+                    logger.info("Primary pump: SHUTTING DOWN (1s delay)")
+                elif current_time - self.state.pump_primary_transition_start >= 1.0:
+                    self.state.pump_primary_status = 0  # OFF
+                    self.state.pump_primary_transition_start = 0
+                    logger.info("Primary pump: OFF")
+            else:
+                self.state.pump_primary_transition_start = 0
             
             # Secondary pump
-            if self.state.pump_secondary_status == 1:
-                time.sleep(2.0)
-                self.state.pump_secondary_status = 2
-                logger.info("Secondary pump: ON")
-            elif self.state.pump_secondary_status == 3:
-                time.sleep(1.0)
-                self.state.pump_secondary_status = 0
-                logger.info("Secondary pump: OFF")
+            if self.state.pump_secondary_status == 1:  # STARTING
+                if self.state.pump_secondary_transition_start == 0:
+                    self.state.pump_secondary_transition_start = current_time
+                    logger.info("Secondary pump: STARTING (2s delay)")
+                elif current_time - self.state.pump_secondary_transition_start >= 2.0:
+                    self.state.pump_secondary_status = 2  # ON
+                    self.state.pump_secondary_transition_start = 0
+                    logger.info("Secondary pump: ON")
+            elif self.state.pump_secondary_status == 3:  # SHUTTING_DOWN
+                if self.state.pump_secondary_transition_start == 0:
+                    self.state.pump_secondary_transition_start = current_time
+                    logger.info("Secondary pump: SHUTTING DOWN (1s delay)")
+                elif current_time - self.state.pump_secondary_transition_start >= 1.0:
+                    self.state.pump_secondary_status = 0  # OFF
+                    self.state.pump_secondary_transition_start = 0
+                    logger.info("Secondary pump: OFF")
+            else:
+                self.state.pump_secondary_transition_start = 0
             
             # Tertiary pump
-            if self.state.pump_tertiary_status == 1:
-                time.sleep(2.0)
-                self.state.pump_tertiary_status = 2
-                logger.info("Tertiary pump: ON")
-            elif self.state.pump_tertiary_status == 3:
-                time.sleep(1.0)
-                self.state.pump_tertiary_status = 0
-                logger.info("Tertiary pump: OFF")
+            if self.state.pump_tertiary_status == 1:  # STARTING
+                if self.state.pump_tertiary_transition_start == 0:
+                    self.state.pump_tertiary_transition_start = current_time
+                    logger.info("Tertiary pump: STARTING (2s delay)")
+                elif current_time - self.state.pump_tertiary_transition_start >= 2.0:
+                    self.state.pump_tertiary_status = 2  # ON
+                    self.state.pump_tertiary_transition_start = 0
+                    logger.info("Tertiary pump: ON")
+            elif self.state.pump_tertiary_status == 3:  # SHUTTING_DOWN
+                if self.state.pump_tertiary_transition_start == 0:
+                    self.state.pump_tertiary_transition_start = current_time
+                    logger.info("Tertiary pump: SHUTTING DOWN (1s delay)")
+                elif current_time - self.state.pump_tertiary_transition_start >= 1.0:
+                    self.state.pump_tertiary_status = 0  # OFF
+                    self.state.pump_tertiary_transition_start = 0
+                    logger.info("Tertiary pump: OFF")
+            else:
+                self.state.pump_tertiary_transition_start = 0
     
     # ============================================
     # ESP Communication Thread
