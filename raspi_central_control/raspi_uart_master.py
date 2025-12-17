@@ -61,9 +61,6 @@ class ESP_BC_Data:
     humid_ct3_status: int = 0
     humid_ct4_status: int = 0
 
-    # From ESP-BC - Busy status
-    busy: bool = False
-
 
 @dataclass
 class ESP_E_Data:
@@ -384,10 +381,7 @@ class UARTMaster:
             self.esp_bc_data.humid_ct3_status = humid_status[1][2]
             self.esp_bc_data.humid_ct4_status = humid_status[1][3]
             
-            # Parse busy status
-            self.esp_bc_data.busy = response.get("busy", False)
-            
-            logger.debug(f"ESP-BC: Busy={self.esp_bc_data.busy}, Rods={response.get('rods')}, "
+            logger.debug(f"ESP-BC: Rods={response.get('rods')}, "
                         f"Thermal={self.esp_bc_data.kw_thermal:.1f}kW, "
                         f"Pumps=[{self.esp_bc_data.pump_primary_speed:.1f}%, "
                         f"{self.esp_bc_data.pump_secondary_speed:.1f}%, "

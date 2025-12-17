@@ -361,10 +361,9 @@ class OLEDManager:
         title = title_map.get(pump_name, f"PUMP {pump_name}")
         display_obj.draw_text_centered(title, 1, display_obj.font_small)
         
-        # Status and PWM on one line
+        # Status on line 2
         status_text = ["OFF", "START", "ON", "STOP"][status]
-        status_pwm = f"{status_text} {pwm}%"
-        display_obj.draw_text_centered(status_pwm, 14, display_obj.font)
+        display_obj.draw_text_centered(status_text, 14, display_obj.font_large)
         
         display_obj.show()
     
@@ -461,24 +460,28 @@ class OLEDManager:
         
         display.show()
     
-    def update_system_status(self, turbine_state: int, humid_sg1: int, humid_sg2: int,
-                            humid_ct1: int, humid_ct2: int, humid_ct3: int, humid_ct4: int,
-                            interlock: bool = True):
+    def update_system_status(self, reactor_started: bool, pressure: float, 
+                            pump_primary: int, pump_secondary: int, pump_tertiary: int,
+                            interlock: bool, thermal_kw: float, turbine_speed: float):
         """
-        Update system status display
+        Update system status display with user instructions AND system status
         
         Args:
-            turbine_state: Turbine state (0=IDLE, 1=STARTING, 2=RUNNING, 3=SHUTDOWN)
-            humid_sg1-sg2: Steam generator humidifier status (0/1)
-            humid_ct1-ct4: Cooling tower humidifier status (0/1)
+            reactor_started: Reactor system started flag
+            pressure: Current pressure
+            pump_primary: Primary pump status
+            pump_secondary: Secondary pump status  
+            pump_tertiary: Tertiary pump status
             interlock: Interlock satisfied flag
+            thermal_kw: Thermal power in kW
+            turbine_speed: Turbine speed percentage
         """
         # Select channel first (before checking data)
         self.mux.select_esp_channel(2)  # Use ESP channel for TCA9548A #2, Channel 2
         
         # Check if data changed
-        current_data = (turbine_state, humid_sg1, humid_sg2, humid_ct1, 
-                       humid_ct2, humid_ct3, humid_ct4, interlock)
+        current_data = (reactor_started, pressure, pump_primary, pump_secondary, 
+                       pump_tertiary, interlock, thermal_kw, turbine_speed)
         
         if self.last_data['system_status'] == current_data:
             return  # No change, skip update
@@ -488,16 +491,52 @@ class OLEDManager:
         display = self.oled_system_status
         display.clear()
         
-        # Title (small font)
-        display.draw_text_centered("STATUS", 1, display.font_small)
-        
-        # Line 1: Turbine state (small font)
-        turbine_text = ["IDLE", "START", "RUN", "STOP"][turbine_state]
-        display.draw_text(f"T:{turbine_text}", 0, 11, display.font_small)
-        
-        # Line 2: Humidifier status (small font)
-        sg_ct = f"SG:{humid_sg1}{humid_sg2} CT:{humid_ct1}{humid_ct2}{humid_ct3}{humid_ct4}"
-        display.draw_text(sg_ct, 0, 21, display.font_small)
+        # Determine if showing instruction or status
+        # Show instruction if system not ready
+        if not reactor_started:
+            instruction = "Press START"
+            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
+            display.draw_text_centered(instruction, 14, display.font_large)
+        elif pressure < 40.0:
+            instruction = f"Raise P to 40"
+            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
+            display.draw_text_centered(instruction, 11, display.font_small)
+            display.draw_text(f"Now: {pressure:.0f}bar", 0, 21, display.font_small)
+        elif pump_primary != 2:  # Not ON
+            instruction = "Start Pump 1"
+            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
+            display.draw_text_centered(instruction, 14, display.font_large)
+        elif pump_secondary != 2:
+            instruction = "Start Pump 2"
+            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
+            display.draw_text_centered(instruction, 14, display.font_large)
+        elif pump_tertiary != 2:
+            instruction = "Start Pump 3"
+            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
+            display.draw_text_centered(instruction, 14, display.font_large)
+        elif not interlock:
+            instruction = "Wait P>=40bar"
+            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
+            display.draw_text_centered(instruction, 14, display.font)
+        else:
+            # System ready - show STATUS instead of instruction
+            display.draw_text_centered("STATUS", 1, display.font_small)
+            
+            # Line 1: Steam generation (thermal power)
+            if thermal_kw >= 50000:  # 50 MWth = steam production
+                steam_text = "Uap: Ya"
+            else:
+                steam_text = "Uap: Blm"
+            display.draw_text(steam_text, 0, 11, display.font_small)
+            
+            # Line 2: Turbine & Generator
+            if turbine_speed >= 80:
+                turb_gen = "Turbin&Gen:ON"
+            elif turbine_speed >= 10:
+                turb_gen = "Turbin:START"
+            else:
+                turb_gen = "Raise Rods!"
+            display.draw_text(turb_gen, 0, 21, display.font_small)
         
         display.show()
     
@@ -535,14 +574,14 @@ class OLEDManager:
         self.update_thermal_power(state.thermal_kw)
         
         self.update_system_status(
-            turbine_state=0,  # Placeholder
-            humid_sg1=state.humid_sg1_cmd,
-            humid_sg2=state.humid_sg2_cmd,
-            humid_ct1=state.humid_ct1_cmd,
-            humid_ct2=state.humid_ct2_cmd,
-            humid_ct3=state.humid_ct3_cmd,
-            humid_ct4=state.humid_ct4_cmd,
-            interlock=state.interlock_satisfied
+            reactor_started=state.reactor_started,
+            pressure=state.pressure,
+            pump_primary=state.pump_primary_status,
+            pump_secondary=state.pump_secondary_status,
+            pump_tertiary=state.pump_tertiary_status,
+            interlock=state.interlock_satisfied,
+            thermal_kw=state.thermal_kw,
+            turbine_speed=state.turbine_speed
         )
     
     def show_startup_screen(self):

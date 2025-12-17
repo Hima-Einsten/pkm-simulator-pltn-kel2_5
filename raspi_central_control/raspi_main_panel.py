@@ -17,7 +17,7 @@ from enum import Enum
 import raspi_config as config
 from raspi_tca9548a import DualMultiplexerManager
 from raspi_uart_master import UARTMaster  # UART instead of I2C
-from raspi_gpio_buttons import ButtonHandler as ButtonManager
+from raspi_gpio_buttons import ButtonHandler as ButtonManager, ButtonPin
 from raspi_humidifier_control import HumidifierController
 from raspi_buzzer_alarm import BuzzerAlarm
 from raspi_system_health import SystemHealthMonitor
@@ -93,6 +93,9 @@ class PanelState:
     
     # Thermal power from ESP-B
     thermal_kw: float = 0.0
+    
+    # Turbine speed from ESP-BC
+    turbine_speed: float = 0.0
     
     # Humidifier commands (6 individual relays)
     humid_sg1_cmd: int = 0
@@ -421,20 +424,17 @@ class PLTNPanelController:
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
-                self.state.pressure = min(self.state.pressure + 5.0, 200.0)
+                self.state.pressure = min(self.state.pressure + 1.0, 200.0)  # 1 bar increment
                 logger.info(f"✓ Pressure UP: {self.state.pressure:.1f} bar")
             
             elif event == ButtonEvent.PRESSURE_DOWN:
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
-                self.state.pressure = max(self.state.pressure - 5.0, 0.0)
+                self.state.pressure = max(self.state.pressure - 1.0, 0.0)  # 1 bar decrement
                 logger.info(f"✓ Pressure DOWN: {self.state.pressure:.1f} bar")
             
             elif event == ButtonEvent.PUMP_PRIMARY_ON:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -443,9 +443,6 @@ class PLTNPanelController:
                     logger.info("✓ Primary pump: STARTING")
             
             elif event == ButtonEvent.PUMP_PRIMARY_OFF:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -454,9 +451,6 @@ class PLTNPanelController:
                     logger.info("✓ Primary pump: SHUTTING DOWN")
             
             elif event == ButtonEvent.PUMP_SECONDARY_ON:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -465,9 +459,6 @@ class PLTNPanelController:
                     logger.info("✓ Secondary pump: STARTING")
             
             elif event == ButtonEvent.PUMP_SECONDARY_OFF:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -476,9 +467,6 @@ class PLTNPanelController:
                     logger.info("✓ Secondary pump: SHUTTING DOWN")
             
             elif event == ButtonEvent.PUMP_TERTIARY_ON:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -487,9 +475,6 @@ class PLTNPanelController:
                     logger.info("✓ Tertiary pump: STARTING")
             
             elif event == ButtonEvent.PUMP_TERTIARY_OFF:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -498,72 +483,54 @@ class PLTNPanelController:
                     logger.info("✓ Tertiary pump: SHUTTING DOWN")
             
             elif event == ButtonEvent.SAFETY_ROD_UP:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
                 if not self._check_interlock_internal():
                     logger.warning("⚠️  Interlock not satisfied!")
                     return
-                self.state.safety_rod = min(self.state.safety_rod + 5, 100)
+                self.state.safety_rod = min(self.state.safety_rod + 1, 100)  # 1% increment
                 logger.info(f"✓ Safety rod UP: {self.state.safety_rod}%")
             
             elif event == ButtonEvent.SAFETY_ROD_DOWN:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
-                self.state.safety_rod = max(self.state.safety_rod - 5, 0)
+                self.state.safety_rod = max(self.state.safety_rod - 1, 0)  # 1% decrement
                 logger.info(f"✓ Safety rod DOWN: {self.state.safety_rod}%")
             
             elif event == ButtonEvent.SHIM_ROD_UP:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
                 if not self._check_interlock_internal():
                     logger.warning("⚠️  Interlock not satisfied!")
                     return
-                self.state.shim_rod = min(self.state.shim_rod + 5, 100)
+                self.state.shim_rod = min(self.state.shim_rod + 1, 100)  # 1% increment
                 logger.info(f"✓ Shim rod UP: {self.state.shim_rod}%")
             
             elif event == ButtonEvent.SHIM_ROD_DOWN:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
-                self.state.shim_rod = max(self.state.shim_rod - 5, 0)
+                self.state.shim_rod = max(self.state.shim_rod - 1, 0)  # 1% decrement
                 logger.info(f"✓ Shim rod DOWN: {self.state.shim_rod}%")
             
             elif event == ButtonEvent.REGULATING_ROD_UP:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
                 if not self._check_interlock_internal():
                     logger.warning("⚠️  Interlock not satisfied!")
                     return
-                self.state.regulating_rod = min(self.state.regulating_rod + 5, 100)
+                self.state.regulating_rod = min(self.state.regulating_rod + 1, 100)  # 1% increment
                 logger.info(f"✓ Regulating rod UP: {self.state.regulating_rod}%")
             
             elif event == ButtonEvent.REGULATING_ROD_DOWN:
-                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
-                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
-                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
-                self.state.regulating_rod = max(self.state.regulating_rod - 5, 0)
+                self.state.regulating_rod = max(self.state.regulating_rod - 1, 0)  # 1% decrement
                 logger.info(f"✓ Regulating rod DOWN: {self.state.regulating_rod}%")
             
             elif event == ButtonEvent.EMERGENCY:
@@ -927,6 +894,7 @@ class PLTNPanelController:
                             # Get data back from ESP-BC
                             esp_bc_data = self.uart_master.get_esp_bc_data()
                             self.state.thermal_kw = esp_bc_data.kw_thermal
+                            self.state.turbine_speed = esp_bc_data.turbine_speed
                         else:
                             logger.warning("⚠️  ESP-BC update failed")
                 
@@ -988,6 +956,57 @@ class PLTNPanelController:
         
         logger.info("Button polling thread stopped")
     
+    def button_hold_thread(self):
+        """Thread for detecting held buttons (rod and pressure control)"""
+        logger.info("Button hold detection thread started")
+        
+        # Define which buttons support hold
+        HOLD_BUTTONS = {
+            ButtonPin.SAFETY_ROD_UP,
+            ButtonPin.SAFETY_ROD_DOWN,
+            ButtonPin.SHIM_ROD_UP,
+            ButtonPin.SHIM_ROD_DOWN,
+            ButtonPin.REGULATING_ROD_UP,
+            ButtonPin.REGULATING_ROD_DOWN,
+            ButtonPin.PRESSURE_UP,
+            ButtonPin.PRESSURE_DOWN
+        }
+        
+        while self.state.running:
+            try:
+                # Check which buttons are held (50ms interval)
+                pressed = self.button_manager.check_hold_buttons(hold_interval=0.05)
+                
+                # Process only hold-supported buttons
+                for pin in pressed & HOLD_BUTTONS:
+                    # Queue event for held button
+                    if pin == ButtonPin.SAFETY_ROD_UP:
+                        self.button_event_queue.put(ButtonEvent.SAFETY_ROD_UP)
+                    elif pin == ButtonPin.SAFETY_ROD_DOWN:
+                        self.button_event_queue.put(ButtonEvent.SAFETY_ROD_DOWN)
+                    elif pin == ButtonPin.SHIM_ROD_UP:
+                        self.button_event_queue.put(ButtonEvent.SHIM_ROD_UP)
+                    elif pin == ButtonPin.SHIM_ROD_DOWN:
+                        self.button_event_queue.put(ButtonEvent.SHIM_ROD_DOWN)
+                    elif pin == ButtonPin.REGULATING_ROD_UP:
+                        self.button_event_queue.put(ButtonEvent.REGULATING_ROD_UP)
+                    elif pin == ButtonPin.REGULATING_ROD_DOWN:
+                        self.button_event_queue.put(ButtonEvent.REGULATING_ROD_DOWN)
+                    elif pin == ButtonPin.PRESSURE_UP:
+                        self.button_event_queue.put(ButtonEvent.PRESSURE_UP)
+                    elif pin == ButtonPin.PRESSURE_DOWN:
+                        self.button_event_queue.put(ButtonEvent.PRESSURE_DOWN)
+                
+                time.sleep(0.01)  # 10ms polling (same as button_polling)
+                
+            except Exception as e:
+                logger.error(f"Error in button hold thread: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                time.sleep(0.05)
+        
+        logger.info("Button hold detection thread stopped")
+    
     def oled_update_thread(self):
         """Thread for updating 9 OLED displays (100ms cycle - optimized for faster visual feedback)"""
         logger.info("OLED update thread started")
@@ -1022,6 +1041,7 @@ class PLTNPanelController:
         # Start threads
         threads = [
             threading.Thread(target=self.button_polling_thread, daemon=True, name="ButtonThread"),
+            threading.Thread(target=self.button_hold_thread, daemon=True, name="ButtonHoldThread"),
             threading.Thread(target=self.button_event_processor_thread, daemon=True, name="EventThread"),
             threading.Thread(target=self.control_logic_thread, daemon=True, name="ControlThread"),
             threading.Thread(target=self.esp_communication_thread, daemon=True, name="ESPCommThread"),

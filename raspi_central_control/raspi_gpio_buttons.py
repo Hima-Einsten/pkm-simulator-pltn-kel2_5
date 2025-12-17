@@ -147,6 +147,33 @@ class ButtonHandler:
             # Update last state AFTER checking
             self.last_state[pin] = current_state
     
+    def check_hold_buttons(self, hold_interval=0.05):
+        """
+        Check if buttons are being HELD (LEVEL detection)
+        Returns set of ButtonPin that are currently pressed (LOW)
+        
+        This allows continuous action while holding button (for rods and pressure)
+        
+        Args:
+            hold_interval: Minimum interval between repeated actions (default 50ms)
+            
+        Returns:
+            set: Set of ButtonPin currently pressed
+        """
+        current_time = time.time()
+        pressed_buttons = set()
+        
+        for pin in ButtonPin:
+            current_state = GPIO.input(pin)
+            
+            # Check if button is pressed (LOW) and interval passed
+            if current_state == GPIO.LOW:
+                if current_time - self.last_press_time[pin] > hold_interval:
+                    pressed_buttons.add(pin)
+                    self.last_press_time[pin] = current_time
+        
+        return pressed_buttons
+    
     def is_button_pressed(self, button_pin):
         """
         Check if specific button is currently pressed (without callback)
