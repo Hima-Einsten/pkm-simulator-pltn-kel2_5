@@ -891,24 +891,30 @@ class PLTNPanelController:
                             # Get data back from ESP-BC
                             esp_bc_data = self.uart_master.get_esp_bc_data()
                             self.state.thermal_kw = esp_bc_data.kw_thermal
-                            
-                            # Small delay between ESP commands for stability
-                            time.sleep(0.02)  # Reduced to 20ms for faster response
-                            
-                            # Send to ESP-E (LED Visualizer)
-                            logger.debug(f"Sending to ESP-E: P={self.state.pressure:.1f}bar")
-                            self.uart_master.update_esp_e(
-                                pressure_primary=self.state.pressure,
-                                pump_status_primary=self.state.pump_primary_status,
-                                pressure_secondary=self.state.pressure * 0.35,
-                                pump_status_secondary=self.state.pump_secondary_status,
-                                pressure_tertiary=self.state.pressure * 0.10,
-                                pump_status_tertiary=self.state.pump_tertiary_status,
-                                thermal_power_kw=self.state.thermal_kw
-                            )
-                            logger.debug("✓ ESP-E update success")
                         else:
                             logger.warning("⚠️  ESP-BC update failed")
+                
+                # Send to ESP-E outside of state_lock (non-critical, can be slower)
+                # This prevents ESP-E issues from blocking ESP-BC communication
+                with self.uart_lock:
+                    try:
+                        # Add delay before ESP-E to ensure UART buffers are clear
+                        time.sleep(0.05)  # 50ms delay for UART stability
+                        
+                        # Send to ESP-E (LED Visualizer)
+                        logger.debug(f"Sending to ESP-E: P={self.state.pressure:.1f}bar")
+                        self.uart_master.update_esp_e(
+                            pressure_primary=self.state.pressure,
+                            pump_status_primary=self.state.pump_primary_status,
+                            pressure_secondary=self.state.pressure * 0.35,
+                            pump_status_secondary=self.state.pump_secondary_status,
+                            pressure_tertiary=self.state.pressure * 0.10,
+                            pump_status_tertiary=self.state.pump_tertiary_status,
+                            thermal_power_kw=self.state.thermal_kw
+                        )
+                        logger.debug("✓ ESP-E update success")
+                    except Exception as e:
+                        logger.debug(f"ESP-E communication error (non-critical): {e}")
                 
             except Exception as e:
                 logger.error(f"Error in ESP communication thread: {e}")
