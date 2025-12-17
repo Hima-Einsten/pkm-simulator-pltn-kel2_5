@@ -1068,9 +1068,17 @@ class PLTNPanelController:
                 self.button_manager.cleanup()
         except Exception as e:
             logger.error(f"Error cleaning up buttons: {e}")
+
+        try:
+            # 2. Cleanup buzzer
+            if self.buzzer:
+                logger.info("Cleaning up buzzer...")
+                self.buzzer.cleanup()
+        except Exception as e:
+            logger.error(f"Error cleaning up buzzer: {e}")
         
         try:
-            # 2. Send safe state to ESPs before closing UART
+            # 3. Send safe state to ESPs before closing UART
             if self.uart_master:
                 logger.info("Sending safe state to ESPs via UART...")
                 
