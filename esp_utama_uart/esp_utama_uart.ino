@@ -118,9 +118,14 @@ float pump_primary_actual = 0.0;    // Current PWM (0-100%)
 float pump_secondary_actual = 0.0;
 float pump_tertiary_actual = 0.0;
 
-float pump_primary_target = 0.0;    // Target PWM from state machine
+float pump_primary_target = 0.0;    // Target PWM from RasPi button command
 float pump_secondary_target = 0.0;
 float pump_tertiary_target = 0.0;
+
+// Pump commands from RasPi (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
+int pump_primary_cmd = 0;
+int pump_secondary_cmd = 0;
+int pump_tertiary_cmd = 0;
 
 // ============================================
 // JSON Communication
@@ -252,8 +257,8 @@ void loop() {
   calculateThermalPower();
   updateTurbineState();
   updateHumidifiers();
-  updatePumpSpeeds();
-  updateTurbineSpeed();
+  updatePumpSpeeds();     // Pompa controlled by button commands from RasPi
+  updateTurbineSpeed();   // Turbin controlled by rod position
   
   delay(10);
 }
@@ -305,6 +310,14 @@ void handleUpdateCommand() {
     regulating_target = rods[2];
   }
   
+  // Parse pump commands from RasPi button status
+  if (json_rx.containsKey("pumps")) {
+    JsonArray pumps = json_rx["pumps"];
+    pump_primary_cmd = pumps[0];
+    pump_secondary_cmd = pumps[1];
+    pump_tertiary_cmd = pumps[2];
+  }
+  
   // Parse humidifier commands
   if (json_rx.containsKey("humid_sg")) {
     JsonArray humid_sg = json_rx["humid_sg"];
@@ -320,8 +333,9 @@ void handleUpdateCommand() {
     humid_ct4_cmd = humid_ct[3];
   }
   
-  Serial.printf("Targets: Rods=[%d,%d,%d], Humid_SG=[%d,%d], Humid_CT=[%d,%d,%d,%d]\n",
+  Serial.printf("Targets: Rods=[%d,%d,%d], Pumps=[%d,%d,%d], Humid_SG=[%d,%d], Humid_CT=[%d,%d,%d,%d]\n",
                 safety_target, shim_target, regulating_target,
+                pump_primary_cmd, pump_secondary_cmd, pump_tertiary_cmd,
                 humid_sg1_cmd, humid_sg2_cmd,
                 humid_ct1_cmd, humid_ct2_cmd, humid_ct3_cmd, humid_ct4_cmd);
   
@@ -475,6 +489,7 @@ void calculateThermalPower() {
 // Update Turbine State
 // ============================================
 void updateTurbineState() {
+  // TURBINE bergantung pada posisi batang kendali (rod position)
   // Calculate reactor thermal capacity for state machine
   float avgRodPosition = (shim_actual + regulating_actual) / 2.0;
   float reactor_thermal_capacity = 0.0;
@@ -524,24 +539,8 @@ void updateTurbineState() {
       break;
   }
   
-  // Update pump targets based on turbine state
-  if (current_state == STATE_IDLE) {
-    pump_primary_target = 0.0;
-    pump_secondary_target = 0.0;
-    pump_tertiary_target = 0.0;
-  } else if (current_state == STATE_STARTING) {
-    pump_primary_target = 50.0;
-    pump_secondary_target = 50.0;
-    pump_tertiary_target = 50.0;
-  } else if (current_state == STATE_RUNNING) {
-    pump_primary_target = 100.0;
-    pump_secondary_target = 100.0;
-    pump_tertiary_target = 100.0;
-  } else if (current_state == STATE_SHUTDOWN) {
-    pump_primary_target = 20.0;
-    pump_secondary_target = 20.0;
-    pump_tertiary_target = 20.0;
-  }
+  // POMPA TIDAK LAGI di-update di sini!
+  // Pompa sekarang dikendalikan langsung oleh button command dari RasPi
 }
 
 // ============================================
@@ -595,49 +594,95 @@ void setMotorDirection(uint8_t motor_id, uint8_t direction) {
 }
 
 // ============================================
-// Pump Gradual Speed Control
+// Pump Gradual Speed Control (PWM Ramp-up/down)
 // ============================================
 void updatePumpSpeeds() {
-  // Primary pump
+  /*
+   * POMPA dikontrol oleh PUSH BUTTON dari Raspberry Pi
+   * dengan PWM gradual (smooth ramp-up dan ramp-down)
+   * 
+   * Button Status dari RasPi:
+   * 0 = OFF
+   * 1 = STARTING (ramp-up)
+   * 2 = ON (full speed)
+   * 3 = SHUTTING_DOWN (ramp-down)
+   */
+  
+  // === PRIMARY PUMP ===
+  if (pump_primary_cmd == 0) {
+    // OFF
+    pump_primary_target = 0.0;
+  } else if (pump_primary_cmd == 1) {
+    // STARTING - gradual ramp-up to 50%
+    pump_primary_target = 50.0;
+  } else if (pump_primary_cmd == 2) {
+    // ON - full speed
+    pump_primary_target = 100.0;
+  } else if (pump_primary_cmd == 3) {
+    // SHUTTING_DOWN - ramp to 20%
+    pump_primary_target = 20.0;
+  }
+  
+  // Gradual PWM change
   if (pump_primary_actual < pump_primary_target) {
-    pump_primary_actual += 2.0;  // +2% per cycle
+    pump_primary_actual += 1.0;  // +1% per cycle (smooth ramp-up)
     if (pump_primary_actual > pump_primary_target) {
       pump_primary_actual = pump_primary_target;
     }
   } else if (pump_primary_actual > pump_primary_target) {
-    pump_primary_actual -= 1.0;  // -1% per cycle
+    pump_primary_actual -= 2.0;  // -2% per cycle (faster ramp-down)
     if (pump_primary_actual < pump_primary_target) {
       pump_primary_actual = pump_primary_target;
     }
   }
   
-  // Secondary pump
+  // === SECONDARY PUMP ===
+  if (pump_secondary_cmd == 0) {
+    pump_secondary_target = 0.0;
+  } else if (pump_secondary_cmd == 1) {
+    pump_secondary_target = 50.0;
+  } else if (pump_secondary_cmd == 2) {
+    pump_secondary_target = 100.0;
+  } else if (pump_secondary_cmd == 3) {
+    pump_secondary_target = 20.0;
+  }
+  
   if (pump_secondary_actual < pump_secondary_target) {
-    pump_secondary_actual += 2.0;
+    pump_secondary_actual += 1.0;
     if (pump_secondary_actual > pump_secondary_target) {
       pump_secondary_actual = pump_secondary_target;
     }
   } else if (pump_secondary_actual > pump_secondary_target) {
-    pump_secondary_actual -= 1.0;
+    pump_secondary_actual -= 2.0;
     if (pump_secondary_actual < pump_secondary_target) {
       pump_secondary_actual = pump_secondary_target;
     }
   }
   
-  // Tertiary pump
+  // === TERTIARY PUMP ===
+  if (pump_tertiary_cmd == 0) {
+    pump_tertiary_target = 0.0;
+  } else if (pump_tertiary_cmd == 1) {
+    pump_tertiary_target = 50.0;
+  } else if (pump_tertiary_cmd == 2) {
+    pump_tertiary_target = 100.0;
+  } else if (pump_tertiary_cmd == 3) {
+    pump_tertiary_target = 20.0;
+  }
+  
   if (pump_tertiary_actual < pump_tertiary_target) {
-    pump_tertiary_actual += 2.0;
+    pump_tertiary_actual += 1.0;
     if (pump_tertiary_actual > pump_tertiary_target) {
       pump_tertiary_actual = pump_tertiary_target;
     }
   } else if (pump_tertiary_actual > pump_tertiary_target) {
-    pump_tertiary_actual -= 1.0;
+    pump_tertiary_actual -= 2.0;
     if (pump_tertiary_actual < pump_tertiary_target) {
       pump_tertiary_actual = pump_tertiary_target;
     }
   }
   
-  // Apply PWM to motor drivers
+  // Apply PWM to motor drivers (0-255)
   int pwm_primary = map((int)pump_primary_actual, 0, 100, 0, 255);
   int pwm_secondary = map((int)pump_secondary_actual, 0, 100, 0, 255);
   int pwm_tertiary = map((int)pump_tertiary_actual, 0, 100, 0, 255);
@@ -651,6 +696,7 @@ void updatePumpSpeeds() {
 // Turbine Motor Speed Control
 // ============================================
 void updateTurbineSpeed() {
+  // TURBIN bergantung pada posisi batang kendali (shim & regulating rod)
   // Turbine speed based on shim and regulating rod position
   float avg_control_rods = (shim_actual + regulating_actual) / 2.0;
   

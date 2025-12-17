@@ -867,13 +867,17 @@ class PLTNPanelController:
                 
                 with self.uart_lock:
                     with self.state_lock:
-                        # Send to ESP-BC (Control Rods + Turbine + Humidifier)
-                        logger.debug(f"Sending to ESP-BC: rods=[{self.state.safety_rod},{self.state.shim_rod},{self.state.regulating_rod}]")
+                        # Send to ESP-BC (Control Rods + Pumps + Turbine + Humidifier)
+                        logger.debug(f"Sending to ESP-BC: rods=[{self.state.safety_rod},{self.state.shim_rod},{self.state.regulating_rod}], "
+                                    f"pumps=[{self.state.pump_primary_status},{self.state.pump_secondary_status},{self.state.pump_tertiary_status}]")
                         
                         success = self.uart_master.update_esp_bc(
                             self.state.safety_rod,
                             self.state.shim_rod,
                             self.state.regulating_rod,
+                            self.state.pump_primary_status,
+                            self.state.pump_secondary_status,
+                            self.state.pump_tertiary_status,
                             self.state.humid_sg1_cmd,
                             self.state.humid_sg2_cmd,
                             self.state.humid_ct1_cmd,
@@ -1064,8 +1068,8 @@ class PLTNPanelController:
             if self.uart_master:
                 logger.info("Sending safe state to ESPs via UART...")
                 
-                # ESP-BC: All rods to 0%, all humidifiers off
-                self.uart_master.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0)
+                # ESP-BC: All rods to 0%, all pumps off, all humidifiers off
+                self.uart_master.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
                 time.sleep(0.05)
                 
                 # ESP-E: All pumps off

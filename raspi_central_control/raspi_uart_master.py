@@ -304,6 +304,7 @@ class UARTMaster:
         logger.info("="*70)
     
     def update_esp_bc(self, safety: int, shim: int, regulating: int,
+                      pump_primary: int = 0, pump_secondary: int = 0, pump_tertiary: int = 0,
                       humid_sg1: int = 0, humid_sg2: int = 0,
                       humid_ct1: int = 0, humid_ct2: int = 0,
                       humid_ct3: int = 0, humid_ct4: int = 0) -> bool:
@@ -314,6 +315,9 @@ class UARTMaster:
             safety: Safety rod target (0-100%)
             shim: Shim rod target (0-100%)
             regulating: Regulating rod target (0-100%)
+            pump_primary: Primary pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
+            pump_secondary: Secondary pump status (0-3)
+            pump_tertiary: Tertiary pump status (0-3)
             humid_sg1-2: Steam Generator humidifiers (0/1)
             humid_ct1-4: Cooling Tower humidifiers (0/1)
             
@@ -338,6 +342,7 @@ class UARTMaster:
         command = {
             "cmd": "update",
             "rods": [safety, shim, regulating],
+            "pumps": [pump_primary, pump_secondary, pump_tertiary],
             "humid_sg": [humid_sg1, humid_sg2],
             "humid_ct": [humid_ct1, humid_ct2, humid_ct3, humid_ct4]
         }
@@ -478,7 +483,7 @@ class UARTMaster:
         try:
             if self.esp_bc_connected:
                 logger.info("Sending safe state to ESP-BC...")
-                self.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0)
+                self.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         except:
             pass
         
@@ -517,6 +522,7 @@ if __name__ == "__main__":
         print("\n[TEST] ESP-BC Communication...")
         success = master.update_esp_bc(
             safety=50, shim=60, regulating=70,
+            pump_primary=2, pump_secondary=2, pump_tertiary=1,
             humid_sg1=1, humid_sg2=1,
             humid_ct1=1, humid_ct2=0, humid_ct3=1, humid_ct4=0
         )
