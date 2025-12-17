@@ -161,7 +161,7 @@ class UARTDevice:
                 self.serial.write(json_str.encode('utf-8'))
                 self.serial.flush()
                 
-                logger.debug(f"TX {self.port}: {json_str.strip()}")
+                logger.info(f"TX {self.port}: {json_str.strip()}")
                 return True
                 
             except Exception as e:
@@ -204,7 +204,7 @@ class UARTDevice:
                 
                 # Decode and parse JSON
                 json_str = line.decode('utf-8').strip()
-                logger.debug(f"RX {self.port}: {json_str}")
+                logger.info(f"RX {self.port}: {json_str}")
                 
                 data = json.loads(json_str)
                 

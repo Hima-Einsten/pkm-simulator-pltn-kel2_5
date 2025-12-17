@@ -895,7 +895,11 @@ class PLTNPanelController:
                         logger.debug(f"Sending to ESP-BC: rods=[{self.state.safety_rod},{self.state.shim_rod},{self.state.regulating_rod}], "
                                     f"pumps=[{self.state.pump_primary_status},{self.state.pump_secondary_status},{self.state.pump_tertiary_status}]")
                         
-                        success = self.uart_master.update_esp_bc(
+                        if not self.uart_master.esp_bc_connected:
+                            logger.warning("⚠️  ESP-BC not connected, skipping UART send")
+                            success = False
+                        else:
+                            success = self.uart_master.update_esp_bc(
                             self.state.safety_rod,
                             self.state.shim_rod,
                             self.state.regulating_rod,
