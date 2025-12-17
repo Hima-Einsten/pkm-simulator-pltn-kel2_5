@@ -154,9 +154,6 @@ class UARTDevice:
                     logger.error(f"Serial port {self.port} not open")
                     return False
                 
-                # Flush input buffer to remove stale data
-                self.serial.reset_input_buffer()
-                
                 # Convert to JSON and add newline
                 json_str = json.dumps(data) + '\n'
                 
@@ -220,8 +217,14 @@ class UARTDevice:
                 return data
                 
             except json.JSONDecodeError as e:
+                # Attempt to show raw bytes received for debugging
+                try:
+                    raw = line
+                except Exception:
+                    raw = b''
                 logger.error(f"JSON decode error from {self.port}: {e}")
-                logger.error(f"  --> Received raw data: '{json_str}'")
+                logger.error(f"  --> Received raw bytes: {raw}")
+                logger.error(f"  --> Decoded string attempted: '{json_str if 'json_str' in locals() else '<none>'}'")
                 self.error_count += 1
                 return None
                 
@@ -388,7 +391,10 @@ class UARTMaster:
                         f"{self.esp_bc_data.pump_tertiary_speed:.1f}%]")
             return True
         else:
-            logger.warning("ESP-BC: No valid response")
+            if response is None:
+                logger.warning("ESP-BC: No response or timeout")
+            else:
+                logger.warning(f"ESP-BC: Invalid response: {response}")
             return False
     
     def update_esp_e(self, pressure_primary: float, pump_status_primary: int,

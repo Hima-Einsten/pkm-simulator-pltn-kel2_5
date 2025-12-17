@@ -496,6 +496,18 @@ class PLTNPanelController:
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
+
+                # Safety rod hanya bisa turun jika shim dan regulating sudah 0%
+                if self.state.shim_rod > 0 or self.state.regulating_rod > 0:
+                    logger.warning("⚠️  Cannot lower Safety Rod! Lower Shim & Regulating first!")
+                    # Trigger buzzer warning if available
+                    if self.buzzer:
+                        try:
+                            self.buzzer.beep(duration=0.2)
+                        except Exception:
+                            logger.debug("Buzzer beep failed")
+                    return
+
                 self.state.safety_rod = max(self.state.safety_rod - 1, 0)  # 1% decrement
                 logger.info(f"✓ Safety rod DOWN: {self.state.safety_rod}%")
             
@@ -662,6 +674,7 @@ class PLTNPanelController:
         - Allow: Pressure >= 40 bar
         - Allow: Reactor started
         - Allow: No emergency
+        - Require: All three pumps in ON state (status == 2)
         - NO NEED: Turbine running (turbine belum jalan saat initial rod raise)
         
         Phase 3+: Normal operation
@@ -687,11 +700,19 @@ class PLTNPanelController:
             logger.debug("Interlock: Emergency shutdown active")
             return False
         
+        # Check 4: All pumps must be ON (status == 2)
+        # Status codes: 0=OFF,1=STARTING,2=ON,3=SHUTTING_DOWN
+        if self.state.pump_primary_status != 2:
+            logger.debug(f"Interlock: Primary pump not ON (status={self.state.pump_primary_status})")
+            return False
+        if self.state.pump_secondary_status != 2:
+            logger.debug(f"Interlock: Secondary pump not ON (status={self.state.pump_secondary_status})")
+            return False
+        if self.state.pump_tertiary_status != 2:
+            logger.debug(f"Interlock: Tertiary pump not ON (status={self.state.pump_tertiary_status})")
+            return False
+        
         # All checks passed - safe to move rods
-        # NOTE: Tidak check turbine running karena:
-        # - Turbine belum jalan saat initial rod raise (Phase 2)
-        # - Turbine auto-start dari ESP-BC ketika thermal > 50 MWth (Phase 4)
-        # - Pompa auto-controlled dari ESP-BC turbine state machine
         return True
     
     # ============================================

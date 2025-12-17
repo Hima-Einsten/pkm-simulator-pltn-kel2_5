@@ -260,6 +260,9 @@ void loop() {
   updatePumpSpeeds();     // Pompa controlled by button commands from RasPi
   updateTurbineSpeed();   // Turbin controlled by rod position
   
+  // Flush UART TX buffer to prevent overflow
+  UartComm.flush();
+  
   delay(10);
 }
 
@@ -308,6 +311,11 @@ void handleUpdateCommand() {
     safety_target = rods[0];
     shim_target = rods[1];
     regulating_target = rods[2];
+    
+    Serial.printf("✓ Received Rod Targets: Safety=%d, Shim=%d, Reg=%d\n",
+                  safety_target, shim_target, regulating_target);
+  } else {
+    Serial.println("⚠️  No 'rods' field in command!");
   }
   
   // Parse pump commands from RasPi button status
@@ -421,15 +429,44 @@ void sendError(const char* message) {
 // Update Servos
 // ============================================
 void updateServos() {
+  // Track if any servo is moving
+  bool servo_moving = false;
+  
   // Smoothly move to target (1% per cycle)
-  if (safety_actual < safety_target) safety_actual++;
-  if (safety_actual > safety_target) safety_actual--;
+  if (safety_actual < safety_target) {
+    safety_actual++;
+    servo_moving = true;
+  }
+  if (safety_actual > safety_target) {
+    safety_actual--;
+    servo_moving = true;
+  }
   
-  if (shim_actual < shim_target) shim_actual++;
-  if (shim_actual > shim_target) shim_actual--;
+  if (shim_actual < shim_target) {
+    shim_actual++;
+    servo_moving = true;
+  }
+  if (shim_actual > shim_target) {
+    shim_actual--;
+    servo_moving = true;
+  }
   
-  if (regulating_actual < regulating_target) regulating_actual++;
-  if (regulating_actual > regulating_target) regulating_actual--;
+  if (regulating_actual < regulating_target) {
+    regulating_actual++;
+    servo_moving = true;
+  }
+  if (regulating_actual > regulating_target) {
+    regulating_actual--;
+    servo_moving = true;
+  }
+  
+  // Debug log when servos are moving
+  if (servo_moving) {
+    Serial.printf("Servos Moving: Safety=%d/%d, Shim=%d/%d, Reg=%d/%d\n",
+                  safety_actual, safety_target,
+                  shim_actual, shim_target,
+                  regulating_actual, regulating_target);
+  }
   
   // Map 0-100% to servo angle (0-180 degrees)
   int angle_safety = map(safety_actual, 0, 100, 0, 180);
