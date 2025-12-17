@@ -4,7 +4,7 @@ Replaces I2C communication with UART for ESP32 slaves
 
 Architecture:
 - ESP-BC: /dev/ttyAMA0 (GPIO 14/15) - Control Rods + Turbine + Humidifier
-- ESP-E:  /dev/ttyAMA1 (GPIO 0/1)  - LED Visualizer
+- ESP-E:  /dev/ttyAMA1 (GPIO 4/5)   - LED Visualizer
 
 Protocol: JSON over UART (115200 baud, 8N1)
 """
@@ -250,7 +250,7 @@ class UARTMaster:
     """
     
     def __init__(self, esp_bc_port: str = '/dev/ttyAMA0', 
-                 esp_e_port: str = None,
+                 esp_e_port: str = '/dev/ttyAMA1',  # GPIO 4/5
                  baudrate: int = 115200):
         """
         Initialize UART Master

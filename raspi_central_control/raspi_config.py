@@ -7,8 +7,8 @@ PLTN Simulator v2.0 with Full I2C Architecture
 # UART Configuration (NEW - Replaces I2C for ESP)
 # ============================================
 # UART Ports for ESP Communication
-UART_ESP_BC_PORT = '/dev/ttyAMA0'    # GPIO 14/15 (Built-in UART)
-UART_ESP_E_PORT = '/dev/ttyUSB0'     # USB Serial Adapter (CH340/CP2102/FT232)
+UART_ESP_BC_PORT = '/dev/ttyAMA0'    # GPIO 14/15 (Built-in UART0)
+UART_ESP_E_PORT = '/dev/ttyAMA1'     # GPIO 4/5 (UART3) - CHANGED from USB adapter
 UART_BAUDRATE = 115200               # Standard baudrate
 UART_TIMEOUT = 0.5                   # Read timeout in seconds
 UART_UPDATE_INTERVAL = 0.1           # Update interval (100ms)
@@ -50,6 +50,7 @@ ESP_E_CHANNEL = 0      # ESP-E on multiplexer #2 (0x71)
 # GPIO Pin Configuration
 # ============================================
 # Button Pins (Input with Pull-up)
+BTN_PUMP_PRIM_ON = 11    # Pompa Primer ON - MOVED from GPIO 5 (UART3 conflict)
 BTN_PRES_UP = 5          # Naik tekanan pressurizer
 BTN_PRES_DOWN = 6        # Turun tekanan pressurizer
 BTN_PUMP_PRIM_ON = 4     # Pompa Primer ON

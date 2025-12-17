@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class ButtonPin(IntEnum):
     """GPIO pin assignments for buttons"""
     # Pump Control (6 buttons)
-    PUMP_PRIMARY_ON = 5
+    PUMP_PRIMARY_ON = 11   # MOVED from GPIO 5 (UART3 conflict)
     PUMP_PRIMARY_OFF = 6
     PUMP_SECONDARY_ON = 13
     PUMP_SECONDARY_OFF = 19
