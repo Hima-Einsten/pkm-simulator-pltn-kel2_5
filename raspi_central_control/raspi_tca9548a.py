@@ -79,7 +79,7 @@ class TCA9548A:
             self.current_channel = channel
             
             # Small delay for I2C bus to settle (prevent bus collision)
-            time.sleep(0.001)  # 1ms delay
+            time.sleep(0.005)  # 5ms delay
             
             logger.debug(f"Selected TCA9548A channel {channel}")
             return True

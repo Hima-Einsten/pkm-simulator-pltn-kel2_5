@@ -350,6 +350,7 @@ void sendStatus() {
   json_tx.clear();
   
   json_tx["status"] = "ok";
+  json_tx["busy"] = isSystemBusy(); // Add busy flag
   
   // Rod positions
   JsonArray rods = json_tx.createNestedArray("rods");
@@ -388,6 +389,23 @@ void sendStatus() {
   Serial.print("TX: ");
   serializeJson(json_tx, Serial);
   Serial.println();
+}
+
+// ============================================
+// Check System Busy Status
+// ============================================
+bool isSystemBusy() {
+  // Check if any rod is moving
+  if (safety_actual != safety_target) return true;
+  if (shim_actual != shim_target) return true;
+  if (regulating_actual != regulating_target) return true;
+
+  // Check if any pump is ramping up or down (using a small tolerance for float comparison)
+  if (abs(pump_primary_actual - pump_primary_target) > 0.1) return true;
+  if (abs(pump_secondary_actual - pump_secondary_target) > 0.1) return true;
+  if (abs(pump_tertiary_actual - pump_tertiary_target) > 0.1) return true;
+
+  return false;
 }
 
 // ============================================

@@ -432,6 +432,9 @@ class PLTNPanelController:
                 logger.info(f"✓ Pressure DOWN: {self.state.pressure:.1f} bar")
             
             elif event == ButtonEvent.PUMP_PRIMARY_ON:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -440,6 +443,9 @@ class PLTNPanelController:
                     logger.info("✓ Primary pump: STARTING")
             
             elif event == ButtonEvent.PUMP_PRIMARY_OFF:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -448,6 +454,9 @@ class PLTNPanelController:
                     logger.info("✓ Primary pump: SHUTTING DOWN")
             
             elif event == ButtonEvent.PUMP_SECONDARY_ON:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -456,6 +465,9 @@ class PLTNPanelController:
                     logger.info("✓ Secondary pump: STARTING")
             
             elif event == ButtonEvent.PUMP_SECONDARY_OFF:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -464,6 +476,9 @@ class PLTNPanelController:
                     logger.info("✓ Secondary pump: SHUTTING DOWN")
             
             elif event == ButtonEvent.PUMP_TERTIARY_ON:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -472,6 +487,9 @@ class PLTNPanelController:
                     logger.info("✓ Tertiary pump: STARTING")
             
             elif event == ButtonEvent.PUMP_TERTIARY_OFF:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -480,6 +498,9 @@ class PLTNPanelController:
                     logger.info("✓ Tertiary pump: SHUTTING DOWN")
             
             elif event == ButtonEvent.SAFETY_ROD_UP:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -490,6 +511,9 @@ class PLTNPanelController:
                 logger.info(f"✓ Safety rod UP: {self.state.safety_rod}%")
             
             elif event == ButtonEvent.SAFETY_ROD_DOWN:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -497,6 +521,9 @@ class PLTNPanelController:
                 logger.info(f"✓ Safety rod DOWN: {self.state.safety_rod}%")
             
             elif event == ButtonEvent.SHIM_ROD_UP:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -507,6 +534,9 @@ class PLTNPanelController:
                 logger.info(f"✓ Shim rod UP: {self.state.shim_rod}%")
             
             elif event == ButtonEvent.SHIM_ROD_DOWN:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -514,6 +544,9 @@ class PLTNPanelController:
                 logger.info(f"✓ Shim rod DOWN: {self.state.shim_rod}%")
             
             elif event == ButtonEvent.REGULATING_ROD_UP:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return
@@ -523,7 +556,10 @@ class PLTNPanelController:
                 self.state.regulating_rod = min(self.state.regulating_rod + 5, 100)
                 logger.info(f"✓ Regulating rod UP: {self.state.regulating_rod}%")
             
-            elif event == ButtonEvent.REGULATING_ROD_DOWN:
+            elif event == ButtonButtonEvent.REGULATING_ROD_DOWN:
+                if self.uart_master and self.uart_master.get_esp_bc_data().busy:
+                    logger.warning("⚠️  Command ignored: ESP-BC is busy.")
+                    return
                 if not self.state.reactor_started:
                     logger.warning("⚠️  Reactor not started!")
                     return

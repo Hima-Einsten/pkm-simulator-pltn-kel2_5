@@ -61,6 +61,9 @@ class ESP_BC_Data:
     humid_ct3_status: int = 0
     humid_ct4_status: int = 0
 
+    # From ESP-BC - Busy status
+    busy: bool = False
+
 
 @dataclass
 class ESP_E_Data:
@@ -154,6 +157,9 @@ class UARTDevice:
                     logger.error(f"Serial port {self.port} not open")
                     return False
                 
+                # Flush input buffer to remove stale data
+                self.serial.reset_input_buffer()
+                
                 # Convert to JSON and add newline
                 json_str = json.dumps(data) + '\n'
                 
@@ -218,6 +224,7 @@ class UARTDevice:
                 
             except json.JSONDecodeError as e:
                 logger.error(f"JSON decode error from {self.port}: {e}")
+                logger.error(f"  --> Received raw data: '{json_str}'")
                 self.error_count += 1
                 return None
                 
@@ -377,7 +384,10 @@ class UARTMaster:
             self.esp_bc_data.humid_ct3_status = humid_status[1][2]
             self.esp_bc_data.humid_ct4_status = humid_status[1][3]
             
-            logger.debug(f"ESP-BC: Rods={response.get('rods')}, "
+            # Parse busy status
+            self.esp_bc_data.busy = response.get("busy", False)
+            
+            logger.debug(f"ESP-BC: Busy={self.esp_bc_data.busy}, Rods={response.get('rods')}, "
                         f"Thermal={self.esp_bc_data.kw_thermal:.1f}kW, "
                         f"Pumps=[{self.esp_bc_data.pump_primary_speed:.1f}%, "
                         f"{self.esp_bc_data.pump_secondary_speed:.1f}%, "
