@@ -154,6 +154,12 @@ class UARTDevice:
                     logger.error(f"Serial port {self.port} not open")
                     return False
                 
+                # Flush input buffer to remove stale data (avoid mixing responses)
+                try:
+                    self.serial.reset_input_buffer()
+                except Exception:
+                    pass
+
                 # Convert to JSON and add newline
                 json_str = json.dumps(data) + '\n'
                 
