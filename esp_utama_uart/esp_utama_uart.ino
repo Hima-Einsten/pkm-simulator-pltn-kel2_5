@@ -44,6 +44,17 @@ int safety_target = 0;
 int shim_target = 0;
 int regulating_target = 0;
 
+// Setelah parsing rods[]
+safety_final_target     = constrain(safety_target, 0, 100);
+shim_final_target       = constrain(shim_target, 0, 100);
+regulating_final_target = constrain(regulating_target, 0, 100);
+
+
+// Actual positions as floats for smooth interpolation
+float safety_actual_f = 0.0;
+float shim_actual_f = 0.0;
+float regulating_actual_f = 0.0;
+
 int safety_actual = 0;
 int shim_actual = 0;
 int regulating_actual = 0;
@@ -274,10 +285,27 @@ void processCommand(String command) {
   
   Serial.print("RX: ");
   Serial.println(command);
-  
+
+  // Clean input: trim and extract JSON object between first '{' and last '}'
+  command.trim();
+  int startIdx = command.indexOf('{');
+  int endIdx = command.lastIndexOf('}');
+  if (startIdx != -1 && endIdx > startIdx) {
+    command = command.substring(startIdx, endIdx + 1);
+  } else if (startIdx != -1) {
+    command = command.substring(startIdx);
+  }
+  // Remove non-printable characters except common whitespace
+  String cleaned = "";
+  for (size_t i = 0; i < command.length(); i++) {
+    char c = command[i];
+    if (c == '\n' || c == '\r' || c == '\t' || c >= 32) cleaned += c;
+  }
+  command = cleaned;
+
   // Parse JSON
   DeserializationError error = deserializeJson(json_rx, command);
-  
+
   if (error) {
     Serial.print("❌ JSON parse error: ");
     Serial.println(error.c_str());
@@ -428,51 +456,58 @@ void sendError(const char* message) {
 // ============================================
 // Update Servos
 // ============================================
+// Smooth servo update: interpolate towards final targets
+// Config: maximum percent change per second
+#define SERVO_MAX_DELTA_PER_SEC 50.0  // percent per second (adjust for smoothness)
+
 void updateServos() {
-  // Track if any servo is moving
+  // Calculate max delta per loop (loop ~10ms)
+  const float loop_dt = 0.01; // 10 ms (matches main loop delay)
+  const float max_delta = SERVO_MAX_DELTA_PER_SEC * loop_dt;
   bool servo_moving = false;
-  
-  // Smoothly move to target (1% per cycle)
-  if (safety_actual < safety_target) {
-    safety_actual++;
+
+  // Move safety_actual_f toward safety_final_target
+  if (fabs(safety_actual_f - safety_final_target) > 0.001) {
+    float diff = safety_final_target - safety_actual_f;
+    if (fabs(diff) <= max_delta) safety_actual_f = safety_final_target;
+    else safety_actual_f += (diff > 0 ? max_delta : -max_delta);
     servo_moving = true;
   }
-  if (safety_actual > safety_target) {
-    safety_actual--;
+
+  // Move shim_actual_f toward shim_final_target
+  if (fabs(shim_actual_f - shim_final_target) > 0.001) {
+    float diff = shim_final_target - shim_actual_f;
+    if (fabs(diff) <= max_delta) shim_actual_f = shim_final_target;
+    else shim_actual_f += (diff > 0 ? max_delta : -max_delta);
     servo_moving = true;
   }
-  
-  if (shim_actual < shim_target) {
-    shim_actual++;
+
+  // Move regulating_actual_f toward regulating_final_target
+  if (fabs(regulating_actual_f - regulating_final_target) > 0.001) {
+    float diff = regulating_final_target - regulating_actual_f;
+    if (fabs(diff) <= max_delta) regulating_actual_f = regulating_final_target;
+    else regulating_actual_f += (diff > 0 ? max_delta : -max_delta);
     servo_moving = true;
   }
-  if (shim_actual > shim_target) {
-    shim_actual--;
-    servo_moving = true;
-  }
-  
-  if (regulating_actual < regulating_target) {
-    regulating_actual++;
-    servo_moving = true;
-  }
-  if (regulating_actual > regulating_target) {
-    regulating_actual--;
-    servo_moving = true;
-  }
-  
-  // Debug log when servos are moving
+
+  // Update integer snapshots used elsewhere
+  safety_actual = (int)round(safety_actual_f);
+  shim_actual = (int)round(shim_actual_f);
+  regulating_actual = (int)round(regulating_actual_f);
+
+  // Debug if moving
   if (servo_moving) {
-    Serial.printf("Servos Moving: Safety=%d/%d, Shim=%d/%d, Reg=%d/%d\n",
-                  safety_actual, safety_target,
-                  shim_actual, shim_target,
-                  regulating_actual, regulating_target);
+    Serial.printf("Servos Moving: Safety=%.2f->%d, Shim=%.2f->%d, Reg=%.2f->%d\n",
+                  safety_actual_f, (int)round(safety_final_target),
+                  shim_actual_f, (int)round(shim_final_target),
+                  regulating_actual_f, (int)round(regulating_final_target));
   }
-  
+
   // Map 0-100% to servo angle (0-180 degrees)
-  int angle_safety = map(safety_actual, 0, 100, 0, 180);
-  int angle_shim = map(shim_actual, 0, 100, 0, 180);
-  int angle_regulating = map(regulating_actual, 0, 100, 0, 180);
-  
+  int angle_safety = (int)map(safety_actual, 0, 100, 0, 180);
+  int angle_shim = (int)map(shim_actual, 0, 100, 0, 180);
+  int angle_regulating = (int)map(regulating_actual, 0, 100, 0, 180);
+
   servo_safety.write(angle_safety);
   servo_shim.write(angle_shim);
   servo_regulating.write(angle_regulating);
