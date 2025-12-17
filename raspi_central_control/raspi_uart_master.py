@@ -319,7 +319,22 @@ class UARTMaster:
             if self.esp_e_connected:
                 logger.info("⏳ Waiting 1 second for ESP32 to stabilize...")
                 time.sleep(1.0)
-                logger.info(f"✅ ESP-E: {esp_e_port} (LED Visualizer)")
+                # Handshake ping to ensure ESP-E firmware ready
+                try:
+                    ping_resp_e = self.esp_e.send_receive({"cmd":"ping"}, timeout=1.0)
+                    if ping_resp_e and ping_resp_e.get("status") == "ok" and ping_resp_e.get("message") == "pong":
+                        logger.info("✅ ESP-E handshake successful (pong)")
+                    else:
+                        logger.warning("⚠️  ESP-E did not respond to ping - marking as not connected")
+                        self.esp_e_connected = False
+                except Exception as e:
+                    logger.warning(f"⚠️  ESP-E handshake error: {e}")
+                    self.esp_e_connected = False
+
+                if self.esp_e_connected:
+                    logger.info(f"✅ ESP-E: {esp_e_port} (LED Visualizer)")
+                else:
+                    logger.warning(f"⚠️  ESP-E: {esp_e_port} - NOT CONNECTED (non-critical)")
             else:
                 logger.warning(f"⚠️  ESP-E: {esp_e_port} - NOT CONNECTED (non-critical)")
         else:
@@ -487,12 +502,7 @@ class UARTMaster:
         self.esp_e_data.pump_status_tertiary = pump_status_tertiary
         self.esp_e_data.thermal_power_kw = thermal_power_kw
         
-        # Sanitize flows
-        def safe_pressure(p):
-            try:
-                return float(p)
-            except Exception:
-                return 0.0
+        # Sanitize pump statuses and prepare minimal payload (pumps + thermal_kw)
         def safe_pump_status(s):
             try:
                 si = int(s)
@@ -500,15 +510,15 @@ class UARTMaster:
                 si = 0
             return max(0, min(3, si))
 
-        flows = [
-            {"pressure": safe_pressure(pressure_primary), "pump": safe_pump_status(pump_status_primary)},
-            {"pressure": safe_pressure(pressure_secondary), "pump": safe_pump_status(pump_status_secondary)},
-            {"pressure": safe_pressure(pressure_tertiary), "pump": safe_pump_status(pump_status_tertiary)}
+        pumps = [
+            safe_pump_status(pump_status_primary),
+            safe_pump_status(pump_status_secondary),
+            safe_pump_status(pump_status_tertiary)
         ]
 
         command = {
             "cmd": "update",
-            "flows": flows,
+            "pumps": pumps,
             "thermal_kw": float(thermal_power_kw)
         }
         

@@ -221,7 +221,7 @@ void processCommand(String command) {
 // Handle Update Command
 // ============================================
 void handleUpdateCommand() {
-  // Parse flow data
+  // If 'flows' exists use existing schema
   if (json_rx.containsKey("flows")) {
     JsonArray flows_array = json_rx["flows"];
 
@@ -233,6 +233,19 @@ void handleUpdateCommand() {
       // Calculate animation speed based on pressure and pump status
       if (flows[i].pump_status == 2) {  // ON
         flows[i].animation_speed = map(flows[i].pressure, 0, 200, 0, 255);
+      } else {
+        flows[i].animation_speed = 0;
+      }
+    }
+  }
+  // New: support minimal 'pumps' schema (only pump statuses)
+  else if (json_rx.containsKey("pumps")) {
+    JsonArray pumps_array = json_rx["pumps"];
+    for (int i = 0; i < NUM_FLOWS && i < pumps_array.size(); i++) {
+      flows[i].pump_status = pumps_array[i];
+      // No pressure provided - keep previous pressure or 0
+      if (flows[i].pump_status == 2) {
+        flows[i].animation_speed = 128; // Medium default speed when ON without pressure info
       } else {
         flows[i].animation_speed = 0;
       }
