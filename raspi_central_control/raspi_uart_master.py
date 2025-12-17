@@ -166,7 +166,8 @@ class UARTDevice:
                 # Send
                 self.serial.write(json_str.encode('utf-8'))
                 self.serial.flush()
-                
+                # Small delay to allow ESP to start parsing before next write
+                time.sleep(0.005)
                 logger.info(f"TX {self.port}: {json_str.strip()}")
                 return True
                 

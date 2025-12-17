@@ -919,6 +919,8 @@ class PLTNPanelController:
                             esp_bc_data = self.uart_master.get_esp_bc_data()
                             self.state.thermal_kw = esp_bc_data.kw_thermal
                             self.state.turbine_speed = esp_bc_data.turbine_speed
+                            # Small gap before sending to ESP-E to avoid UART contention
+                            time.sleep(0.02)
                         else:
                             logger.warning("⚠️  ESP-BC update failed")
                 
