@@ -160,8 +160,13 @@ class ButtonHandler:
         return GPIO.input(button_pin) == GPIO.LOW
     
     def cleanup(self):
-        """Cleanup GPIO resources"""
-        GPIO.cleanup()
+        """Cleanup GPIO resources by cleaning up only the pins used by this handler."""
+        logger.info("Cleaning up GPIO pins for Button Handler...")
+        for pin in ButtonPin:
+            try:
+                GPIO.cleanup(pin)
+            except Exception as e:
+                logger.error(f"Error cleaning up GPIO pin {pin}: {e}")
         logger.info("GPIO Button Handler cleaned up")
 
 # ============================================
