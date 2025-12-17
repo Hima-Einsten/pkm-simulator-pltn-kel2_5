@@ -297,6 +297,17 @@ class UARTMaster:
         if self.esp_bc_connected:
             logger.info("⏳ Waiting 1 second for ESP32 to stabilize...")
             time.sleep(1.0)
+            # Handshake ping to ensure ESP firmware ready to parse JSON
+            try:
+                ping_resp = self.esp_bc.send_receive({"cmd":"ping"}, timeout=1.0)
+                if ping_resp and ping_resp.get("status") == "ok" and ping_resp.get("message") == "pong":
+                    logger.info("✅ ESP-BC handshake successful (pong)")
+                else:
+                    logger.warning("⚠️  ESP-BC did not respond to ping - marking as not connected")
+                    self.esp_bc_connected = False
+            except Exception as e:
+                logger.warning(f"⚠️  ESP-BC handshake error: {e}")
+                self.esp_bc_connected = False
         
         if self.esp_bc_connected:
             logger.info(f"✅ ESP-BC: {esp_bc_port} (Control Rods + Turbine + Motor + Humid)")
