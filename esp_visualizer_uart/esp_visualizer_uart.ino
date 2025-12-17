@@ -88,9 +88,19 @@ void setup() {
 
   // Initialize UART2
   UartComm.begin(UART_BAUD, SERIAL_8N1, 16, 17);
+  
+  // CRITICAL: Wait for UART to stabilize and flush buffers
+  delay(2000);  // Wait 2 seconds for Raspberry Pi to be ready
+  
+  // Flush any garbage data from buffers
+  while (UartComm.available()) {
+    UartComm.read();
+  }
+  
   Serial.println("✅ UART2 initialized at 115200 baud");
   Serial.println("   RX: GPIO 16");
   Serial.println("   TX: GPIO 17");
+  Serial.println("   Buffers flushed, ready for communication");
 
   // Initialize multiplexer selector pins
   pinMode(S0, OUTPUT);
@@ -255,6 +265,7 @@ void sendStatus() {
 
   serializeJson(json_tx, UartComm);
   UartComm.println();
+  UartComm.flush();  // CRITICAL: Ensure data is sent before returning
 
   Serial.print("TX: ");
   serializeJson(json_tx, Serial);
@@ -272,6 +283,7 @@ void sendPong() {
 
   serializeJson(json_tx, UartComm);
   UartComm.println();
+  UartComm.flush();  // CRITICAL: Ensure data is sent before returning
 
   Serial.println("TX: pong");
 }
@@ -286,6 +298,7 @@ void sendError(const char* message) {
 
   serializeJson(json_tx, UartComm);
   UartComm.println();
+  UartComm.flush();  // CRITICAL: Ensure data is sent before returning
 }
 
 // ============================================
