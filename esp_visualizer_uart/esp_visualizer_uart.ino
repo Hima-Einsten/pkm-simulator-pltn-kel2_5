@@ -38,7 +38,7 @@ const int EN_TERTIARY = 2;
 // PWM signal pins (1 per flow)
 const int SIG_PRIMARY = 32;
 const int SIG_SECONDARY = 4;
-const int SIG_TERTIARY = 16;
+const int SIG_TERTIARY = 21;
 
 // ============================================
 // Power Indicator LEDs (3 groups)
