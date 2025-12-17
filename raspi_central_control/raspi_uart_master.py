@@ -351,17 +351,59 @@ class UARTMaster:
         self.esp_bc_data.humid_ct3_cmd = humid_ct3
         self.esp_bc_data.humid_ct4_cmd = humid_ct4
         
-        # Prepare command
+        # Coerce and validate inputs to safe JSON-friendly primitives
+        try:
+            safety_i = int(max(0, min(100, int(safety))))
+        except Exception:
+            safety_i = 0
+        try:
+            shim_i = int(max(0, min(100, int(shim))))
+        except Exception:
+            shim_i = 0
+        try:
+            regulating_i = int(max(0, min(100, int(regulating))))
+        except Exception:
+            regulating_i = 0
+
+        def clamp_pump(x):
+            try:
+                xi = int(x)
+            except Exception:
+                return 0
+            return max(0, min(3, xi))
+
+        pump_p = clamp_pump(pump_primary)
+        pump_s = clamp_pump(pump_secondary)
+        pump_t = clamp_pump(pump_tertiary)
+
+        def bool_to_int(v):
+            try:
+                return 1 if int(v) != 0 else 0
+            except Exception:
+                return 0
+
+        humid_sg1_i = bool_to_int(humid_sg1)
+        humid_sg2_i = bool_to_int(humid_sg2)
+        humid_ct1_i = bool_to_int(humid_ct1)
+        humid_ct2_i = bool_to_int(humid_ct2)
+        humid_ct3_i = bool_to_int(humid_ct3)
+        humid_ct4_i = bool_to_int(humid_ct4)
+
+        # Prepare command (sanitized)
         command = {
             "cmd": "update",
-            "rods": [safety, shim, regulating],
-            "pumps": [pump_primary, pump_secondary, pump_tertiary],
-            "humid_sg": [humid_sg1, humid_sg2],
-            "humid_ct": [humid_ct1, humid_ct2, humid_ct3, humid_ct4]
+            "rods": [safety_i, shim_i, regulating_i],
+            "pumps": [pump_p, pump_s, pump_t],
+            "humid_sg": [humid_sg1_i, humid_sg2_i],
+            "humid_ct": [humid_ct1_i, humid_ct2_i, humid_ct3_i, humid_ct4_i]
         }
-        
+
         # Send and receive (increased timeout for reliability)
-        response = self.esp_bc.send_receive(command, timeout=2.0)
+        try:
+            response = self.esp_bc.send_receive(command, timeout=2.0)
+        except Exception as e:
+            logger.error(f"Error sending to ESP-BC: {e}")
+            response = None
         
         if response and response.get("status") == "ok":
             # Parse response - Control Rods
@@ -434,21 +476,39 @@ class UARTMaster:
         self.esp_e_data.pump_status_tertiary = pump_status_tertiary
         self.esp_e_data.thermal_power_kw = thermal_power_kw
         
-        # Prepare command
+        # Sanitize flows
+        def safe_pressure(p):
+            try:
+                return float(p)
+            except Exception:
+                return 0.0
+        def safe_pump_status(s):
+            try:
+                si = int(s)
+            except Exception:
+                si = 0
+            return max(0, min(3, si))
+
+        flows = [
+            {"pressure": safe_pressure(pressure_primary), "pump": safe_pump_status(pump_status_primary)},
+            {"pressure": safe_pressure(pressure_secondary), "pump": safe_pump_status(pump_status_secondary)},
+            {"pressure": safe_pressure(pressure_tertiary), "pump": safe_pump_status(pump_status_tertiary)}
+        ]
+
         command = {
             "cmd": "update",
-            "flows": [
-                {"pressure": pressure_primary, "pump": pump_status_primary},
-                {"pressure": pressure_secondary, "pump": pump_status_secondary},
-                {"pressure": pressure_tertiary, "pump": pump_status_tertiary}
-            ],
-            "thermal_kw": thermal_power_kw
+            "flows": flows,
+            "thermal_kw": float(thermal_power_kw)
         }
         
         # Send and receive with retry (increased timeout for reliability)
         max_retries = 2
         for attempt in range(max_retries):
-            response = self.esp_e.send_receive(command, timeout=2.0)
+            try:
+                response = self.esp_e.send_receive(command, timeout=2.0)
+            except Exception as e:
+                logger.error(f"Error sending to ESP-E: {e}")
+                response = None
             
             if response and response.get("status") == "ok":
                 self.esp_e_data.animation_speed = response.get("anim_speed", 0)
