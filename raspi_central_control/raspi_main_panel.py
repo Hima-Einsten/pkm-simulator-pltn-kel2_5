@@ -556,7 +556,7 @@ class PLTNPanelController:
                 self.state.regulating_rod = min(self.state.regulating_rod + 5, 100)
                 logger.info(f"✓ Regulating rod UP: {self.state.regulating_rod}%")
             
-            elif event == ButtonButtonEvent.REGULATING_ROD_DOWN:
+            elif event == ButtonEvent.REGULATING_ROD_DOWN:
                 if self.uart_master and self.uart_master.get_esp_bc_data().busy:
                     logger.warning("⚠️  Command ignored: ESP-BC is busy.")
                     return
