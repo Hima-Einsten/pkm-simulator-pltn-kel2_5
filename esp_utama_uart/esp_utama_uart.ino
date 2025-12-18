@@ -44,10 +44,10 @@ int safety_target = 0;
 int shim_target = 0;
 int regulating_target = 0;
 
-// Setelah parsing rods[]
-safety_final_target     = constrain(safety_target, 0, 100);
-shim_final_target       = constrain(shim_target, 0, 100);
-regulating_final_target = constrain(regulating_target, 0, 100);
+// Final desired targets (for smooth motion)
+float safety_final_target = 0.0;
+float shim_final_target = 0.0;
+float regulating_final_target = 0.0;
 
 
 // Actual positions as floats for smooth interpolation
@@ -86,11 +86,11 @@ int regulating_actual = 0;
 // ============================================
 // Humidifier Relays
 // ============================================
-const int RELAY_SG1 = 25;  // Steam Generator 1
-const int RELAY_SG2 = 26;  // Steam Generator 2
+const int RELAY_SG1 = 32;  // Steam Generator 1
+const int RELAY_SG2 = 33;  // Steam Generator 2
 const int RELAY_CT1 = 27;  // Cooling Tower 1
-const int RELAY_CT2 = 32;  // Cooling Tower 2
-const int RELAY_CT3 = 33;  // Cooling Tower 3
+const int RELAY_CT2 = 26;  // Cooling Tower 2
+const int RELAY_CT3 = 25;  // Cooling Tower 3
 const int RELAY_CT4 = 34;  // Cooling Tower 4
 
 uint8_t humid_sg1_cmd = 0;
@@ -340,6 +340,10 @@ void handleUpdateCommand() {
     shim_target = rods[1];
     regulating_target = rods[2];
     
+    safety_final_target     = constrain(safety_target, 0, 100);
+    shim_final_target       = constrain(shim_target, 0, 100);
+    regulating_final_target = constrain(regulating_target, 0, 100);
+
     Serial.printf("✓ Received Rod Targets: Safety=%d, Shim=%d, Reg=%d\n",
                   safety_target, shim_target, regulating_target);
   } else {
@@ -352,6 +356,10 @@ void handleUpdateCommand() {
     pump_primary_cmd = pumps[0];
     pump_secondary_cmd = pumps[1];
     pump_tertiary_cmd = pumps[2];
+
+      // Setelah parsing rods[]
+
+
   }
   
   // Parse humidifier commands
