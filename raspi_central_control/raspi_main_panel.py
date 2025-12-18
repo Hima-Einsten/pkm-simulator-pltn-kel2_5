@@ -886,7 +886,7 @@ class PLTNPanelController:
                 with self.uart_lock:
                     with self.state_lock:
                         # Send to ESP-BC (Control Rods + Pumps + Turbine + Humidifier)
-                        logger.info(f"TX /dev/ttyAMA0: { {'cmd':'update', 'rods':[self.state.safety_rod,self.state.shim_rod,self.state.regulating_rod], 'pumps':[self.state.pump_primary_status,self.state.pump_secondary_status,self.state.pump_tertiary_status], 'humid_sg':[self.state.humid_sg1_cmd,self.state.humid_sg2_cmd],'humid_ct':[self.state.humid_ct1_cmd,self.state.humid_ct2_cmd,self.state.humid_ct3_cmd,self.state.humid_ct4_cmd]} }")
+                        logger.info(f"TX /dev/ttyAMA0: { {'cmd':'update', 'rods':[self.state.safety_rod,self.state.shim_rod,self.state.regulating_rod], 'pumps':[self.state.pump_primary_status,self.state.pump_secondary_status,self.state.pump_tertiary_status], 'humid_ct':[self.state.humid_ct1_cmd,self.state.humid_ct2_cmd,self.state.humid_ct3_cmd,self.state.humid_ct4_cmd]} }")
                         
                         if not self.uart_master.esp_bc_connected:
                             logger.warning("⚠️  ESP-BC not connected, skipping UART send")
@@ -1156,7 +1156,7 @@ class PLTNPanelController:
                 logger.info("Sending safe state to ESPs via UART...")
                 
                 # ESP-BC: All rods to 0%, all pumps off, all humidifiers off
-                self.uart_master.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                self.uart_master.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
                 time.sleep(0.05)
                 
                 # ESP-E: All pumps off
