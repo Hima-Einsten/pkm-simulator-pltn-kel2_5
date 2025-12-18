@@ -526,10 +526,10 @@ class UARTMaster:
                 response = None
             
             if response and response.get("status") == "ok":
-                self.esp_e_data.animation_speed = response.get("anim_speed", 0)
+                self.esp_e_data.animation_speed = response.get("anim_step", 0)  # Changed from anim_speed
                 self.esp_e_data.led_count = response.get("led_count", 0)
                 
-                logger.debug(f"ESP-E: Speed={self.esp_e_data.animation_speed}, "
+                logger.debug(f"ESP-E: Step={self.esp_e_data.animation_speed}, "
                             f"LEDs={self.esp_e_data.led_count}")
                 return True
             

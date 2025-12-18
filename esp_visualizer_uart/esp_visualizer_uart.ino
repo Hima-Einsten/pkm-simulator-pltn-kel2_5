@@ -1,13 +1,21 @@
 /*
  * ESP32 UART Communication - ESP-E (LED Visualizer)
- * Replaces I2C slave with UART communication
+ * INTERLEAVED 4-PIN DESIGN: Continuous water flow with direction
  * 
  * Hardware:
  * - UART2 (GPIO 16=RX, GPIO 17=TX) for communication with Raspberry Pi
- * - Serial (USB) for debugging
- * - 48 LEDs via multiplexers for 3 flow visualizations
+ * - 12 GPIO pins for LED control (4 pins × 3 flows)
+ * - 1 PWM pin for power indicator
  * 
- * Protocol: JSON over UART (115200 baud, 8N1)
+ * LED Pattern: Interleaved for continuous flow visualization
+ * Each flow has 4 pins controlling LEDs in interleaved pattern:
+ *   - Pin A: LED 0, 4, 8, 12
+ *   - Pin B: LED 1, 5, 9, 13
+ *   - Pin C: LED 2, 6, 10, 14
+ *   - Pin D: LED 3, 7, 11, 15
+ * 
+ * Animation: 3 of 4 pins ON at any time (75% fill)
+ * Pattern shifts to show water flow direction (left to right)
  */
 
 #include <ArduinoJson.h>
@@ -19,31 +27,30 @@
 HardwareSerial UartComm(2);  // UART2 (GPIO 16=RX, 17=TX)
 
 // ============================================
-// LED Multiplexer Configuration
+// LED Control Pins (4 pins per flow)
 // ============================================
-#define NUM_LEDS 16
 #define NUM_FLOWS 3
 
-// Multiplexer selector pins (shared)
-const int S0 = 14;
-const int S1 = 27;
-const int S2 = 26;
-const int S3 = 25;
+// Primary Flow (Flow 0) - Interleaved pattern
+const int PRIMARY_A = 32;   // LED 0, 4, 8, 12
+const int PRIMARY_B = 33;   // LED 1, 5, 9, 13
+const int PRIMARY_C = 25;   // LED 2, 6, 10, 14
+const int PRIMARY_D = 26;   // LED 3, 7, 11, 15
 
-// Multiplexer enable pins (1 per flow)
-const int EN_PRIMARY = 33;
-const int EN_SECONDARY = 15;
-const int EN_TERTIARY = 2;
+// Secondary Flow (Flow 1) - Interleaved pattern
+const int SECONDARY_A = 27; // LED 0, 4, 8, 12
+const int SECONDARY_B = 14; // LED 1, 5, 9, 13
+const int SECONDARY_C = 12; // LED 2, 6, 10, 14
+const int SECONDARY_D = 13; // LED 3, 7, 11, 15
 
-// PWM signal pins (1 per flow)
-const int SIG_PRIMARY = 32;
-const int SIG_SECONDARY = 4;
-const int SIG_TERTIARY = 21;
+// Tertiary Flow (Flow 2) - Interleaved pattern
+const int TERTIARY_A = 15;  // LED 0, 4, 8, 12
+const int TERTIARY_B = 2;   // LED 1, 5, 9, 13
+const int TERTIARY_C = 4;   // LED 2, 6, 10, 14
+const int TERTIARY_D = 5;   // LED 3, 7, 11, 15
 
-// ============================================
-// Power Indicator LEDs (3 groups)
-// ============================================
-const int POWER_LED_DIRECT_PINS[3] = { 23, 19, 18 };
+// Power Indicator (PWM)
+const int POWER_LED_PIN = 23;  // PWM output for power visualization
 
 // ============================================
 // Flow Data
@@ -51,7 +58,6 @@ const int POWER_LED_DIRECT_PINS[3] = { 23, 19, 18 };
 struct FlowData {
   float pressure;
   int pump_status;  // 0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN
-  int animation_speed;
 };
 
 FlowData flows[NUM_FLOWS];
@@ -61,7 +67,30 @@ float thermal_power_kw = 0.0;
 // Animation Variables
 // ============================================
 unsigned long last_animation_update = 0;
-int animation_phase = 0;
+int animation_step = 0;  // 0-3 for 4-step pattern
+
+// ============================================
+// Power LED Smoothing
+// ============================================
+int current_brightness = 0;  // Current PWM value
+int target_brightness = 0;   // Target PWM value
+const int BRIGHTNESS_STEP = 3;  // Change per update (smaller = smoother)
+
+// ============================================
+// Data Persistence (keep last valid data)
+// ============================================
+bool data_valid = false;  // Track if we have valid data
+
+// Interleaved pattern table
+// Each row = one animation step
+// Each column = pin state (A, B, C, D)
+// Pattern creates "gap" that moves right-to-left (= water flows left-to-right)
+const bool FLOW_PATTERN[4][4] = {
+  {1, 1, 1, 0},  // Step 0: A,B,C ON, D OFF  → ●●●○●●●○●●●○●●●○
+  {0, 1, 1, 1},  // Step 1: B,C,D ON, A OFF  → ○●●●○●●●○●●●○●●●
+  {1, 0, 1, 1},  // Step 2: A,C,D ON, B OFF  → ●○●●●○●●●○●●●○●●
+  {1, 1, 0, 1}   // Step 3: A,B,D ON, C OFF  → ●●○●●●○●●●○●●●○●
+};
 
 // ============================================
 // JSON Communication
@@ -83,60 +112,65 @@ void setup() {
 
   Serial.println("\n\n===========================================");
   Serial.println("ESP-E UART Communication");
-  Serial.println("LED Flow Visualizer (3 Flows)");
+  Serial.println("LED Flow Visualizer (INTERLEAVED 4-PIN)");
   Serial.println("===========================================");
 
   // Initialize UART2
   UartComm.begin(UART_BAUD, SERIAL_8N1, 16, 17);
+  delay(2000);
   
-  // CRITICAL: Wait for UART to stabilize and flush buffers
-  delay(2000);  // Wait 2 seconds for Raspberry Pi to be ready
-  
-  // Flush any garbage data from buffers
   while (UartComm.available()) {
     UartComm.read();
   }
   
   Serial.println("✅ UART2 initialized at 115200 baud");
-  Serial.println("   RX: GPIO 16");
-  Serial.println("   TX: GPIO 17");
-  Serial.println("   Buffers flushed, ready for communication");
 
-  // Initialize multiplexer selector pins
-  pinMode(S0, OUTPUT);
-  pinMode(S1, OUTPUT);
-  pinMode(S2, OUTPUT);
-  pinMode(S3, OUTPUT);
+  // Initialize LED control pins - Primary Flow
+  pinMode(PRIMARY_A, OUTPUT);
+  pinMode(PRIMARY_B, OUTPUT);
+  pinMode(PRIMARY_C, OUTPUT);
+  pinMode(PRIMARY_D, OUTPUT);
 
-  // Initialize enable pins
-  pinMode(EN_PRIMARY, OUTPUT);
-  pinMode(EN_SECONDARY, OUTPUT);
-  pinMode(EN_TERTIARY, OUTPUT);
+  // Initialize LED control pins - Secondary Flow
+  pinMode(SECONDARY_A, OUTPUT);
+  pinMode(SECONDARY_B, OUTPUT);
+  pinMode(SECONDARY_C, OUTPUT);
+  pinMode(SECONDARY_D, OUTPUT);
 
-  // Initialize PWM pins
-  ledcAttach(SIG_PRIMARY, 5000, 8);
-  ledcAttach(SIG_SECONDARY, 5000, 8);
-  ledcAttach(SIG_TERTIARY, 5000, 8);
+  // Initialize LED control pins - Tertiary Flow
+  pinMode(TERTIARY_A, OUTPUT);
+  pinMode(TERTIARY_B, OUTPUT);
+  pinMode(TERTIARY_C, OUTPUT);
+  pinMode(TERTIARY_D, OUTPUT);
 
-  // All disabled initially
-  digitalWrite(EN_PRIMARY, HIGH);  // Active LOW
-  digitalWrite(EN_SECONDARY, HIGH);
-  digitalWrite(EN_TERTIARY, HIGH);
+  // All OFF initially
+  setFlowPattern(0, -1);  // Primary OFF
+  setFlowPattern(1, -1);  // Secondary OFF
+  setFlowPattern(2, -1);  // Tertiary OFF
 
-  Serial.println("✅ LED multiplexers initialized");
+  Serial.println("✅ LED pins initialized (4 pins per flow, interleaved)");
 
-  // Initialize power indicator LEDs
-  for (int i = 0; i < 3; i++) {
-    ledcAttach(POWER_LED_DIRECT_PINS[i], 5000, 8);
-    ledcWrite(POWER_LED_DIRECT_PINS[i], 0);
-  }
-  Serial.println("✅ Power indicator LEDs initialized");
+  // Initialize power indicator PWM
+  ledcAttach(POWER_LED_PIN, 5000, 8);  // 5kHz, 8-bit resolution
+  ledcWrite(POWER_LED_PIN, 0);  // Start OFF
+
+  Serial.println("✅ Power indicator PWM initialized");
+  
+  // TEST: Blink power LED to verify PWM works
+  Serial.println("Testing power LED...");
+  ledcWrite(POWER_LED_PIN, 255);  // Full brightness
+  delay(500);
+  ledcWrite(POWER_LED_PIN, 0);    // OFF
+  delay(500);
+  ledcWrite(POWER_LED_PIN, 128);  // Half brightness
+  delay(500);
+  ledcWrite(POWER_LED_PIN, 0);    // OFF
+  Serial.println("✅ Power LED test complete");
 
   // Initialize flow data
   for (int i = 0; i < NUM_FLOWS; i++) {
     flows[i].pressure = 0.0;
     flows[i].pump_status = 0;
-    flows[i].animation_speed = 0;
   }
 
   Serial.println("===========================================");
@@ -167,15 +201,17 @@ void loop() {
     }
   }
 
-  // Safety timeout
-  if (millis() - last_command_time > COMMAND_TIMEOUT) {
+  // Safety timeout - but DON'T clear thermal_power immediately
+  // Only clear if timeout is very long (no data for 10+ seconds)
+  if (millis() - last_command_time > 10000) {  // 10 seconds (was 5)
     if (thermal_power_kw > 0.0) {
-      Serial.println("⚠️  Communication timeout - Clearing display");
+      Serial.println("⚠️  Long communication timeout - Clearing display");
       thermal_power_kw = 0.0;
       for (int i = 0; i < NUM_FLOWS; i++) {
         flows[i].pressure = 0.0;
         flows[i].pump_status = 0;
       }
+      data_valid = false;
     }
     last_command_time = millis();
   }
@@ -201,11 +237,33 @@ void processCommand(String command) {
   if (error) {
     Serial.print("❌ JSON parse error: ");
     Serial.println(error.c_str());
-    sendError("JSON parse error");
+    Serial.print("   Raw data: ");
+    Serial.println(command);
+    
+    // DON'T reset data - keep last valid values!
+    // This prevents LED from turning off on temporary communication errors
+    Serial.println("⚠️  Keeping last valid data");
+    
+    // Only send error if it's not a ping (to avoid breaking handshake)
+    if (command.indexOf("ping") == -1) {
+      sendError("JSON parse error");
+    }
+    
+    // Clear RX buffer to prevent corruption
+    while (UartComm.available()) {
+      UartComm.read();
+    }
+    
     return;
   }
 
   const char* cmd = json_rx["cmd"];
+  
+  // Safety check for null cmd
+  if (cmd == nullptr) {
+    Serial.println("⚠️  Command field missing");
+    return;
+  }
 
   if (strcmp(cmd, "update") == 0) {
     handleUpdateCommand();
@@ -221,7 +279,6 @@ void processCommand(String command) {
 // Handle Update Command
 // ============================================
 void handleUpdateCommand() {
-  // If 'flows' exists use existing schema
   if (json_rx.containsKey("flows")) {
     JsonArray flows_array = json_rx["flows"];
 
@@ -229,39 +286,22 @@ void handleUpdateCommand() {
       JsonObject flow = flows_array[i];
       flows[i].pressure = flow["pressure"];
       flows[i].pump_status = flow["pump"];
-
-      // Calculate animation speed based on pressure and pump status
-      if (flows[i].pump_status == 2) {  // ON
-        flows[i].animation_speed = map(flows[i].pressure, 0, 200, 0, 255);
-      } else {
-        flows[i].animation_speed = 0;
-      }
     }
-  }
-  // New: support minimal 'pumps' schema (only pump statuses)
-  else if (json_rx.containsKey("pumps")) {
+  } else if (json_rx.containsKey("pumps")) {
     JsonArray pumps_array = json_rx["pumps"];
     for (int i = 0; i < NUM_FLOWS && i < pumps_array.size(); i++) {
       flows[i].pump_status = pumps_array[i];
-      // No pressure provided - keep previous pressure or 0
-      if (flows[i].pump_status == 2) {
-        flows[i].animation_speed = 128; // Medium default speed when ON without pressure info
-      } else {
-        flows[i].animation_speed = 0;
-      }
     }
   }
 
-  // Parse thermal power
   if (json_rx.containsKey("thermal_kw")) {
     thermal_power_kw = json_rx["thermal_kw"];
+    data_valid = true;  // Mark data as valid
   }
 
-  Serial.printf("Flows: P1=%.1f/%d, P2=%.1f/%d, P3=%.1f/%d, Thermal=%.1fkW\n",
-                flows[0].pressure, flows[0].pump_status,
-                flows[1].pressure, flows[1].pump_status,
-                flows[2].pressure, flows[2].pump_status,
-                thermal_power_kw);
+  Serial.printf("Flows: P1=%d, P2=%d, P3=%d, Thermal=%.1fkW\n",
+                flows[0].pump_status, flows[1].pump_status,
+                flows[2].pump_status, thermal_power_kw);
 
   sendStatus();
 }
@@ -271,14 +311,13 @@ void handleUpdateCommand() {
 // ============================================
 void sendStatus() {
   json_tx.clear();
-
   json_tx["status"] = "ok";
-  json_tx["anim_speed"] = flows[0].animation_speed;  // Primary flow
-  json_tx["led_count"] = NUM_LEDS;
+  json_tx["anim_step"] = animation_step;
+  json_tx["led_count"] = 16;
 
   serializeJson(json_tx, UartComm);
   UartComm.println();
-  UartComm.flush();  // CRITICAL: Ensure data is sent before returning
+  UartComm.flush();
 
   Serial.print("TX: ");
   serializeJson(json_tx, Serial);
@@ -296,7 +335,7 @@ void sendPong() {
 
   serializeJson(json_tx, UartComm);
   UartComm.println();
-  UartComm.flush();  // CRITICAL: Ensure data is sent before returning
+  UartComm.flush();
 
   Serial.println("TX: pong");
 }
@@ -311,17 +350,7 @@ void sendError(const char* message) {
 
   serializeJson(json_tx, UartComm);
   UartComm.println();
-  UartComm.flush();  // CRITICAL: Ensure data is sent before returning
-}
-
-// ============================================
-// Set Multiplexer Channel
-// ============================================
-void setMux(int channel) {
-  digitalWrite(S0, channel & 1);
-  digitalWrite(S1, (channel >> 1) & 1);
-  digitalWrite(S2, (channel >> 2) & 1);
-  digitalWrite(S3, (channel >> 3) & 1);
+  UartComm.flush();
 }
 
 // ============================================
@@ -330,95 +359,113 @@ void setMux(int channel) {
 void updateAnimations() {
   unsigned long current_time = millis();
 
-  // Update animation every 50ms
-  if (current_time - last_animation_update < 50) {
+  // Update animation every 500ms for smooth water flow
+  if (current_time - last_animation_update < 500) {
     return;
   }
   last_animation_update = current_time;
 
-  animation_phase++;
-  if (animation_phase >= NUM_LEDS) {
-    animation_phase = 0;
+  // Advance to next step (0 → 1 → 2 → 3 → 0)
+  animation_step++;
+  if (animation_step >= 4) {
+    animation_step = 0;
   }
 
-  // Update each flow
+  // Update each flow based on pump status
   for (int flow_idx = 0; flow_idx < NUM_FLOWS; flow_idx++) {
     if (flows[flow_idx].pump_status == 2) {  // ON
-      // Enable this flow's multiplexer
-      enableFlow(flow_idx, true);
-
-      // Animate LEDs
-      for (int led = 0; led < NUM_LEDS; led++) {
-        setMux(led);
-
-        // Wave effect
-        int brightness = 0;
-        int distance = abs(led - animation_phase);
-        if (distance < 3) {
-          brightness = map(3 - distance, 0, 3, 0, flows[flow_idx].animation_speed);
-        }
-
-        setFlowBrightness(flow_idx, brightness);
-        delayMicroseconds(100);
-      }
+      setFlowPattern(flow_idx, animation_step);
     } else {
       // Turn off this flow
-      enableFlow(flow_idx, false);
+      setFlowPattern(flow_idx, -1);  // -1 = all OFF
     }
   }
 }
 
 // ============================================
-// Enable/Disable Flow
+// Set Flow Pattern (Interleaved)
 // ============================================
-void enableFlow(int flow_idx, bool enable) {
-  int pin = (flow_idx == 0) ? EN_PRIMARY : (flow_idx == 1) ? EN_SECONDARY
-                                                           : EN_TERTIARY;
-  digitalWrite(pin, enable ? LOW : HIGH);  // Active LOW
+void setFlowPattern(int flow_idx, int step) {
+  int pin_a, pin_b, pin_c, pin_d;
+
+  // Select pins based on flow index
+  if (flow_idx == 0) {
+    pin_a = PRIMARY_A;
+    pin_b = PRIMARY_B;
+    pin_c = PRIMARY_C;
+    pin_d = PRIMARY_D;
+  } else if (flow_idx == 1) {
+    pin_a = SECONDARY_A;
+    pin_b = SECONDARY_B;
+    pin_c = SECONDARY_C;
+    pin_d = SECONDARY_D;
+  } else {
+    pin_a = TERTIARY_A;
+    pin_b = TERTIARY_B;
+    pin_c = TERTIARY_C;
+    pin_d = TERTIARY_D;
+  }
+
+  if (step == -1) {
+    // All OFF (pump not running)
+    digitalWrite(pin_a, LOW);
+    digitalWrite(pin_b, LOW);
+    digitalWrite(pin_c, LOW);
+    digitalWrite(pin_d, LOW);
+  } else {
+    // Apply interleaved pattern from table
+    digitalWrite(pin_a, FLOW_PATTERN[step][0] ? HIGH : LOW);
+    digitalWrite(pin_b, FLOW_PATTERN[step][1] ? HIGH : LOW);
+    digitalWrite(pin_c, FLOW_PATTERN[step][2] ? HIGH : LOW);
+    digitalWrite(pin_d, FLOW_PATTERN[step][3] ? HIGH : LOW);
+  }
 }
 
 // ============================================
-// Set Flow Brightness
-// ============================================
-void setFlowBrightness(int flow_idx, int brightness) {
-  int pin = (flow_idx == 0) ? SIG_PRIMARY : (flow_idx == 1) ? SIG_SECONDARY
-                                                            : SIG_TERTIARY;
-  ledcWrite(pin, brightness);
-}
-
-// ============================================
-// Update Power Indicator
+// Update Power Indicator (PWM with Smoothing)
 // ============================================
 void updatePowerIndicator() {
   // Calculate power ratio (0.0 to 1.0)
-  const float MAX_THERMAL_MWE = 300.0;  // 300 MW max
-  float power_mwe = thermal_power_kw / 1000.0;
-  float ratio = power_mwe / MAX_THERMAL_MWE;
+  const float MAX_THERMAL_KW = 300000.0;  // 300 MW = 300,000 kW
+  float ratio = thermal_power_kw / MAX_THERMAL_KW;
 
+  // Clamp to valid range
   if (ratio > 1.0) ratio = 1.0;
   if (ratio < 0.0) ratio = 0.0;
 
-  int brightness = (int)(ratio * 255);
-  if (brightness > 0 && brightness < 20) brightness = 20;
-
-  // LED group 1 (always on when power > 0%)
-  if (ratio > 0.0) {
-    ledcWrite(POWER_LED_DIRECT_PINS[0], brightness);
-  } else {
-    ledcWrite(POWER_LED_DIRECT_PINS[0], 0);
+  // Convert to target PWM brightness (0-255)
+  target_brightness = (int)(ratio * 255);
+  
+  // Minimum brightness when reactor is running (for visibility)
+  if (thermal_power_kw > 0.0 && target_brightness < 20) {
+    target_brightness = 20;
   }
 
-  // LED group 2 (on when power > 30%)
-  if (ratio > 0.3) {
-    ledcWrite(POWER_LED_DIRECT_PINS[1], brightness);
-  } else {
-    ledcWrite(POWER_LED_DIRECT_PINS[1], 0);
+  // SMOOTH TRANSITION: Gradually move current to target
+  if (current_brightness < target_brightness) {
+    current_brightness += BRIGHTNESS_STEP;
+    if (current_brightness > target_brightness) {
+      current_brightness = target_brightness;
+    }
+  } else if (current_brightness > target_brightness) {
+    current_brightness -= BRIGHTNESS_STEP;
+    if (current_brightness < target_brightness) {
+      current_brightness = target_brightness;
+    }
   }
 
-  // LED group 3 (on when power > 70%)
-  if (ratio > 0.7) {
-    ledcWrite(POWER_LED_DIRECT_PINS[2], brightness);
-  } else {
-    ledcWrite(POWER_LED_DIRECT_PINS[2], 0);
+  // OPTION 1: Normal PWM (active-HIGH)
+  ledcWrite(POWER_LED_PIN, current_brightness);
+  
+  // OPTION 2: Inverted PWM (active-LOW) - uncomment if LED is inverted
+  // ledcWrite(POWER_LED_PIN, 255 - current_brightness);
+  
+  // Debug output (every 2 seconds)
+  static unsigned long last_debug = 0;
+  if (millis() - last_debug > 2000) {
+    Serial.printf("Power: %.1f kW, Ratio: %.2f, Current: %d, Target: %d, Valid: %s\n", 
+                  thermal_power_kw, ratio, current_brightness, target_brightness,
+                  data_valid ? "YES" : "NO");
+    last_debug = millis();
   }
 }
