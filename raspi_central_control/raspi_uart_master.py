@@ -22,14 +22,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ESP_BC_Data:
-    """Data structure for ESP-BC (Control Rods + Turbine + Humidifier + Pumps + Motor Driver)"""
+    """Data structure for ESP-BC (Control Rods + Turbine + Pumps + Motor Driver + Cooling Tower Relays)"""
     # To ESP-BC
     safety_target: int = 0
     shim_target: int = 0
     regulating_target: int = 0
     
-    humid_sg1_cmd: int = 0
-    humid_sg2_cmd: int = 0
     humid_ct1_cmd: int = 0
     humid_ct2_cmd: int = 0
     humid_ct3_cmd: int = 0
@@ -53,9 +51,7 @@ class ESP_BC_Data:
     pump_secondary_speed: float = 0.0
     pump_tertiary_speed: float = 0.0
     
-    # From ESP-BC - Humidifier Status
-    humid_sg1_status: int = 0
-    humid_sg2_status: int = 0
+    # From ESP-BC - Cooling Tower Humidifier Status (4 relays only)
     humid_ct1_status: int = 0
     humid_ct2_status: int = 0
     humid_ct3_status: int = 0
@@ -345,7 +341,6 @@ class UARTMaster:
     
     def update_esp_bc(self, safety: int, shim: int, regulating: int,
                       pump_primary: int = 0, pump_secondary: int = 0, pump_tertiary: int = 0,
-                      humid_sg1: int = 0, humid_sg2: int = 0,
                       humid_ct1: int = 0, humid_ct2: int = 0,
                       humid_ct3: int = 0, humid_ct4: int = 0) -> bool:
         """
@@ -358,7 +353,6 @@ class UARTMaster:
             pump_primary: Primary pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
             pump_secondary: Secondary pump status (0-3)
             pump_tertiary: Tertiary pump status (0-3)
-            humid_sg1-2: Steam Generator humidifiers (0/1)
             humid_ct1-4: Cooling Tower humidifiers (0/1)
             
         Returns:
@@ -371,8 +365,6 @@ class UARTMaster:
         self.esp_bc_data.safety_target = safety
         self.esp_bc_data.shim_target = shim
         self.esp_bc_data.regulating_target = regulating
-        self.esp_bc_data.humid_sg1_cmd = humid_sg1
-        self.esp_bc_data.humid_sg2_cmd = humid_sg2
         self.esp_bc_data.humid_ct1_cmd = humid_ct1
         self.esp_bc_data.humid_ct2_cmd = humid_ct2
         self.esp_bc_data.humid_ct3_cmd = humid_ct3
@@ -409,8 +401,6 @@ class UARTMaster:
             except Exception:
                 return 0
 
-        humid_sg1_i = bool_to_int(humid_sg1)
-        humid_sg2_i = bool_to_int(humid_sg2)
         humid_ct1_i = bool_to_int(humid_ct1)
         humid_ct2_i = bool_to_int(humid_ct2)
         humid_ct3_i = bool_to_int(humid_ct3)
@@ -421,7 +411,6 @@ class UARTMaster:
             "cmd": "update",
             "rods": [safety_i, shim_i, regulating_i],
             "pumps": [pump_p, pump_s, pump_t],
-            "humid_sg": [humid_sg1_i, humid_sg2_i],
             "humid_ct": [humid_ct1_i, humid_ct2_i, humid_ct3_i, humid_ct4_i]
         }
 
@@ -450,14 +439,12 @@ class UARTMaster:
             self.esp_bc_data.pump_secondary_speed = pump_speeds[1]
             self.esp_bc_data.pump_tertiary_speed = pump_speeds[2]
             
-            # Parse response - Humidifier Status
-            humid_status = response.get("humid_status", [[0,0], [0,0,0,0]])
-            self.esp_bc_data.humid_sg1_status = humid_status[0][0]
-            self.esp_bc_data.humid_sg2_status = humid_status[0][1]
-            self.esp_bc_data.humid_ct1_status = humid_status[1][0]
-            self.esp_bc_data.humid_ct2_status = humid_status[1][1]
-            self.esp_bc_data.humid_ct3_status = humid_status[1][2]
-            self.esp_bc_data.humid_ct4_status = humid_status[1][3]
+            # Parse response - Cooling Tower Humidifier Status (flat array)
+            humid_status = response.get("humid_status", [0, 0, 0, 0])
+            self.esp_bc_data.humid_ct1_status = humid_status[0]
+            self.esp_bc_data.humid_ct2_status = humid_status[1]
+            self.esp_bc_data.humid_ct3_status = humid_status[2]
+            self.esp_bc_data.humid_ct4_status = humid_status[3]
             
             logger.debug(f"ESP-BC: Rods={response.get('rods')}, "
                         f"Thermal={self.esp_bc_data.kw_thermal:.1f}kW, "
@@ -593,7 +580,7 @@ class UARTMaster:
         try:
             if self.esp_bc_connected:
                 logger.info("Sending safe state to ESP-BC...")
-                self.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                self.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         except:
             pass
         
@@ -633,7 +620,6 @@ if __name__ == "__main__":
         success = master.update_esp_bc(
             safety=50, shim=60, regulating=70,
             pump_primary=2, pump_secondary=2, pump_tertiary=1,
-            humid_sg1=1, humid_sg2=1,
             humid_ct1=1, humid_ct2=0, humid_ct3=1, humid_ct4=0
         )
         

@@ -225,7 +225,6 @@ class OLEDTestSuite:
             
             self.oled_manager.update_system_status(
                 turbine_state=turbine,
-                humid_sg1=sg1, humid_sg2=sg2,
                 humid_ct1=ct1, humid_ct2=ct2,
                 humid_ct3=ct3, humid_ct4=ct4,
                 interlock=interlock

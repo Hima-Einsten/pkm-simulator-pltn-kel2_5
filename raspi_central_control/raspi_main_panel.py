@@ -97,9 +97,8 @@ class PanelState:
     # Turbine speed from ESP-BC
     turbine_speed: float = 0.0
     
-    # Humidifier commands (6 individual relays)
-    humid_sg1_cmd: int = 0
-    humid_sg2_cmd: int = 0
+    
+    # Humidifier commands (Cooling Tower only - 4 relays)
     humid_ct1_cmd: int = 0
     humid_ct2_cmd: int = 0
     humid_ct3_cmd: int = 0
@@ -577,8 +576,6 @@ class PLTNPanelController:
                 self.state.safety_rod = 0
                 self.state.shim_rod = 0
                 self.state.regulating_rod = 0
-                self.state.humid_sg1_cmd = 0
-                self.state.humid_sg2_cmd = 0
                 self.state.humid_ct1_cmd = 0
                 self.state.humid_ct2_cmd = 0
                 self.state.humid_ct3_cmd = 0
@@ -750,11 +747,8 @@ class PLTNPanelController:
                             )
                             logger.debug("Control: Humidifier update done")
                             
-                            # Steam Generator: 2 humidifier (both controlled together)
-                            self.state.humid_sg1_cmd = 1 if sg_on else 0
-                            self.state.humid_sg2_cmd = 1 if sg_on else 0
-                            
                             # Cooling Tower: 4 humidifier (STAGED 1-by-1)
+                            # Note: SG humidifiers no longer controlled by ESP
                             self.state.humid_ct1_cmd = 1 if ct1 else 0
                             self.state.humid_ct2_cmd = 1 if ct2 else 0
                             self.state.humid_ct3_cmd = 1 if ct3 else 0
@@ -905,8 +899,6 @@ class PLTNPanelController:
                             self.state.pump_primary_status,
                             self.state.pump_secondary_status,
                             self.state.pump_tertiary_status,
-                            self.state.humid_sg1_cmd,
-                            self.state.humid_sg2_cmd,
                             self.state.humid_ct1_cmd,
                             self.state.humid_ct2_cmd,
                             self.state.humid_ct3_cmd,
@@ -1094,8 +1086,7 @@ class PLTNPanelController:
                                   f"{self.state.regulating_rod}]%, "
                                   f"Thermal={self.state.thermal_kw:.1f}kW, "
                                   f"Turbine={esp_bc_data.power_level:.1f}%, "
-                                  f"Humid=[SG:{self.state.humid_sg1_cmd},{self.state.humid_sg2_cmd},"
-                                  f"CT:{self.state.humid_ct1_cmd},{self.state.humid_ct2_cmd},"
+                                  f"Humid=[CT:{self.state.humid_ct1_cmd},{self.state.humid_ct2_cmd},"\
                                   f"{self.state.humid_ct3_cmd},{self.state.humid_ct4_cmd}]")
                     else:
                         logger.info(f"Status: P={self.state.pressure:.1f}bar (Simulation mode)")

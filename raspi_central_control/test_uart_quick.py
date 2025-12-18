@@ -111,7 +111,6 @@ def test_uart_device(port_name, device_name):
             command = {
                 "cmd": "update",
                 "rods": [25, 30, 35],
-                "humid_sg": [1, 0],
                 "humid_ct": [1, 0, 1, 0]
             }
         else:

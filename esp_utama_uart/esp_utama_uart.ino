@@ -1,5 +1,5 @@
 /*
- * ESP32 UART Communication - ESP-BC (Control Rods + Turbine + Humidifier + Motor Driver)
+ * ESP32 UART Communication - ESP-BC (Control Rods + Turbine + Motor Driver + Cooling Tower Relays)
  * Replaces I2C slave with UART communication
  * 
  * Hardware:
@@ -7,14 +7,14 @@
  * - Serial (USB) for debugging
  * - 4x Motor DC dengan L298N motor driver (3 pompa + 1 turbin)
  * - 3x Servo motors (control rods)
- * - 6x Relay untuk humidifier
+ * - 4x Relay untuk Cooling Tower humidifier (GPIO 27, 26, 25, 32)
  * 
  * Protocol: JSON over UART (115200 baud, 8N1)
  * 
  * Pin Configuration:
  * - UART: GPIO 16 (RX), 17 (TX) - Communication with RasPi
  * - Servos: GPIO 13, 12, 14 (control rods)
- * - Humidifier Relays: GPIO 25, 26, 27, 32, 33, 34
+ * - Cooling Tower Relays: GPIO 27, 26, 25, 32 (CT1, CT2, CT3, CT4)
  * - Motor Driver PWM: GPIO 4, 5, 18, 19 (3 pompa + turbin)
  * - Motor Direction: GPIO 23, 15 (turbine only, pumps hard-wired)
  */
@@ -84,28 +84,25 @@ int regulating_actual = 0;
 #define PWM_RESOLUTION 8     // 8-bit (0-255)
 
 // ============================================
-// Humidifier Relays
+// Humidifier Relays - Cooling Tower Only (4 relays)
 // ============================================
-const int RELAY_SG1 = 32;  // Steam Generator 1
-const int RELAY_SG2 = 33;  // Steam Generator 2
 const int RELAY_CT1 = 27;  // Cooling Tower 1
 const int RELAY_CT2 = 26;  // Cooling Tower 2
 const int RELAY_CT3 = 25;  // Cooling Tower 3
-const int RELAY_CT4 = 34;  // Cooling Tower 4
+const int RELAY_CT4 = 32;  // Cooling Tower 4
 
-uint8_t humid_sg1_cmd = 0;
-uint8_t humid_sg2_cmd = 0;
+
+
 uint8_t humid_ct1_cmd = 0;
 uint8_t humid_ct2_cmd = 0;
 uint8_t humid_ct3_cmd = 0;
 uint8_t humid_ct4_cmd = 0;
 
-uint8_t humid_sg1_status = 0;
-uint8_t humid_sg2_status = 0;
 uint8_t humid_ct1_status = 0;
 uint8_t humid_ct2_status = 0;
 uint8_t humid_ct3_status = 0;
 uint8_t humid_ct4_status = 0;
+
 
 // ============================================
 // Turbine & Generator Simulation
@@ -176,22 +173,18 @@ void setup() {
   updateServos();
   Serial.println("✅ Servos initialized");
   
-  // Initialize relay pins
-  pinMode(RELAY_SG1, OUTPUT);
-  pinMode(RELAY_SG2, OUTPUT);
+  // Initialize relay pins (Cooling Tower only - 4 relays)
   pinMode(RELAY_CT1, OUTPUT);
   pinMode(RELAY_CT2, OUTPUT);
   pinMode(RELAY_CT3, OUTPUT);
   pinMode(RELAY_CT4, OUTPUT);
   
   // All relays OFF initially (HIGH for low-level trigger)
-  digitalWrite(RELAY_SG1, HIGH);
-  digitalWrite(RELAY_SG2, HIGH);
   digitalWrite(RELAY_CT1, HIGH);
   digitalWrite(RELAY_CT2, HIGH);
   digitalWrite(RELAY_CT3, HIGH);
   digitalWrite(RELAY_CT4, HIGH);
-  Serial.println("✅ Humidifier relays initialized");
+  Serial.println("✅ Cooling Tower relays initialized (4 relays: GPIO 27, 26, 25, 32)");
   
   // Initialize motor driver PWM channels (ESP32 Core v3.x API)
   ledcAttach(MOTOR_PUMP_PRIMARY, PWM_FREQ, PWM_RESOLUTION);
@@ -253,8 +246,6 @@ void loop() {
       safety_target = 0;
       shim_target = 0;
       regulating_target = 0;
-      humid_sg1_cmd = 0;
-      humid_sg2_cmd = 0;
       humid_ct1_cmd = 0;
       humid_ct2_cmd = 0;
       humid_ct3_cmd = 0;
@@ -362,13 +353,8 @@ void handleUpdateCommand() {
 
   }
   
-  // Parse humidifier commands
-  if (json_rx.containsKey("humid_sg")) {
-    JsonArray humid_sg = json_rx["humid_sg"];
-    humid_sg1_cmd = humid_sg[0];
-    humid_sg2_cmd = humid_sg[1];
-  }
   
+  // Parse humidifier commands (Cooling Tower only)
   if (json_rx.containsKey("humid_ct")) {
     JsonArray humid_ct = json_rx["humid_ct"];
     humid_ct1_cmd = humid_ct[0];
@@ -377,10 +363,9 @@ void handleUpdateCommand() {
     humid_ct4_cmd = humid_ct[3];
   }
   
-  Serial.printf("Targets: Rods=[%d,%d,%d], Pumps=[%d,%d,%d], Humid_SG=[%d,%d], Humid_CT=[%d,%d,%d,%d]\n",
+  Serial.printf("Targets: Rods=[%d,%d,%d], Pumps=[%d,%d,%d], Humid_CT=[%d,%d,%d,%d]\n",
                 safety_target, shim_target, regulating_target,
                 pump_primary_cmd, pump_secondary_cmd, pump_tertiary_cmd,
-                humid_sg1_cmd, humid_sg2_cmd,
                 humid_ct1_cmd, humid_ct2_cmd, humid_ct3_cmd, humid_ct4_cmd);
   
   // Send response
@@ -413,16 +398,14 @@ void sendStatus() {
   pump_speeds.add(pump_secondary_actual);
   pump_speeds.add(pump_tertiary_actual);
   
-  // Humidifier status
+  
+  // Humidifier status (Cooling Tower only - flat array)
   JsonArray humid_status = json_tx.createNestedArray("humid_status");
-  JsonArray humid_sg = humid_status.createNestedArray();
-  humid_sg.add(humid_sg1_status);
-  humid_sg.add(humid_sg2_status);
-  JsonArray humid_ct = humid_status.createNestedArray();
-  humid_ct.add(humid_ct1_status);
-  humid_ct.add(humid_ct2_status);
-  humid_ct.add(humid_ct3_status);
-  humid_ct.add(humid_ct4_status);
+  humid_status.add(humid_ct1_status);
+  humid_status.add(humid_ct2_status);
+  humid_status.add(humid_ct3_status);
+  humid_status.add(humid_ct4_status);
+
   
   // Send via UART
   serializeJson(json_tx, UartComm);
@@ -624,20 +607,16 @@ void updateTurbineState() {
 }
 
 // ============================================
-// Update Humidifiers
+// Update Humidifiers (Cooling Tower Only)
 // ============================================
 void updateHumidifiers() {
   // Update relay states based on commands (inverted for low-level trigger)
-  digitalWrite(RELAY_SG1, humid_sg1_cmd ? LOW : HIGH);
-  digitalWrite(RELAY_SG2, humid_sg2_cmd ? LOW : HIGH);
   digitalWrite(RELAY_CT1, humid_ct1_cmd ? LOW : HIGH);
   digitalWrite(RELAY_CT2, humid_ct2_cmd ? LOW : HIGH);
   digitalWrite(RELAY_CT3, humid_ct3_cmd ? LOW : HIGH);
   digitalWrite(RELAY_CT4, humid_ct4_cmd ? LOW : HIGH);
   
   // Update status (in real system, read actual relay state)
-  humid_sg1_status = humid_sg1_cmd;
-  humid_sg2_status = humid_sg2_cmd;
   humid_ct1_status = humid_ct1_cmd;
   humid_ct2_status = humid_ct2_cmd;
   humid_ct3_status = humid_ct3_cmd;
