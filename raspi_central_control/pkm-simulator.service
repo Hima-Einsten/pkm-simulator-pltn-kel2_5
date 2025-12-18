@@ -1,0 +1,24 @@
+[Unit]
+Description=PKM Nuclear Reactor Simulator
+After=network.target multi-user.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/Downloads/pkm-simulator-PLTN/raspi_central_control
+ExecStart=/usr/bin/python3 /home/pi/Downloads/pkm-simulator-PLTN/raspi_central_control/raspi_main_panel.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment="PYTHONUNBUFFERED=1"
+
+# Give time for hardware to initialize (UART, I2C, etc.)
+ExecStartPre=/bin/sleep 5
+
+[Install]
+WantedBy=multi-user.target
