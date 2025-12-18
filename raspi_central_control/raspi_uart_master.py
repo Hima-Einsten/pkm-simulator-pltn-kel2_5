@@ -504,9 +504,15 @@ class UARTMaster:
             safe_pump_status(pump_status_tertiary)
         ]
 
+        # CRITICAL FIX: Send complete flows data including pressure
+        # ESP-E needs pressure to calculate LED brightness properly
         command = {
             "cmd": "update",
-            "pumps": pumps,
+            "flows": [
+                {"pressure": float(pressure_primary), "pump": pumps[0]},
+                {"pressure": float(pressure_secondary), "pump": pumps[1]},
+                {"pressure": float(pressure_tertiary), "pump": pumps[2]}
+            ],
             "thermal_kw": float(thermal_power_kw)
         }
         
