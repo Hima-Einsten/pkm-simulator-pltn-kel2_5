@@ -79,7 +79,7 @@ class TCA9548A:
             self.current_channel = channel
             
             # Small delay for I2C bus to settle (prevent bus collision)
-            time.sleep(0.005)  # 5ms delay
+            time.sleep(0.010)  # 10ms delay (increased for OLED stability)
             
             logger.debug(f"Selected TCA9548A channel {channel}")
             return True
@@ -212,9 +212,11 @@ class DualMultiplexerManager:
             logger.error(f"Invalid display channel: {channel}. Must be 1-7 for MUX #1")
             return False
         
-        # Add delay when switching from MUX #2 to MUX #1
+        # CRITICAL FIX: Disable MUX #2 before activating MUX #1
+        # This prevents I2C bus collision when both MUX have active channels
         if self.last_mux == 2:
-            time.sleep(0.003)  # 3ms delay when switching between MUX
+            self.mux2.disable_all_channels()
+            time.sleep(0.015)  # 15ms delay when switching between MUX (increased for stability)
         
         # Direct mapping: channel 1-7 → MUX #1 channels 1-7
         logger.debug(f"OLED #{channel} → MUX #1 (0x{self.mux1_addr:02X}), Channel {channel}")
@@ -238,9 +240,11 @@ class DualMultiplexerManager:
             logger.error(f"Invalid MUX #2 channel: {channel}. Must be 0-2")
             return False
         
-        # Add delay when switching from MUX #1 to MUX #2
+        # CRITICAL FIX: Disable MUX #1 before activating MUX #2
+        # This prevents I2C bus collision when both MUX have active channels
         if self.last_mux == 1:
-            time.sleep(0.003)  # 3ms delay when switching between MUX
+            self.mux1.disable_all_channels()
+            time.sleep(0.015)  # 15ms delay when switching between MUX (increased for stability)
         
         if channel == 0:
             logger.debug(f"ESP-E → MUX #2 (0x{self.mux2_addr:02X}), Channel 0")

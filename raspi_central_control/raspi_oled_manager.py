@@ -428,6 +428,9 @@ class OLEDManager:
     def update_regulating_rod(self, position: int):
         """Update regulating rod display"""
         self.update_rod_display("REGULATING", 7, self.oled_regulating_rod, position)
+        # Extra delay: This is the LAST channel on MUX #1 (channel 7)
+        # Give OLED time to fully process before switching to MUX #2
+        time.sleep(0.010)  # 10ms post-update delay
     
     def update_thermal_power(self, power_kw: float):
         """
@@ -539,6 +542,10 @@ class OLEDManager:
             display.draw_text(turb_gen, 0, 21, display.font_small)
         
         display.show()
+        
+        # Extra delay: This is the LAST channel on MUX #2 (channel 2)
+        # Give OLED time to fully process before next update cycle
+        time.sleep(0.010)  # 10ms post-update delay
     
     def update_all(self, state):
         """
