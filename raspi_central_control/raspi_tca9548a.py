@@ -220,7 +220,11 @@ class DualMultiplexerManager:
         
         # Direct mapping: channel 1-7 → MUX #1 channels 1-7
         logger.debug(f"OLED #{channel} → MUX #1 (0x{self.mux1_addr:02X}), Channel {channel}")
-        result = self.mux1.select_channel(channel)
+        
+        # FORCE re-selection after MUX switch to ensure clean state
+        force_select = (self.last_mux == 2)
+        result = self.mux1.select_channel(channel, force=force_select)
+        
         if result:
             self.last_mux = 1
         return result
@@ -251,7 +255,10 @@ class DualMultiplexerManager:
         else:
             logger.debug(f"OLED #{channel + 7} → MUX #2 (0x{self.mux2_addr:02X}), Channel {channel}")
         
-        result = self.mux2.select_channel(channel)
+        # FORCE re-selection after MUX switch to ensure clean state
+        force_select = (self.last_mux == 1)
+        result = self.mux2.select_channel(channel, force=force_select)
+        
         if result:
             self.last_mux = 2
         return result

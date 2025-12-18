@@ -325,6 +325,7 @@ class OLEDManager:
         display.draw_text_centered(pressure_text, 12, display.font_large)
         
         display.show()
+        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
     
     def update_pump_display(self, pump_name: str, channel: int, display_obj: OLEDDisplay,
                            status: int, pwm: int):
@@ -366,6 +367,7 @@ class OLEDManager:
         display_obj.draw_text_centered(status_text, 14, display_obj.font_large)
         
         display_obj.show()
+        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
     
     def update_pump_primary(self, status: int, pwm: int):
         """Update primary pump display"""
@@ -416,6 +418,7 @@ class OLEDManager:
         display_obj.draw_text_centered(position_text, 12, display_obj.font_large)
         
         display_obj.show()
+        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
     
     def update_safety_rod(self, position: int):
         """Update safety rod display"""
@@ -462,6 +465,7 @@ class OLEDManager:
         display.draw_text_centered(power_text, 12, display.font_large)
         
         display.show()
+        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
     
     def update_system_status(self, reactor_started: bool, pressure: float, 
                             pump_primary: int, pump_secondary: int, pump_tertiary: int,
