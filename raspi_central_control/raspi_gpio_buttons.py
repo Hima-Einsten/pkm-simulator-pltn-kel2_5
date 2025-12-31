@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Raspberry Pi GPIO Button Handler for PLTN Control Panel
-Handles 17 physical push buttons with debouncing
+Handles 18 physical push buttons with debouncing
 
 Button Layout:
 - 6 Pump Control buttons (Primary, Secondary, Tertiary ON/OFF)
 - 6 Rod Control buttons (Safety, Shim, Regulating UP/DOWN)
 - 2 Pressure Control buttons (UP/DOWN)
-- 2 System Control buttons (START, RESET)
+- 3 System Control buttons (START, RESET, AUTO_SIMULATION)
 - 1 Emergency button (SCRAM)
 """
 
@@ -44,9 +44,10 @@ class ButtonPin(IntEnum):
     PRESSURE_UP = 24
     PRESSURE_DOWN = 23
     
-    # System Control (2 buttons)
-    REACTOR_START = 17  # GREEN button - Start reactor system
-    REACTOR_RESET = 27  # YELLOW button - Reset simulation to initial state
+    # System Control (3 buttons) - UPDATED: Added AUTO_SIMULATION
+    REACTOR_START = 17        # GREEN button - Start reactor system (Manual mode)
+    REACTOR_RESET = 27        # YELLOW button - Reset simulation to initial state
+    START_AUTO_SIMULATION = 2 # BLUE button - Start auto simulation mode
     
     # Emergency (1 button)
     EMERGENCY = 18  # RED button - Emergency shutdown!
@@ -67,8 +68,9 @@ BUTTON_NAMES = {
     ButtonPin.REGULATING_ROD_DOWN: "Regulating Rod DOWN",
     ButtonPin.PRESSURE_UP: "Pressure UP",
     ButtonPin.PRESSURE_DOWN: "Pressure DOWN",
-    ButtonPin.REACTOR_START: "REACTOR START",
+    ButtonPin.REACTOR_START: "REACTOR START (Manual)",
     ButtonPin.REACTOR_RESET: "REACTOR RESET",
+    ButtonPin.START_AUTO_SIMULATION: "START AUTO SIMULATION",
     ButtonPin.EMERGENCY: "EMERGENCY SHUTDOWN",
 }
 

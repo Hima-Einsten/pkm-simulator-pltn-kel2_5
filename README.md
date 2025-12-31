@@ -8,6 +8,7 @@
 [![Architecture](https://img.shields.io/badge/architecture-2%20ESP-success)]()
 
 > **📌 Dokumentasi lengkap sistem - Semua informasi dalam satu file**  
+> **🎉 NEW: Dual Mode Simulation - Manual & Auto Mode!**  
 > **🎉 NEW: Optimized 2 ESP Architecture - Production Ready!**
 
 ---
@@ -15,25 +16,36 @@
 ## 📋 Daftar Isi
 
 1. [Overview](#-overview)
-2. [🆕 Architecture v3.0 (2 ESP)](#-architecture-v30---2-esp-optimization)
-3. [System Architecture](#-system-architecture)
-4. [Hardware Components](#-hardware-components)
-5. [Control Panel](#-control-panel)
-6. [Software Architecture](#-software-architecture)
-7. [Fitur Utama](#-fitur-utama)
-8. [Humidifier Control](#-humidifier-control-new)
-9. [Data Flow](#-data-flow-lengkap)
-10. [PWR Startup Sequence](#-pwr-startup-sequence)
-11. [Instalasi](#-instalasi)
-12. [Status Implementasi](#-status-implementasi)
-13. [Troubleshooting](#-troubleshooting)
-14. [📚 Documentation](#-documentation)
+2. [🆕 Dual Mode Simulation](#-dual-mode-simulation-new)
+3. [🆕 Architecture v3.0 (2 ESP)](#-architecture-v30---2-esp-optimization)
+4. [System Architecture](#-system-architecture)
+5. [Hardware Components](#-hardware-components)
+6. [Control Panel](#-control-panel)
+7. [Software Architecture](#-software-architecture)
+8. [Fitur Utama](#-fitur-utama)
+9. [Humidifier Control](#-humidifier-control-new)
+10. [Data Flow](#-data-flow-lengkap)
+11. [PWR Startup Sequence](#-pwr-startup-sequence)
+12. [Instalasi](#-instalasi)
+13. [Status Implementasi](#-status-implementasi)
+14. [Troubleshooting](#-troubleshooting)
+15. [📚 Documentation](#-documentation)
 
 ---
 
 ## 🎯 Overview
 
 Simulator PLTN tipe **PWR (Pressurized Water Reactor)** dengan Raspberry Pi 4 sebagai master controller dan **2 ESP32** sebagai slave controllers (Optimized Architecture v3.0).
+
+### 🎉 What's New in v3.4 (Dual Mode Simulation - Dec 31, 2024)
+
+**🎮 TWO SIMULATION MODES:**
+- ✅ **Manual Mode** - Operator control setiap proses individual (18 buttons)
+- ✅ **Auto Mode** - One-button simulation, full startup sequence otomatis (~70s)
+- ✅ **Slow Paced Auto** - Kecepatan diperlambat untuk pembelajaran
+- ✅ **Educational Focus** - Ideal untuk demo, presentasi, dan PKM competition
+
+**See [DUAL_MODE_SIMULATION.md](DUAL_MODE_SIMULATION.md) for complete guide!**
 
 ### 🎉 What's New in v3.1 (Hardware Configuration Update - Dec 8, 2024)
 
@@ -64,7 +76,7 @@ Simulator PLTN tipe **PWR (Pressurized Water Reactor)** dengan Raspberry Pi 4 se
 | Raspberry Pi 4 | 1 | Master controller, logic, safety system | ✅ |
 | **ESP32 (ESP-BC)** | **1** | **Control rods + turbine + humidifier + pumps (MERGED)** | ✅ |
 | **ESP32 (ESP-E)** | **1** | **LED visualization (3-flow + power indicator)** | ✅ |
-| Push Button | 15 | Operator input (pump, rod, pressure, emergency) | ✅ |
+| Push Button | **18** | **Operator input (2 modes + pump, rod, pressure, emergency)** | ✅ **UPDATED** |
 | OLED Display | 9 | Real-time monitoring (128x64 I2C) | ⏳ Pending |
 | Servo Motor | 3 | Control rod simulation (safety, shim, regulating) | ✅ |
 | LED Flow | 48 | Flow visualization (16 LEDs × 3 flows) | ✅ |
@@ -78,6 +90,88 @@ Simulator PLTN tipe **PWR (Pressurized Water Reactor)** dengan Raspberry Pi 4 se
 - 👨‍🏫 Dosen untuk demonstrasi
 - 🏫 Institusi pendidikan
 - 🔬 Penelitian sistem kontrol
+
+---
+
+## 🎮 Dual Mode Simulation (NEW v3.4!)
+
+Simulator kini mendukung **2 mode operasi** berbeda untuk pembelajaran dan demonstrasi:
+
+### Mode 1: Manual Mode
+**Operator mengontrol setiap proses secara individual**
+
+```
+START: Press REACTOR START button (GPIO 17 - GREEN)
+```
+
+- ✅ Full control atas setiap parameter
+- ✅ 18 buttons untuk kontrol detail
+- ✅ Hands-on learning experience
+- ✅ Eksperimen dengan skenario berbeda
+- ✅ Safety interlock training
+
+**Perfect for:** Training operator, pembelajaran mendalam, eksperimen
+
+### Mode 2: Auto Simulation Mode  
+**One-button simulation - Full startup sequence otomatis**
+
+```
+START: Press START AUTO SIMULATION button (GPIO 2 - BLUE)
+```
+
+- ✅ Cukup 1 tombol untuk complete simulation
+- ✅ Simulasi berjalan otomatis ~70 detik
+- ✅ Kecepatan lambat untuk pemahaman
+- ✅ Menampilkan 9 phase startup lengkap
+- ✅ Automatic transition to manual setelah selesai
+
+**Auto Sequence (70s total):**
+```
+Phase 1: System Init (3s)
+Phase 2: Pressurizer (9s)     → 0-45 bar gradual
+Phase 3: Pumps (9s)            → Tertiary → Secondary → Primary
+Phase 4: Control Rods (25s)    → 0-50% gradual (Shim & Reg)
+Phase 5: Steam Gen (5s)        → Humidifier SG1 & SG2 ON
+Phase 6: Turbine (8s)          → Startup to 100% speed
+Phase 7: Power Gen (5s)        → 0-250 MWe output
+Phase 8: Cooling Tower (5s)    → CT1-4 humidifiers ON
+Phase 9: Stable Operation      → Ready for manual control
+```
+
+**Perfect for:** PKM presentation, classroom demo, video recording, exhibitions
+
+### Comparison
+
+| Feature | Manual Mode | Auto Mode |
+|---------|-------------|-----------|
+| **Start Button** | REACTOR START (GPIO 17) | START AUTO SIM (GPIO 2) |
+| **Control** | Full manual | Fully automatic |
+| **Duration** | Flexible | ~70 seconds fixed |
+| **Learning** | Hands-on | Observational |
+| **Use Case** | Training, experiment | Demo, presentation |
+| **Buttons Used** | All 18 buttons | 1 button + reset |
+
+### How to Use
+
+**Manual Mode:**
+```bash
+1. Press REACTOR START (green button)
+2. Follow startup sequence manually:
+   - Raise pressure (PRESSURE UP button)
+   - Start pumps (PUMP ON buttons)
+   - Raise rods (ROD UP buttons)
+3. Monitor and adjust as needed
+```
+
+**Auto Mode:**
+```bash
+1. Press START AUTO SIMULATION (blue button)
+2. Watch the automatic sequence (70s)
+3. After completion: Manual control available
+4. Press RESET to restart
+```
+
+**📖 Complete Guide:** See [DUAL_MODE_SIMULATION.md](DUAL_MODE_SIMULATION.md)
 
 ---
 
