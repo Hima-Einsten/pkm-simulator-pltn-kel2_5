@@ -516,34 +516,23 @@ class UARTMaster:
             "thermal_kw": float(thermal_power_kw)
         }
         
-        # Send and receive with retry (increased timeout for reliability)
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                response = self.esp_e.send_receive(command, timeout=2.0)
-            except Exception as e:
-                logger.error(f"Error sending to ESP-E: {e}")
-                response = None
-            
-            if response and response.get("status") == "ok":
-                self.esp_e_data.animation_speed = response.get("anim_step", 0)  # Changed from anim_speed
-                self.esp_e_data.led_count = response.get("led_count", 0)
-                
-                logger.debug(f"ESP-E: Step={self.esp_e_data.animation_speed}, "
-                            f"LEDs={self.esp_e_data.led_count}")
-                return True
-            
-            # Log only on last retry
-            if attempt == max_retries - 1:
-                if response is None:
-                    logger.debug("ESP-E: No response received after retries")
-                elif not isinstance(response, dict):
-                    logger.debug(f"ESP-E: Invalid response type: {type(response)}")
-                elif response.get("status") != "ok":
-                    logger.debug(f"ESP-E: Response status not OK: {response}")
-                else:
-                    logger.debug(f"ESP-E: Unexpected response: {response}")
+        # Send without retry - ESP-E is non-critical (just visualization)
+        # Retry would cause buffer overflow
+        try:
+            response = self.esp_e.send_receive(command, timeout=1.0)  # Reduced timeout
+        except Exception as e:
+            logger.debug(f"Error sending to ESP-E: {e}")
+            return False
         
+        if response and response.get("status") == "ok":
+            self.esp_e_data.animation_speed = response.get("anim_step", 0)
+            self.esp_e_data.led_count = response.get("led_count", 0)
+            
+            logger.debug(f"ESP-E: Step={self.esp_e_data.animation_speed}, "
+                        f"LEDs={self.esp_e_data.led_count}")
+            return True
+        
+        # Don't log errors - ESP-E is non-critical
         return False
     
     def get_esp_bc_data(self) -> ESP_BC_Data:

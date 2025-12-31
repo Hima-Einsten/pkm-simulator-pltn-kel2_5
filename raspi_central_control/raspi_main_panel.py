@@ -874,6 +874,10 @@ class PLTNPanelController:
         
         logger.info("✓ UART master verified, starting communication loop...")
         
+        # Throttle ESP-E updates to prevent buffer overflow
+        last_esp_e_update = 0
+        ESP_E_UPDATE_INTERVAL = 0.2  # 200ms (5x per second) - was 50ms (20x per second)
+        
         while self.state.running:
             try:
                 # Wait for either timeout (50ms) OR immediate trigger from button event
@@ -917,26 +921,29 @@ class PLTNPanelController:
                             logger.warning("⚠️  ESP-BC update failed")
                 
                 # Send to ESP-E outside of state_lock (non-critical, can be slower)
-                # This prevents ESP-E issues from blocking ESP-BC communication
-                with self.uart_lock:
-                    try:
-                        # Add delay before ESP-E to ensure UART buffers are clear
-                        time.sleep(0.05)  # 50ms delay for UART stability
-                        
-                        # Send to ESP-E (LED Visualizer)
-                        logger.debug(f"Sending to ESP-E: P={self.state.pressure:.1f}bar")
-                        self.uart_master.update_esp_e(
-                            pressure_primary=self.state.pressure,
-                            pump_status_primary=self.state.pump_primary_status,
-                            pressure_secondary=self.state.pressure * 0.35,
-                            pump_status_secondary=self.state.pump_secondary_status,
-                            pressure_tertiary=self.state.pressure * 0.10,
-                            pump_status_tertiary=self.state.pump_tertiary_status,
-                            thermal_power_kw=self.state.thermal_kw
-                        )
-                        logger.debug("✓ ESP-E update success")
-                    except Exception as e:
-                        logger.debug(f"ESP-E communication error (non-critical): {e}")
+                # THROTTLED: Only send every 200ms to prevent buffer overflow
+                current_time = time.time()
+                if current_time - last_esp_e_update >= ESP_E_UPDATE_INTERVAL:
+                    with self.uart_lock:
+                        try:
+                            # Add delay before ESP-E to ensure UART buffers are clear
+                            time.sleep(0.05)  # 50ms delay for UART stability
+                            
+                            # Send to ESP-E (LED Visualizer)
+                            logger.debug(f"Sending to ESP-E: P={self.state.pressure:.1f}bar")
+                            self.uart_master.update_esp_e(
+                                pressure_primary=self.state.pressure,
+                                pump_status_primary=self.state.pump_primary_status,
+                                pressure_secondary=self.state.pressure * 0.35,
+                                pump_status_secondary=self.state.pump_secondary_status,
+                                pressure_tertiary=self.state.pressure * 0.10,
+                                pump_status_tertiary=self.state.pump_tertiary_status,
+                                thermal_power_kw=self.state.thermal_kw
+                            )
+                            logger.debug("✓ ESP-E update success")
+                            last_esp_e_update = current_time
+                        except Exception as e:
+                            logger.debug(f"ESP-E communication error (non-critical): {e}")
                 
             except Exception as e:
                 logger.error(f"Error in ESP communication thread: {e}")
