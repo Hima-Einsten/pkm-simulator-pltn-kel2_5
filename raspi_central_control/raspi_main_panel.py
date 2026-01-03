@@ -77,6 +77,7 @@ class PanelState:
     simulation_mode: str = 'manual'  # Default: manual mode
     auto_sim_running: bool = False   # Flag untuk auto simulation berjalan
     auto_sim_step: int = 0           # Langkah simulasi otomatis saat ini
+    auto_sim_phase: str = ""         # Current phase name (e.g., "Raising Pressure")
     
     # Pressure control
     pressure: float = 0.0
@@ -1045,12 +1046,16 @@ class PLTNPanelController:
                 logger.info("="*70)
                 
                 # Phase 1: System Initialization
+                with self.state_lock:
+                    self.state.auto_sim_phase = "Init"
                 logger.info("\n📍 Phase 1: System Initialization")
                 logger.info("   ✓ Reactor system active (manual mode always on)")
                 logger.info("   ✓ All controls ready")
                 time.sleep(3)
                 
                 # Phase 2: Raise Pressure to minimum required (45 bar)
+                with self.state_lock:
+                    self.state.auto_sim_phase = "Pressure 45"
                 logger.info("\n📍 Phase 2: Pressurizer Activation")
                 logger.info("   Raising pressure to 45 bar (3 seconds)...")
                 
@@ -1092,6 +1097,8 @@ class PLTNPanelController:
                 time.sleep(2)
                 
                 # Phase 3: Start Pumps (Tertiary → Secondary → Primary)
+                with self.state_lock:
+                    self.state.auto_sim_phase = "Pumps"
                 logger.info("\n📍 Phase 3: Coolant Pumps Startup Sequence")
                 logger.info("   Following correct startup procedure...")
                 
@@ -1120,19 +1127,31 @@ class PLTNPanelController:
                 if not self.state.auto_sim_running:
                     logger.warning("   ⚠️ Auto simulation cancelled")
                     return
+                    with self.state_lock:
+                        self.state.auto_sim_phase = ""
+                    continue
                 
                 # Primary pump
                 logger.info("   Step 3.3: Starting Primary Pump (Main loop)...")
                 with self.state_lock:
                     self.state.pump_primary_status = 1  # STARTING
-                self.esp_send_immediate.set()  # Trigger immediate ESP send
+                self.esp_send_immediate.set()
                 time.sleep(3)
                 logger.info("   ✅ Primary Pump: ON")
                 logger.info("   ✅ All pumps operational")
                 logger.info("   ✅ Interlock condition 2 satisfied (All pumps ON)")
                 time.sleep(2)
                 
+                # Check if cancelled
+                if not self.state.auto_sim_running:
+                    logger.warning("   ⚠️ Auto simulation cancelled by user")
+                    with self.state_lock:
+                        self.state.auto_sim_phase = ""
+                    continue
+                
                 # Phase 4A: Safety Rod Withdrawal (100%)
+                with self.state_lock:
+                    self.state.auto_sim_phase = "Safety Rod"
                 logger.info("\n📍 Phase 4A: Safety Rod Withdrawal")
                 logger.info("   Raising safety rod to 100% (3 seconds)...")
                 logger.info("   (Safety rod must be fully withdrawn before power rods)")
@@ -1164,6 +1183,8 @@ class PLTNPanelController:
                 time.sleep(2)
                 
                 # Phase 4B: Raise Pressure to 140 bar
+                with self.state_lock:
+                    self.state.auto_sim_phase = "Pressure 140"
                 logger.info("\n📍 Phase 4B: Pressurizer to Operating Pressure")
                 logger.info("   Raising pressure to 140 bar (7 seconds)...")
                 
@@ -1200,6 +1221,8 @@ class PLTNPanelController:
                 time.sleep(2)
                 
                 # Phase 4C: Shim Rod to 50% (Coarse Power Control)
+                with self.state_lock:
+                    self.state.auto_sim_phase = "Shim Rod 50%"
                 logger.info("\n📍 Phase 4C: Shim Rod Withdrawal (Coarse Control)")
                 logger.info("   Raising shim rod to 50% (3 seconds)...")
                 
@@ -1230,6 +1253,8 @@ class PLTNPanelController:
                 time.sleep(2)
                 
                 # Phase 4D: Regulating Rod to 50% (Fine Power Control)
+                with self.state_lock:
+                    self.state.auto_sim_phase = "Reg Rod 50%"
                 logger.info("\n📍 Phase 4D: Regulating Rod Withdrawal (Fine Control)")
                 logger.info("   Raising regulating rod to 50% (3 seconds)...")
                 
@@ -1260,6 +1285,8 @@ class PLTNPanelController:
                 time.sleep(2)
                 
                 # Phase 4E: Ramp to Maximum Power (100%)
+                with self.state_lock:
+                    self.state.auto_sim_phase = "Max Power"
                 logger.info("\n📍 Phase 4E: Power Ramp-up to Maximum")
                 logger.info("   Raising shim rod to 100% (4 seconds)...")
                 

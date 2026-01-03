@@ -439,13 +439,16 @@ class OLEDManager:
         display.show()
         time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
     
-    def update_system_status(self, pressure: float, 
-                            pump_primary: int, pump_secondary: int, pump_tertiary: int,
-                            interlock: bool, thermal_kw: float, turbine_speed: float):
+    def update_system_status(self, auto_sim_running: bool, auto_sim_phase: str,
+                            pressure: float, pump_primary: int, pump_secondary: int, 
+                            pump_tertiary: int, interlock: bool, thermal_kw: float, 
+                            turbine_speed: float):
         """
-        Update system status display with user instructions AND system status
+        Update system status display with mode and progress
         
         Args:
+            auto_sim_running: Auto simulation running flag
+            auto_sim_phase: Current auto simulation phase name
             pressure: Current pressure
             pump_primary: Primary pump status
             pump_secondary: Secondary pump status  
@@ -460,48 +463,48 @@ class OLEDManager:
         display = self.oled_system_status
         display.clear()
         
-        # Determine if showing instruction or status
-        # Show instruction if system not ready
-        if pressure < 40.0:
-            instruction = f"Raise P to 40"
-            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
-            display.draw_text_centered(instruction, 11, display.font_small)
-            display.draw_text(f"Now: {pressure:.0f}bar", 0, 21, display.font_small)
-        elif pump_primary != 2:  # Not ON
-            instruction = "Start Pump 1"
-            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
-            display.draw_text_centered(instruction, 14, display.font_large)
-        elif pump_secondary != 2:
-            instruction = "Start Pump 2"
-            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
-            display.draw_text_centered(instruction, 14, display.font_large)
-        elif pump_tertiary != 2:
-            instruction = "Start Pump 3"
-            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
-            display.draw_text_centered(instruction, 14, display.font_large)
-        elif not interlock:
-            instruction = "Wait P>=40bar"
-            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
-            display.draw_text_centered(instruction, 14, display.font)
+        # Line 1: Mode indicator
+        if auto_sim_running:
+            mode_text = "AUTO"
+            display.draw_text_centered(mode_text, 1, display.font_large)
         else:
-            # System ready - show STATUS instead of instruction
-            display.draw_text_centered("STATUS", 1, display.font_small)
-            
-            # Line 1: Steam generation (thermal power)
-            if thermal_kw >= 50000:  # 50 MWth = steam production
-                steam_text = "Uap: Ya"
+            mode_text = "MANUAL"
+            display.draw_text_centered(mode_text, 1, display.font_large)
+        
+        # Line 2-3: Status based on mode
+        if auto_sim_running and auto_sim_phase:
+            # Show current auto simulation phase
+            # Truncate if too long (max ~16 chars for 128px width)
+            phase_short = auto_sim_phase[:16]
+            display.draw_text_centered(phase_short, 14, display.font_small)
+            display.draw_text_centered("Running...", 23, display.font_small)
+        else:
+            # Manual mode - show system status
+            if pressure < 40.0:
+                status_line1 = f"P:{pressure:.0f}bar"
+                status_line2 = "Raise to 40+"
+            elif pump_primary != 2 or pump_secondary != 2 or pump_tertiary != 2:
+                status_line1 = "Pumps:"
+                p1 = "ON" if pump_primary == 2 else "OFF"
+                p2 = "ON" if pump_secondary == 2 else "OFF"
+                p3 = "ON" if pump_tertiary == 2 else "OFF"
+                status_line2 = f"{p1}/{p2}/{p3}"
+            elif thermal_kw >= 50000:
+                # System operational
+                power_mwe = thermal_kw / 1000.0
+                status_line1 = f"Pwr:{power_mwe:.0f}MW"
+                if turbine_speed >= 80:
+                    status_line2 = "Turbin:ON"
+                elif turbine_speed >= 10:
+                    status_line2 = "Turbin:START"
+                else:
+                    status_line2 = "Raise Rods"
             else:
-                steam_text = "Uap: Blm"
-            display.draw_text(steam_text, 0, 11, display.font_small)
+                status_line1 = "Ready"
+                status_line2 = "Press START"
             
-            # Line 2: Turbine & Generator
-            if turbine_speed >= 80:
-                turb_gen = "Turbin&Gen:ON"
-            elif turbine_speed >= 10:
-                turb_gen = "Turbin:START"
-            else:
-                turb_gen = "Raise Rods!"
-            display.draw_text(turb_gen, 0, 21, display.font_small)
+            display.draw_text_centered(status_line1, 14, display.font_small)
+            display.draw_text_centered(status_line2, 23, display.font_small)
         
         display.show()
         
@@ -543,6 +546,8 @@ class OLEDManager:
         self.update_thermal_power(state.thermal_kw)
         
         self.update_system_status(
+            auto_sim_running=state.auto_sim_running,
+            auto_sim_phase=state.auto_sim_phase,
             pressure=state.pressure,
             pump_primary=state.pump_primary_status,
             pump_secondary=state.pump_secondary_status,
