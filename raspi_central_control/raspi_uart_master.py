@@ -128,9 +128,12 @@ class UARTDevice:
         except Exception as e:
             logger.error(f"Error closing {self.port}: {e}")
     
+    
     def send_json(self, data: dict) -> bool:
         """
-        Send JSON message to device
+        Send JSON message to device (fire-and-forget, no response expected)
+        
+        For request-response communication, use send_receive() instead.
         
         Args:
             data: Dictionary to send as JSON
@@ -144,10 +147,10 @@ class UARTDevice:
                     logger.error(f"Serial port {self.port} not open")
                     return False
                 
-                # Flush BOTH input and output buffers to prevent data mixing
+                # Flush buffers before send (fire-and-forget mode)
                 try:
                     self.serial.reset_input_buffer()
-                    self.serial.reset_output_buffer()  # Clear old TX data
+                    self.serial.reset_output_buffer()
                 except Exception:
                     pass
 
@@ -157,8 +160,7 @@ class UARTDevice:
                 # Send
                 self.serial.write(json_str.encode('utf-8'))
                 self.serial.flush()  # Ensure data is sent
-                # Small delay to allow ESP to start parsing
-                time.sleep(0.010)  # 10ms (increased from 5ms for stability)
+                time.sleep(0.010)  # 10ms for ESP to process
                 logger.info(f"TX {self.port}: {json_str.strip()}")
                 return True
                 
@@ -231,6 +233,7 @@ class UARTDevice:
                 self.error_count += 1
                 return None
     
+    
     def send_receive(self, data: dict, timeout: float = 1.0) -> Optional[dict]:
         """
         Send command and wait for response
@@ -242,10 +245,101 @@ class UARTDevice:
         Returns:
             Response dictionary or None
         """
-        if not self.send_json(data):
-            return None
-        
-        return self.receive_json(timeout)
+        with self.lock:
+            try:
+                if not self.serial or not self.serial.is_open:
+                    logger.error(f"Serial port {self.port} not open")
+                    return None
+                
+                # CRITICAL: Flush output buffer ONLY (not input!)
+                # Input buffer should NOT be flushed here because previous response might still be there
+                try:
+                    self.serial.reset_output_buffer()  # Clear old TX data only
+                except Exception:
+                    pass
+
+                # Convert to JSON and add newline
+                json_str = json.dumps(data) + '\n'
+                
+                # Send
+                self.serial.write(json_str.encode('utf-8'))
+                self.serial.flush()  # Ensure data is sent
+                logger.info(f"TX {self.port}: {json_str.strip()}")
+                
+                # Wait for ESP to process (don't flush input yet!)
+                time.sleep(0.010)  # 10ms for ESP to start processing
+                
+                # Now receive response
+                # Set timeout if provided
+                old_timeout = self.serial.timeout
+                if timeout is not None:
+                    self.serial.timeout = timeout
+                
+                # Read line
+                line = self.serial.readline()
+                
+                # Restore timeout
+                if timeout is not None:
+                    self.serial.timeout = old_timeout
+                
+                if not line:
+                    logger.warning(f"No response from {self.port} (timeout)")
+                    self.error_count += 1
+                    # Flush input buffer NOW (after failed read)
+                    try:
+                        self.serial.reset_input_buffer()
+                    except Exception:
+                        pass
+                    return None
+                
+                # Decode and parse JSON
+                json_str_response = line.decode('utf-8').strip()
+                logger.info(f"RX {self.port}: {json_str_response}")
+                
+                response_data = json.loads(json_str_response)
+                
+                # Reset error count on success
+                self.last_comm_time = time.time()
+                if self.error_count > 0:
+                    logger.info(f"Communication restored with {self.port}")
+                    self.error_count = 0
+                
+                # Flush input buffer NOW (after successful read)
+                # This clears any garbage that might have accumulated
+                try:
+                    self.serial.reset_input_buffer()
+                except Exception:
+                    pass
+                
+                return response_data
+                
+            except json.JSONDecodeError as e:
+                # Attempt to show raw bytes received for debugging
+                try:
+                    raw = line
+                except Exception:
+                    raw = b''
+                logger.error(f"JSON decode error from {self.port}: {e}")
+                logger.error(f"  --> Received raw bytes: {raw}")
+                logger.error(f"  --> Decoded string attempted: '{json_str_response if 'json_str_response' in locals() else '<none>'}'")
+                self.error_count += 1
+                # Flush input buffer after error
+                try:
+                    self.serial.reset_input_buffer()
+                except Exception:
+                    pass
+                return None
+                
+            except Exception as e:
+                logger.error(f"Error in send_receive from {self.port}: {e}")
+                self.error_count += 1
+                # Flush input buffer after error
+                try:
+                    self.serial.reset_input_buffer()
+                except Exception:
+                    pass
+                return None
+
 
 
 class UARTMaster:
