@@ -79,17 +79,48 @@ BUTTON_NAMES = {
 class ButtonHandler:
     """Handles all physical push buttons with debouncing"""
     
-    def __init__(self, debounce_time=0.1):
+    def __init__(self, debounce_time=0.03):
         """
-        Initialize GPIO buttons
+        Initialize GPIO buttons with HYBRID detection
         
         Args:
-            debounce_time: Debounce delay in seconds (default: 100ms, optimized for fast response)
+            debounce_time: Debounce delay in seconds (default: 30ms - optimized for responsiveness)
         """
         self.debounce_time = debounce_time
         self.last_press_time = {}
         self.last_state = {}
         self.callbacks = {}
+        
+        # ============================================
+        # HYBRID DETECTION: Classify buttons by behavior
+        # ============================================
+        
+        # EDGE DETECTION: Trigger once per press (toggle actions)
+        # Best for: ON/OFF, START/STOP, RESET, EMERGENCY
+        self.EDGE_BUTTONS = {
+            ButtonPin.PUMP_PRIMARY_ON,
+            ButtonPin.PUMP_PRIMARY_OFF,
+            ButtonPin.PUMP_SECONDARY_ON,
+            ButtonPin.PUMP_SECONDARY_OFF,
+            ButtonPin.PUMP_TERTIARY_ON,
+            ButtonPin.PUMP_TERTIARY_OFF,
+            ButtonPin.START_AUTO_SIMULATION,
+            ButtonPin.REACTOR_RESET,
+            ButtonPin.EMERGENCY
+        }
+        
+        # LEVEL DETECTION: Trigger while held (continuous actions)
+        # Best for: Rod control, Pressure control (hold for continuous change)
+        self.LEVEL_BUTTONS = {
+            ButtonPin.SAFETY_ROD_UP,
+            ButtonPin.SAFETY_ROD_DOWN,
+            ButtonPin.SHIM_ROD_UP,
+            ButtonPin.SHIM_ROD_DOWN,
+            ButtonPin.REGULATING_ROD_UP,
+            ButtonPin.REGULATING_ROD_DOWN,
+            ButtonPin.PRESSURE_UP,
+            ButtonPin.PRESSURE_DOWN
+        }
         
         # Initialize GPIO
         GPIO.setmode(GPIO.BCM)
@@ -102,7 +133,10 @@ class ButtonHandler:
             self.last_press_time[pin] = 0
             self.last_state[pin] = GPIO.HIGH
             
-        logger.info("GPIO Button Handler initialized with 17 buttons")
+        logger.info("GPIO Button Handler initialized (HYBRID mode)")
+        logger.info(f"  - Edge detection: {len(self.EDGE_BUTTONS)} buttons (toggle)")
+        logger.info(f"  - Level detection: {len(self.LEVEL_BUTTONS)} buttons (continuous)")
+        logger.info(f"  - Debounce time: {debounce_time*1000:.0f}ms")
     
     def register_callback(self, button_pin, callback):
         """
@@ -117,32 +151,60 @@ class ButtonHandler:
     
     def check_all_buttons(self):
         """
-        Check all buttons and trigger callbacks if pressed
-        Should be called frequently (e.g., every 10ms) in main loop
+        Check all buttons with HYBRID detection (edge + level)
+        Should be called frequently (e.g., every 5ms) in main loop
         """
         current_time = time.time()
         
         for pin in ButtonPin:
             current_state = GPIO.input(pin)
             
-            # Detect HIGH to LOW transition (button press)
-            if current_state == GPIO.LOW and self.last_state[pin] == GPIO.HIGH:
-                # Check debounce
-                time_since_last = current_time - self.last_press_time[pin]
-                
-                if time_since_last > self.debounce_time:
-                    self.last_press_time[pin] = current_time
+            # ============================================
+            # EDGE DETECTION (for toggle buttons)
+            # ============================================
+            if pin in self.EDGE_BUTTONS:
+                # Detect HIGH to LOW transition (button press)
+                if current_state == GPIO.LOW and self.last_state[pin] == GPIO.HIGH:
+                    # 2-sample confirmation to filter bounce noise
+                    time.sleep(0.002)  # Wait 2ms
+                    if GPIO.input(pin) == GPIO.LOW:  # Still pressed?
+                        # Check debounce
+                        time_since_last = current_time - self.last_press_time[pin]
+                        
+                        if time_since_last > self.debounce_time:
+                            self.last_press_time[pin] = current_time
+                            
+                            logger.info(f"✓ Button pressed (EDGE): {BUTTON_NAMES[pin]}")
+                            
+                            # Trigger callback if registered
+                            if pin in self.callbacks:
+                                try:
+                                    self.callbacks[pin]()
+                                except Exception as e:
+                                    logger.error(f"Error in callback for {BUTTON_NAMES[pin]}: {e}")
+                            else:
+                                logger.warning(f"⚠ No callback registered for {BUTTON_NAMES[pin]}")
+            
+            # ============================================
+            # LEVEL DETECTION (for continuous buttons)
+            # ============================================
+            elif pin in self.LEVEL_BUTTONS:
+                # Trigger while button is held (LOW)
+                if current_state == GPIO.LOW:
+                    time_since_last = current_time - self.last_press_time[pin]
                     
-                    logger.info(f"✓ Button pressed: {BUTTON_NAMES[pin]}")
-                    
-                    # Trigger callback if registered
-                    if pin in self.callbacks:
-                        try:
-                            self.callbacks[pin]()
-                        except Exception as e:
-                            logger.error(f"Error in callback for {BUTTON_NAMES[pin]}: {e}")
-                    else:
-                        logger.warning(f"⚠ No callback registered for {BUTTON_NAMES[pin]}")
+                    # Rate limiting: trigger every 50ms while held
+                    if time_since_last > 0.05:  # 50ms repeat interval
+                        self.last_press_time[pin] = current_time
+                        
+                        logger.debug(f"✓ Button held (LEVEL): {BUTTON_NAMES[pin]}")
+                        
+                        # Trigger callback if registered
+                        if pin in self.callbacks:
+                            try:
+                                self.callbacks[pin]()
+                            except Exception as e:
+                                logger.error(f"Error in callback for {BUTTON_NAMES[pin]}: {e}")
             
             # Update last state AFTER checking
             self.last_state[pin] = current_state

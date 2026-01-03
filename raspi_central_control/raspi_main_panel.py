@@ -926,12 +926,12 @@ class PLTNPanelController:
         while self.state.running:
             try:
                 self.button_manager.check_all_buttons()
-                time.sleep(0.01)  # 10ms
+                time.sleep(0.005)  # 5ms polling - 2x faster for better responsiveness
                 
-                # Log heartbeat every 10 seconds (1000 loops x 10ms)
+                # Log heartbeat every 10 seconds (2000 loops x 5ms)
                 loop_count += 1
-                if loop_count >= 1000:
-                    logger.debug("Button polling thread: alive (1000 loops)")
+                if loop_count >= 2000:
+                    logger.debug("Button polling thread: alive (2000 loops)")
                     loop_count = 0
                 
             except Exception as e:
