@@ -144,9 +144,10 @@ class UARTDevice:
                     logger.error(f"Serial port {self.port} not open")
                     return False
                 
-                # Flush input buffer to remove stale data (avoid mixing responses)
+                # Flush BOTH input and output buffers to prevent data mixing
                 try:
                     self.serial.reset_input_buffer()
+                    self.serial.reset_output_buffer()  # Clear old TX data
                 except Exception:
                     pass
 
@@ -155,9 +156,9 @@ class UARTDevice:
                 
                 # Send
                 self.serial.write(json_str.encode('utf-8'))
-                self.serial.flush()
-                # Small delay to allow ESP to start parsing before next write
-                time.sleep(0.005)
+                self.serial.flush()  # Ensure data is sent
+                # Small delay to allow ESP to start parsing
+                time.sleep(0.010)  # 10ms (increased from 5ms for stability)
                 logger.info(f"TX {self.port}: {json_str.strip()}")
                 return True
                 
@@ -477,7 +478,7 @@ class UARTMaster:
         
         # Send without retry - ESP-E is non-critical (just visualization)
         try:
-            response = self.esp_e.send_receive(command, timeout=0.5)
+            response = self.esp_e.send_receive(command, timeout=1.0)  # Increased from 0.5s
         except Exception as e:
             logger.debug(f"Error sending to ESP-E: {e}")
             return False

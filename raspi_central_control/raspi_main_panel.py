@@ -893,8 +893,8 @@ class PLTNPanelController:
                 if current_time - last_esp_e_update >= ESP_E_UPDATE_INTERVAL:
                     with self.uart_lock:
                         try:
-                            # Add delay before ESP-E to ensure UART buffers are clear
-                            time.sleep(0.05)  # 50ms delay for UART stability
+                            # Small delay before ESP-E to ensure previous command completed
+                            time.sleep(0.010)  # 10ms delay (reduced from 50ms)
                             
                             # Send to ESP-E (Power Indicator Only - Simplified)
                             logger.debug(f"Sending to ESP-E: Thermal={self.state.thermal_kw:.1f}kW")
