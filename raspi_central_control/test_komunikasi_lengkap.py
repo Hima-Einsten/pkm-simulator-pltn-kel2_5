@@ -23,7 +23,7 @@ from datetime import datetime
 # Configuration
 # ============================================
 ESP_BC_PORT = '/dev/ttyAMA0'  # GPIO 14/15 (UART0)
-ESP_E_PORT = '/dev/ttyAMA1'   # GPIO 4/5 (UART3)
+ESP_E_PORT = '/dev/ttyAMA3'   # GPIO 4/5 (UART3)
 BAUDRATE = 115200
 TIMEOUT = 2.0
 
@@ -582,7 +582,7 @@ def main():
     print("  3. Integration (kedua ESP bekerja bersama)")
     print("\nPastikan:")
     print("  - Kedua ESP32 terhubung dan firmware sudah diupload")
-    print("  - UART ports tersedia (/dev/ttyAMA0 dan /dev/ttyAMA1)")
+    print("  - UART ports tersedia (/dev/ttyAMA0 dan /dev/ttyAMA3)")
     print("  - Power supply mencukupi untuk semua hardware")
     
     input("\nPress Enter to start testing...")

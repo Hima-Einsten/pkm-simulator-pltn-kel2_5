@@ -62,17 +62,16 @@ class ButtonEvent(Enum):
     SHIM_ROD_DOWN = "SHIM_ROD_DOWN"
     REGULATING_ROD_UP = "REGULATING_ROD_UP"
     REGULATING_ROD_DOWN = "REGULATING_ROD_DOWN"
-    REACTOR_START = "REACTOR_START"
     REACTOR_RESET = "REACTOR_RESET"
     EMERGENCY = "EMERGENCY"
-    START_AUTO_SIMULATION = "START_AUTO_SIMULATION"  # NEW: Start auto mode
+    START_AUTO_SIMULATION = "START_AUTO_SIMULATION"  # Trigger auto simulation
 
 
 @dataclass
 class PanelState:
     """Panel control system state"""
-    # System control
-    reactor_started: bool = False  # Sistem reaktor sudah dimulai atau belum
+    # System control - v4.0: Manual mode always active
+    # Removed reactor_started - No longer needed
     
     # Simulation mode: 'manual' atau 'auto'
     simulation_mode: str = 'manual'  # Default: manual mode
@@ -246,18 +245,17 @@ class PLTNPanelController:
             self.button_manager.register_callback(ButtonPin.REGULATING_ROD_UP, self.on_regulating_rod_up)
             self.button_manager.register_callback(ButtonPin.REGULATING_ROD_DOWN, self.on_regulating_rod_down)
             
-            # System control buttons (3 buttons) - UPDATED: Added AUTO_SIMULATION
-            self.button_manager.register_callback(ButtonPin.REACTOR_START, self.on_reactor_start)
-            self.button_manager.register_callback(ButtonPin.REACTOR_RESET, self.on_reactor_reset)
+            # System control buttons (2 buttons) - v4.0: Simplified
             self.button_manager.register_callback(ButtonPin.START_AUTO_SIMULATION, self.on_start_auto_simulation)
+            self.button_manager.register_callback(ButtonPin.REACTOR_RESET, self.on_reactor_reset)
             
             # Emergency button (1 button)
             self.button_manager.register_callback(ButtonPin.EMERGENCY, self.on_emergency)
             
             callback_count = len(self.button_manager.callbacks)
             logger.info(f"✓ Button manager initialized: {callback_count} callbacks registered")
-            if callback_count != 18:
-                logger.warning(f"⚠️  Expected 18 callbacks, but {callback_count} registered!")
+            if callback_count != 17:
+                logger.warning(f"⚠️  Expected 17 callbacks, but {callback_count} registered!")
         except Exception as e:
             logger.warning(f"⚠️  Failed to initialize buttons: {e}")
             logger.warning("   Button input will not be available")
@@ -405,11 +403,6 @@ class PLTNPanelController:
         self.button_event_queue.put(ButtonEvent.EMERGENCY)
         logger.critical("⚡ Button event queued: EMERGENCY")
     
-    def on_reactor_start(self):
-        """Lightweight callback - just enqueue event"""
-        self.button_event_queue.put(ButtonEvent.REACTOR_START)
-        logger.info("⚡ Event queued: REACTOR_START")
-    
     def on_reactor_reset(self):
         """Lightweight callback - just enqueue event"""
         self.button_event_queue.put(ButtonEvent.REACTOR_RESET)
@@ -433,85 +426,54 @@ class PLTNPanelController:
         with self.state_lock:
             
             if event == ButtonEvent.PRESSURE_UP:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 self.state.pressure = min(self.state.pressure + 1.0, 200.0)  # 1 bar increment
                 logger.info(f"✓ Pressure UP: {self.state.pressure:.1f} bar")
             
             elif event == ButtonEvent.PRESSURE_DOWN:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 self.state.pressure = max(self.state.pressure - 1.0, 0.0)  # 1 bar decrement
                 logger.info(f"✓ Pressure DOWN: {self.state.pressure:.1f} bar")
             
             elif event == ButtonEvent.PUMP_PRIMARY_ON:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 if self.state.pump_primary_status == 0:
                     self.state.pump_primary_status = 1
                     logger.info("✓ Primary pump: STARTING")
             
             elif event == ButtonEvent.PUMP_PRIMARY_OFF:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 if self.state.pump_primary_status == 2:
                     self.state.pump_primary_status = 3
                     logger.info("✓ Primary pump: SHUTTING DOWN")
             
             elif event == ButtonEvent.PUMP_SECONDARY_ON:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 if self.state.pump_secondary_status == 0:
                     self.state.pump_secondary_status = 1
                     logger.info("✓ Secondary pump: STARTING")
             
             elif event == ButtonEvent.PUMP_SECONDARY_OFF:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 if self.state.pump_secondary_status == 2:
                     self.state.pump_secondary_status = 3
                     logger.info("✓ Secondary pump: SHUTTING DOWN")
             
             elif event == ButtonEvent.PUMP_TERTIARY_ON:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 if self.state.pump_tertiary_status == 0:
                     self.state.pump_tertiary_status = 1
                     logger.info("✓ Tertiary pump: STARTING")
             
             elif event == ButtonEvent.PUMP_TERTIARY_OFF:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 if self.state.pump_tertiary_status == 2:
                     self.state.pump_tertiary_status = 3
                     logger.info("✓ Tertiary pump: SHUTTING DOWN")
             
             elif event == ButtonEvent.SAFETY_ROD_UP:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 if not self._check_interlock_internal():
-                    logger.warning("⚠️  Interlock not satisfied!")
+                    logger.warning("Interlock not satisfied!")
                     return
                 self.state.safety_rod = min(self.state.safety_rod + 1, 100)  # 1% increment
                 logger.info(f"✓ Safety rod UP: {self.state.safety_rod}%")
             
             elif event == ButtonEvent.SAFETY_ROD_DOWN:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
-
                 # Safety rod hanya bisa turun jika shim dan regulating sudah 0%
                 if self.state.shim_rod > 0 or self.state.regulating_rod > 0:
-                    logger.warning("⚠️  Cannot lower Safety Rod! Lower Shim & Regulating first!")
+                    logger.warning("Cannot lower Safety Rod! Lower Shim & Regulating first!")
                     # Trigger buzzer warning if available
                     if self.buzzer:
                         try:
@@ -524,26 +486,17 @@ class PLTNPanelController:
                 logger.info(f"✓ Safety rod DOWN: {self.state.safety_rod}%")
             
             elif event == ButtonEvent.SHIM_ROD_UP:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 if not self._check_interlock_internal():
-                    logger.warning("⚠️  Interlock not satisfied!")
+                    logger.warning("Interlock not satisfied!")
                     return
                 self.state.shim_rod = min(self.state.shim_rod + 1, 100)  # 1% increment
                 logger.info(f"✓ Shim rod UP: {self.state.shim_rod}%")
             
             elif event == ButtonEvent.SHIM_ROD_DOWN:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 self.state.shim_rod = max(self.state.shim_rod - 1, 0)  # 1% decrement
                 logger.info(f"✓ Shim rod DOWN: {self.state.shim_rod}%")
             
             elif event == ButtonEvent.REGULATING_ROD_UP:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 if not self._check_interlock_internal():
                     logger.warning("⚠️  Interlock not satisfied!")
                     return
@@ -551,9 +504,6 @@ class PLTNPanelController:
                 logger.info(f"✓ Regulating rod UP: {self.state.regulating_rod}%")
             
             elif event == ButtonEvent.REGULATING_ROD_DOWN:
-                if not self.state.reactor_started:
-                    logger.warning("⚠️  Reactor not started!")
-                    return
                 self.state.regulating_rod = max(self.state.regulating_rod - 1, 0)  # 1% decrement
                 logger.info(f"✓ Regulating rod DOWN: {self.state.regulating_rod}%")
             
@@ -566,21 +516,11 @@ class PLTNPanelController:
                 self.state.pump_secondary_status = 3
                 self.state.pump_tertiary_status = 3
                 logger.critical("✓ EMERGENCY SHUTDOWN ACTIVATED!")
-            
-            elif event == ButtonEvent.REACTOR_START:
-                if not self.state.reactor_started:
-                    self.state.reactor_started = True
-                    logger.info("=" * 60)
-                    logger.info("🟢 REACTOR SYSTEM STARTED")
-                    logger.info("System is now operational.")
-                    logger.info("=" * 60)
-            
+                    
             elif event == ButtonEvent.REACTOR_RESET:
                 # Stop auto simulation if running
                 self.state.auto_sim_running = False
                 self.state.simulation_mode = 'manual'
-                
-                self.state.reactor_started = False
                 self.state.emergency_active = False
                 self.state.pressure = 0.0
                 self.state.thermal_kw = 0.0
@@ -607,12 +547,8 @@ class PLTNPanelController:
                 if self.state.auto_sim_running:
                     logger.warning("⚠️  Auto simulation already running!")
                     return
-                if self.state.reactor_started:
-                    logger.warning("⚠️  Reactor already started! Reset first for auto mode.")
-                    return
                 
                 # Start auto simulation
-                self.state.reactor_started = True  # Auto-start reactor
                 self.state.simulation_mode = 'auto'
                 self.state.auto_sim_running = True
                 logger.info("=" * 60)
@@ -716,10 +652,6 @@ class PLTNPanelController:
         Returns:
             True if safe to move rods, False otherwise
         """
-        # Check 1: Reactor must be started
-        if not self.state.reactor_started:
-            logger.debug("Interlock: Reactor not started")
-            return False
         
         # Check 2: Pressure >= 40 bar (minimum for safe operation)
         # Pressure harus dinaikkan dulu sebelum rod movement
@@ -1092,8 +1024,10 @@ class PLTNPanelController:
         """
         Thread untuk menjalankan simulasi otomatis (slow paced)
         Simulasi berjalan bertahap dengan delay agar mudah dipahami
+        
+        v4.0: Manual mode always active - Auto simulation tidak mengunci kontrol manual
         """
-        logger.info("Auto simulation thread started (waiting for trigger)")
+        logger.info("🤖 Auto simulation thread started (waiting for trigger)")
         
         while self.state.running:
             # Wait for auto simulation to be triggered
@@ -1106,136 +1040,170 @@ class PLTNPanelController:
                 logger.info("🤖 AUTO SIMULATION MODE - Full PWR Startup Sequence")
                 logger.info("   Simulasi berjalan otomatis dengan kecepatan lambat")
                 logger.info("   untuk memudahkan pemahaman cara kerja PLTN")
+                logger.info("")
+                logger.info("   ℹ️  Manual control tetap aktif - Anda bisa interrupt kapan saja")
                 logger.info("="*70)
                 
-                # Phase 1: System Initialization (already done by START)
+                # Phase 1: System Initialization
                 logger.info("\n📍 Phase 1: System Initialization")
-                logger.info("   ✓ Reactor system started")
+                logger.info("   ✓ Reactor system active (manual mode always on)")
+                logger.info("   ✓ All controls ready")
                 time.sleep(3)
                 
-                # Phase 2: Raise Pressure to minimum required (40 bar)
+                # Phase 2: Raise Pressure to minimum required (45 bar)
                 logger.info("\n📍 Phase 2: Pressurizer Activation")
-                logger.info("   Raising pressure to minimum 40 bar...")
+                logger.info("   Raising pressure to 45 bar (above minimum 40 bar)...")
                 with self.state_lock:
-                    for i in range(45):  # 45 bar (sedikit lebih dari minimum)
-                        self.state.pressure += 1.0
-                        if i % 5 == 0:
-                            logger.info(f"   Pressure: {self.state.pressure:.1f} bar")
-                        time.sleep(0.2)  # 0.2s per bar = 9s total
-                logger.info(f"   ✓ Pressure reached: {self.state.pressure:.1f} bar")
-                time.sleep(2)
-                
-                # Phase 3: Start Pumps (Tertiary → Secondary → Primary)
-                logger.info("\n📍 Phase 3: Coolant Pumps Startup Sequence")
-                
-                # Tertiary pump first
-                logger.info("   Starting Tertiary Pump (Cooling path)...")
-                with self.state_lock:
-                    self.state.pump_tertiary_status = 1  # STARTING
-                time.sleep(3)  # Wait for pump to start
-                logger.info("   ✓ Tertiary Pump: ON")
-                
-                # Secondary pump
-                logger.info("   Starting Secondary Pump (Heat exchanger)...")
-                with self.state_lock:
-                    self.state.pump_secondary_status = 1  # STARTING
-                time.sleep(3)  # Wait for pump to start
-                logger.info("   ✓ Secondary Pump: ON")
-                
-                # Primary pump
-                logger.info("   Starting Primary Pump (Main loop)...")
-                with self.state_lock:
-                    self.state.pump_primary_status = 1  # STARTING
-                time.sleep(3)  # Wait for pump to start
-                logger.info("   ✓ Primary Pump: ON")
-                logger.info("   ✓ All pumps operational - Interlock satisfied")
-                time.sleep(3)
-                
-                # Phase 4: Control Rod Withdrawal (Gradual)
-                logger.info("\n📍 Phase 4: Control Rod Withdrawal")
-                logger.info("   Slowly raising Shim and Regulating rods...")
-                logger.info("   (Safety rod kept at 0% - used for SCRAM only)")
-                
-                # Raise rods gradually to 50% (safe operational level)
-                target_rod_position = 50
-                with self.state_lock:
-                    for i in range(target_rod_position):
-                        # Check if still in auto mode (could be cancelled)
+                    for i in range(45):  # 45 bar
+                        # Check if still in auto mode
                         if not self.state.auto_sim_running:
                             logger.warning("   ⚠️ Auto simulation cancelled by user")
                             return
                         
-                        self.state.shim_rod += 1
-                        self.state.regulating_rod += 1
-                        
-                        if i % 5 == 0 or i == target_rod_position - 1:
-                            logger.info(f"   Rods: Shim={self.state.shim_rod}%, "
-                                      f"Regulating={self.state.regulating_rod}%")
-                        time.sleep(0.5)  # 0.5s per 1% = 25s total to 50%
+                        self.state.pressure += 1.0
+                        if i % 5 == 0:
+                            logger.info(f"   Pressure: {self.state.pressure:.1f} bar")
+                        time.sleep(0.2)  # 0.2s per bar = 9s total
                 
-                logger.info(f"   ✓ Control rods raised to {target_rod_position}%")
-                logger.info("   ✓ Reactor criticality achieved - Thermal power rising")
-                time.sleep(4)
+                logger.info(f"   ✅ Pressure reached: {self.state.pressure:.1f} bar")
+                logger.info("   ✅ Interlock condition 1 satisfied (P ≥ 40 bar)")
+                time.sleep(2)
                 
-                # Phase 5: Steam Generator Activation (automatic via humidifier control)
-                logger.info("\n📍 Phase 5: Steam Generator Operation")
-                logger.info("   Steam generators activate automatically (Shim & Reg >= 40%)")
-                logger.info("   Visual: Humidifiers creating steam effect 💨")
-                time.sleep(5)
+                # Phase 3: Start Pumps (Tertiary → Secondary → Primary)
+                logger.info("\n📍 Phase 3: Coolant Pumps Startup Sequence")
+                logger.info("   Following correct startup procedure...")
                 
-                # Phase 6: Turbine Starting (automatic via ESP-BC)
-                logger.info("\n📍 Phase 6: Turbine-Generator Startup")
-                logger.info("   Turbine starting automatically (Thermal power > threshold)")
-                logger.info("   Speed increasing gradually to 100%...")
-                time.sleep(8)
-                logger.info("   ✓ Turbine at full speed")
-                logger.info("   ✓ Generator synchronized to grid")
+                # Tertiary pump first
+                logger.info("   Step 3.1: Starting Tertiary Pump (Cooling path)...")
+                with self.state_lock:
+                    self.state.pump_tertiary_status = 1  # STARTING
+                time.sleep(3)  # Wait for pump to reach ON state
+                logger.info("   ✅ Tertiary Pump: ON")
+                
+                # Check if cancelled
+                if not self.state.auto_sim_running:
+                    logger.warning("   ⚠️ Auto simulation cancelled")
+                    return
+                
+                # Secondary pump
+                logger.info("   Step 3.2: Starting Secondary Pump (Heat exchanger)...")
+                with self.state_lock:
+                    self.state.pump_secondary_status = 1  # STARTING
+                time.sleep(3)
+                logger.info("   ✅ Secondary Pump: ON")
+                
+                # Check if cancelled
+                if not self.state.auto_sim_running:
+                    logger.warning("   ⚠️ Auto simulation cancelled")
+                    return
+                
+                # Primary pump
+                logger.info("   Step 3.3: Starting Primary Pump (Main loop)...")
+                with self.state_lock:
+                    self.state.pump_primary_status = 1  # STARTING
+                time.sleep(3)
+                logger.info("   ✅ Primary Pump: ON")
+                logger.info("   ✅ All pumps operational")
+                logger.info("   ✅ Interlock condition 2 satisfied (All pumps ON)")
+                time.sleep(2)
+                
+                # Phase 4: Control Rod Withdrawal (Gradual)
+                logger.info("\n📍 Phase 4: Control Rod Withdrawal")
+                logger.info("   Slowly raising Shim and Regulating rods to 50%...")
+                logger.info("   (Safety rod kept at 0% - used for SCRAM only)")
+                
+                # Raise rods gradually to 50%
+                target_rod_position = 50
+                for i in range(target_rod_position + 1):
+                    # Check if cancelled
+                    if not self.state.auto_sim_running:
+                        logger.warning("   ⚠️ Auto simulation cancelled by user")
+                        return
+                    
+                    with self.state_lock:
+                        self.state.shim_rod = i
+                        self.state.regulating_rod = i
+                    
+                    if i % 10 == 0 and i > 0:
+                        logger.info(f"   Rods at {i}%: Thermal power increasing...")
+                    
+                    time.sleep(0.5)  # 0.5s per 1% = 25s total
+                
+                logger.info(f"   ✅ Control rods at {target_rod_position}%")
+                logger.info("   ✅ Reactor criticality achieved")
+                logger.info("   ✅ Thermal power rising steadily")
                 time.sleep(3)
                 
-                # Phase 7: Power Generation Begins
-                logger.info("\n📍 Phase 7: Electrical Power Generation")
-                logger.info("   Reactor thermal: ~900 MWth")
-                logger.info("   Turbine efficiency: 33%")
-                logger.info("   Electrical output: ~200-250 MWe")
-                logger.info("   Visual: 10 Power indicator LEDs brightness increasing 💡")
+                # Phase 5: Steam Generator Activation
+                logger.info("\n📍 Phase 5: Steam Generator Operation")
+                logger.info("   Steam generators automatically activate (Rods ≥ 40%)")
+                logger.info("   Visual: Humidifiers SG1 & SG2 creating steam 💨")
                 time.sleep(5)
                 
-                # Phase 8: Cooling Tower Activation (automatic)
+                # Phase 6: Turbine Starting
+                logger.info("\n📍 Phase 6: Turbine-Generator Startup")
+                logger.info("   Turbine starting automatically...")
+                logger.info("   Speed ramping up: 0% → 100%")
+                time.sleep(8)
+                logger.info("   ✅ Turbine at full speed (100%)")
+                logger.info("   ✅ Generator synchronized to grid")
+                time.sleep(3)
+                
+                # Phase 7: Power Generation
+                logger.info("\n📍 Phase 7: Electrical Power Generation")
+                logger.info("   Reactor thermal: ~900 MWth")
+                logger.info("   Turbine efficiency: ~33%")
+                logger.info("   Electrical output: ~200-250 MWe")
+                logger.info("   Visual: Power indicator LED brightness ↑ 💡")
+                time.sleep(5)
+                
+                # Phase 8: Cooling Tower
                 logger.info("\n📍 Phase 8: Cooling Tower Humidifiers")
-                logger.info("   Cooling towers activate in stages as power increases")
-                logger.info("   Visual: 4 CT humidifiers creating steam effect 💨")
+                logger.info("   Cooling towers activate automatically")
+                logger.info("   CT1, CT2, CT3, CT4: Creating steam effect 💨")
                 time.sleep(5)
                 
                 # Phase 9: Stable Operation
                 logger.info("\n📍 Phase 9: Normal Operation Achieved")
                 logger.info("="*70)
                 logger.info("✅ REACTOR AT STABLE OPERATION")
-                logger.info(f"   Pressure: {self.state.pressure:.1f} bar")
-                logger.info(f"   Control Rods: Shim={self.state.shim_rod}%, "
-                          f"Reg={self.state.regulating_rod}%")
-                logger.info("   Pumps: All operational")
-                logger.info("   Turbine: Running at full speed")
-                logger.info("   Power Output: ~200-250 MWe")
-                logger.info("   Humidifiers: SG + CT all active")
                 logger.info("")
-                logger.info("🎓 EDUCATIONAL NOTE:")
-                logger.info("   - Operator dapat adjust control rods untuk fine tuning")
-                logger.info("   - Pressure dapat disesuaikan sesuai kebutuhan")
-                logger.info("   - Emergency button siap untuk SCRAM jika diperlukan")
+                logger.info(f"   📊 Current Status:")
+                with self.state_lock:
+                    logger.info(f"   • Pressure: {self.state.pressure:.1f} bar")
+                    logger.info(f"   • Control Rods: Shim={self.state.shim_rod}%, Reg={self.state.regulating_rod}%")
+                    logger.info(f"   • Safety Rod: {self.state.safety_rod}% (for SCRAM)")
+                    logger.info(f"   • Pumps: Primary={self.state.pump_primary_status}, "
+                              f"Secondary={self.state.pump_secondary_status}, "
+                              f"Tertiary={self.state.pump_tertiary_status}")
+                logger.info(f"   • Turbine: Running at full speed")
+                logger.info(f"   • Power Output: ~200-250 MWe")
+                logger.info("")
+                logger.info("🎓 EDUCATIONAL NOTES:")
+                logger.info("   ✓ Startup sequence complete in ~70 seconds")
+                logger.info("   ✓ Manual control TETAP AKTIF - Anda bisa adjust sesuai kebutuhan")
+                logger.info("   ✓ Coba adjust control rods untuk fine tuning power")
+                logger.info("   ✓ Pressure dapat disesuaikan (UP/DOWN buttons)")
+                logger.info("   ✓ Emergency button siap untuk SCRAM kapan saja")
+                logger.info("")
+                logger.info("➡️  Silakan lanjutkan dengan kontrol manual")
                 logger.info("="*70)
                 
-                # Auto simulation complete
+                # Auto simulation complete - back to manual
                 with self.state_lock:
                     self.state.auto_sim_running = False
-                    self.state.simulation_mode = 'manual'  # Back to manual mode
+                    self.state.simulation_mode = 'manual'
                 
-                logger.info("\n✅ Auto simulation complete - switched to MANUAL mode")
-                logger.info("   Operator dapat melanjutkan kontrol manual")
+                logger.info("\n✅ Auto simulation complete")
+                logger.info("   Mode: MANUAL (operator control active)")
                 
             except Exception as e:
-                logger.error(f"Error in auto simulation: {e}")
+                logger.error(f"❌ Error in auto simulation: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
+                with self.state_lock:
+                    self.state.auto_sim_running = False
+                    self.state.simulation_mode = 'manual'
                 with self.state_lock:
                     self.state.auto_sim_running = False
                 time.sleep(1)

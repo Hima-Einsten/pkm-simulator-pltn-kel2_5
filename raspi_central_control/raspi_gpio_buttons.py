@@ -44,10 +44,9 @@ class ButtonPin(IntEnum):
     PRESSURE_UP = 24
     PRESSURE_DOWN = 23
     
-    # System Control (3 buttons) - UPDATED: Added AUTO_SIMULATION
-    REACTOR_START = 17        # GREEN button - Start reactor system (Manual mode)
-    REACTOR_RESET = 27        # YELLOW button - Reset simulation to initial state
-    START_AUTO_SIMULATION = 2 # BLUE button - Start auto simulation mode
+    # System Control (2 buttons) - v4.0: Simplified
+    START_AUTO_SIMULATION = 17 # GREEN button - Start auto simulation
+    REACTOR_RESET = 27         # YELLOW button - Reset simulation
     
     # Emergency (1 button)
     EMERGENCY = 18  # RED button - Emergency shutdown!
@@ -68,9 +67,8 @@ BUTTON_NAMES = {
     ButtonPin.REGULATING_ROD_DOWN: "Regulating Rod DOWN",
     ButtonPin.PRESSURE_UP: "Pressure UP",
     ButtonPin.PRESSURE_DOWN: "Pressure DOWN",
-    ButtonPin.REACTOR_START: "REACTOR START (Manual)",
-    ButtonPin.REACTOR_RESET: "REACTOR RESET",
     ButtonPin.START_AUTO_SIMULATION: "START AUTO SIMULATION",
+    ButtonPin.REACTOR_RESET: "REACTOR RESET",
     ButtonPin.EMERGENCY: "EMERGENCY SHUTDOWN",
 }
 
