@@ -1053,19 +1053,28 @@ class PLTNPanelController:
                 # Phase 2: Raise Pressure to minimum required (45 bar)
                 logger.info("\n📍 Phase 2: Pressurizer Activation")
                 logger.info("   Raising pressure to 45 bar (above minimum 40 bar)...")
-                with self.state_lock:
-                    for i in range(45):  # 45 bar
-                        # Check if still in auto mode
-                        if not self.state.auto_sim_running:
-                            logger.warning("   ⚠️ Auto simulation cancelled by user")
-                            return
-                        
+                for i in range(45):  # 45 bar
+                    # Check if still in auto mode (WITHOUT lock)
+                    if not self.state.auto_sim_running:
+                        logger.warning("   ⚠️ Auto simulation cancelled by user")
+                        return
+                    
+                    # Update state WITH lock (minimal hold time)
+                    with self.state_lock:
                         self.state.pressure += 1.0
-                        if i % 5 == 0:
-                            logger.info(f"   Pressure: {self.state.pressure:.1f} bar")
-                        time.sleep(0.2)  # 0.2s per bar = 9s total
+                        current_pressure = self.state.pressure
+                    
+                    # Trigger immediate ESP send
+                    self.esp_send_immediate.set()
+                    
+                    # Log and sleep WITHOUT lock
+                    if i % 5 == 0:
+                        logger.info(f"   Pressure: {current_pressure:.1f} bar")
+                    time.sleep(0.2)  # 0.2s per bar = 9s total
                 
-                logger.info(f"   ✅ Pressure reached: {self.state.pressure:.1f} bar")
+                with self.state_lock:
+                    final_pressure = self.state.pressure
+                logger.info(f"   ✅ Pressure reached: {final_pressure:.1f} bar")
                 logger.info("   ✅ Interlock condition 1 satisfied (P ≥ 40 bar)")
                 time.sleep(2)
                 
@@ -1077,6 +1086,7 @@ class PLTNPanelController:
                 logger.info("   Step 3.1: Starting Tertiary Pump (Cooling path)...")
                 with self.state_lock:
                     self.state.pump_tertiary_status = 1  # STARTING
+                self.esp_send_immediate.set()  # Trigger immediate ESP send
                 time.sleep(3)  # Wait for pump to reach ON state
                 logger.info("   ✅ Tertiary Pump: ON")
                 
@@ -1089,6 +1099,7 @@ class PLTNPanelController:
                 logger.info("   Step 3.2: Starting Secondary Pump (Heat exchanger)...")
                 with self.state_lock:
                     self.state.pump_secondary_status = 1  # STARTING
+                self.esp_send_immediate.set()  # Trigger immediate ESP send
                 time.sleep(3)
                 logger.info("   ✅ Secondary Pump: ON")
                 
@@ -1101,6 +1112,7 @@ class PLTNPanelController:
                 logger.info("   Step 3.3: Starting Primary Pump (Main loop)...")
                 with self.state_lock:
                     self.state.pump_primary_status = 1  # STARTING
+                self.esp_send_immediate.set()  # Trigger immediate ESP send
                 time.sleep(3)
                 logger.info("   ✅ Primary Pump: ON")
                 logger.info("   ✅ All pumps operational")
@@ -1115,15 +1127,20 @@ class PLTNPanelController:
                 # Raise rods gradually to 50%
                 target_rod_position = 50
                 for i in range(target_rod_position + 1):
-                    # Check if cancelled
+                    # Check if cancelled (WITHOUT lock)
                     if not self.state.auto_sim_running:
                         logger.warning("   ⚠️ Auto simulation cancelled by user")
                         return
                     
+                    # Update rod positions WITH lock (minimal hold time)
                     with self.state_lock:
                         self.state.shim_rod = i
                         self.state.regulating_rod = i
                     
+                    # ✅ TRIGGER IMMEDIATE ESP SEND - Critical for servo movement!
+                    self.esp_send_immediate.set()
+                    
+                    # Log and sleep WITHOUT lock
                     if i % 10 == 0 and i > 0:
                         logger.info(f"   Rods at {i}%: Thermal power increasing...")
                     
