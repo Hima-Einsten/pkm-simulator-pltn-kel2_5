@@ -410,8 +410,9 @@ class UARTMaster:
         }
 
         # Send and receive (increased timeout for reliability)
+        # ESP-BC has more processing (rods + pumps + turbine + humid) so needs longer timeout
         try:
-            response = self.esp_bc.send_receive(command, timeout=2.0)
+            response = self.esp_bc.send_receive(command, timeout=2.5)  # Increased from 2.0s
         except Exception as e:
             logger.error(f"Error sending to ESP-BC: {e}")
             response = None

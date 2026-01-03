@@ -882,8 +882,8 @@ class PLTNPanelController:
                             esp_bc_data = self.uart_master.get_esp_bc_data()
                             self.state.thermal_kw = esp_bc_data.kw_thermal
                             self.state.turbine_speed = esp_bc_data.turbine_speed
-                            # Small gap before sending to ESP-E to avoid UART contention
-                            time.sleep(0.02)
+                            # Gap before sending to ESP-E to ensure buffers clear
+                            time.sleep(0.03)  # 30ms (increased from 20ms)
                         else:
                             logger.warning("⚠️  ESP-BC update failed")
                 
@@ -1052,28 +1052,41 @@ class PLTNPanelController:
                 
                 # Phase 2: Raise Pressure to minimum required (45 bar)
                 logger.info("\n📍 Phase 2: Pressurizer Activation")
-                logger.info("   Raising pressure to 45 bar (above minimum 40 bar)...")
-                for i in range(45):  # 45 bar
-                    # Check if still in auto mode (WITHOUT lock)
+                logger.info("   Raising pressure to 45 bar (3 seconds)...")
+                
+                start_time = time.time()
+                duration = 3.0  # 3 seconds for smooth motion
+                target_pressure = 45.0
+                
+                while time.time() - start_time < duration:
+                    # Check if cancelled
                     if not self.state.auto_sim_running:
                         logger.warning("   ⚠️ Auto simulation cancelled by user")
                         return
                     
+                    # Calculate current pressure (smooth interpolation)
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration  # 0.0 to 1.0
+                    current_pressure = target_pressure * progress
+                    
                     # Update state WITH lock (minimal hold time)
                     with self.state_lock:
-                        self.state.pressure += 1.0
-                        current_pressure = self.state.pressure
+                        self.state.pressure = current_pressure
                     
                     # Trigger immediate ESP send
                     self.esp_send_immediate.set()
                     
-                    # Log and sleep WITHOUT lock
-                    if i % 5 == 0:
+                    # Log progress every 0.5s
+                    if int(elapsed * 2) % 2 == 0:
                         logger.info(f"   Pressure: {current_pressure:.1f} bar")
-                    time.sleep(0.2)  # 0.2s per bar = 9s total
+                    
+                    time.sleep(0.05)  # 50ms update rate = smooth motion
                 
+                # Ensure final value
                 with self.state_lock:
+                    self.state.pressure = 45.0
                     final_pressure = self.state.pressure
+                
                 logger.info(f"   ✅ Pressure reached: {final_pressure:.1f} bar")
                 logger.info("   ✅ Interlock condition 1 satisfied (P ≥ 40 bar)")
                 time.sleep(2)
@@ -1119,36 +1132,192 @@ class PLTNPanelController:
                 logger.info("   ✅ Interlock condition 2 satisfied (All pumps ON)")
                 time.sleep(2)
                 
-                # Phase 4: Control Rod Withdrawal (Gradual)
-                logger.info("\n📍 Phase 4: Control Rod Withdrawal")
-                logger.info("   Slowly raising Shim and Regulating rods to 50%...")
-                logger.info("   (Safety rod kept at 0% - used for SCRAM only)")
+                # Phase 4A: Safety Rod Withdrawal (100%)
+                logger.info("\n📍 Phase 4A: Safety Rod Withdrawal")
+                logger.info("   Raising safety rod to 100% (3 seconds)...")
+                logger.info("   (Safety rod must be fully withdrawn before power rods)")
                 
-                # Raise rods gradually to 50%
-                target_rod_position = 50
-                for i in range(target_rod_position + 1):
-                    # Check if cancelled (WITHOUT lock)
+                start_time = time.time()
+                duration = 3.0
+                start_pos = 0
+                target_pos = 100
+                
+                while time.time() - start_time < duration:
                     if not self.state.auto_sim_running:
                         logger.warning("   ⚠️ Auto simulation cancelled by user")
                         return
                     
-                    # Update rod positions WITH lock (minimal hold time)
-                    with self.state_lock:
-                        self.state.shim_rod = i
-                        self.state.regulating_rod = i
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration
+                    current_pos = int(start_pos + (target_pos - start_pos) * progress)
                     
-                    # ✅ TRIGGER IMMEDIATE ESP SEND - Critical for servo movement!
+                    with self.state_lock:
+                        self.state.safety_rod = current_pos
+                    
+                    self.esp_send_immediate.set()
+                    time.sleep(0.05)
+                
+                with self.state_lock:
+                    self.state.safety_rod = 100
+                
+                logger.info("   ✅ Safety rod at 100%")
+                time.sleep(2)
+                
+                # Phase 4B: Raise Pressure to 140 bar
+                logger.info("\n📍 Phase 4B: Pressurizer to Operating Pressure")
+                logger.info("   Raising pressure to 140 bar (7 seconds)...")
+                
+                start_time = time.time()
+                duration = 7.0
+                with self.state_lock:
+                    start_pressure = self.state.pressure  # Should be ~45
+                target_pressure = 140.0
+                
+                while time.time() - start_time < duration:
+                    if not self.state.auto_sim_running:
+                        logger.warning("   ⚠️ Auto simulation cancelled by user")
+                        return
+                    
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration
+                    current_pressure = start_pressure + (target_pressure - start_pressure) * progress
+                    
+                    with self.state_lock:
+                        self.state.pressure = current_pressure
+                    
                     self.esp_send_immediate.set()
                     
-                    # Log and sleep WITHOUT lock
-                    if i % 10 == 0 and i > 0:
-                        logger.info(f"   Rods at {i}%: Thermal power increasing...")
+                    if int(elapsed * 2) % 2 == 0:
+                        logger.info(f"   Pressure: {current_pressure:.1f} bar")
                     
-                    time.sleep(0.5)  # 0.5s per 1% = 25s total
+                    time.sleep(0.05)
                 
-                logger.info(f"   ✅ Control rods at {target_rod_position}%")
+                with self.state_lock:
+                    self.state.pressure = 140.0
+                
+                logger.info("   ✅ Pressure at 140 bar (operating pressure)")
+                logger.info("   ✅ Ready for power rod withdrawal")
+                time.sleep(2)
+                
+                # Phase 4C: Shim Rod to 50% (Coarse Power Control)
+                logger.info("\n📍 Phase 4C: Shim Rod Withdrawal (Coarse Control)")
+                logger.info("   Raising shim rod to 50% (3 seconds)...")
+                
+                start_time = time.time()
+                duration = 3.0
+                start_pos = 0
+                target_pos = 50
+                
+                while time.time() - start_time < duration:
+                    if not self.state.auto_sim_running:
+                        logger.warning("   ⚠️ Auto simulation cancelled by user")
+                        return
+                    
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration
+                    current_pos = int(start_pos + (target_pos - start_pos) * progress)
+                    
+                    with self.state_lock:
+                        self.state.shim_rod = current_pos
+                    
+                    self.esp_send_immediate.set()
+                    time.sleep(0.05)
+                
+                with self.state_lock:
+                    self.state.shim_rod = 50
+                
+                logger.info("   ✅ Shim rod at 50% (initial power level)")
+                time.sleep(2)
+                
+                # Phase 4D: Regulating Rod to 50% (Fine Power Control)
+                logger.info("\n📍 Phase 4D: Regulating Rod Withdrawal (Fine Control)")
+                logger.info("   Raising regulating rod to 50% (3 seconds)...")
+                
+                start_time = time.time()
+                duration = 3.0
+                start_pos = 0
+                target_pos = 50
+                
+                while time.time() - start_time < duration:
+                    if not self.state.auto_sim_running:
+                        logger.warning("   ⚠️ Auto simulation cancelled by user")
+                        return
+                    
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration
+                    current_pos = int(start_pos + (target_pos - start_pos) * progress)
+                    
+                    with self.state_lock:
+                        self.state.regulating_rod = current_pos
+                    
+                    self.esp_send_immediate.set()
+                    time.sleep(0.05)
+                
+                with self.state_lock:
+                    self.state.regulating_rod = 50
+                
+                logger.info("   ✅ Regulating rod at 50% (medium power)")
+                time.sleep(2)
+                
+                # Phase 4E: Ramp to Maximum Power (100%)
+                logger.info("\n📍 Phase 4E: Power Ramp-up to Maximum")
+                logger.info("   Raising shim rod to 100% (4 seconds)...")
+                
+                start_time = time.time()
+                duration = 4.0
+                start_pos = 50
+                target_pos = 100
+                
+                while time.time() - start_time < duration:
+                    if not self.state.auto_sim_running:
+                        logger.warning("   ⚠️ Auto simulation cancelled by user")
+                        return
+                    
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration
+                    current_pos = int(start_pos + (target_pos - start_pos) * progress)
+                    
+                    with self.state_lock:
+                        self.state.shim_rod = current_pos
+                    
+                    self.esp_send_immediate.set()
+                    time.sleep(0.05)
+                
+                with self.state_lock:
+                    self.state.shim_rod = 100
+                
+                logger.info("   ✅ Shim rod at 100% (coarse max)")
+                time.sleep(2)
+                
+                logger.info("   Raising regulating rod to 100% (4 seconds)...")
+                
+                start_time = time.time()
+                duration = 4.0
+                start_pos = 50
+                target_pos = 100
+                
+                while time.time() - start_time < duration:
+                    if not self.state.auto_sim_running:
+                        logger.warning("   ⚠️ Auto simulation cancelled by user")
+                        return
+                    
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration
+                    current_pos = int(start_pos + (target_pos - start_pos) * progress)
+                    
+                    with self.state_lock:
+                        self.state.regulating_rod = current_pos
+                    
+                    self.esp_send_immediate.set()
+                    time.sleep(0.05)
+                
+                with self.state_lock:
+                    self.state.regulating_rod = 100
+                
+                logger.info("   ✅ Regulating rod at 100% (fine max)")
+                logger.info("   ✅ Reactor at MAXIMUM POWER!")
                 logger.info("   ✅ Reactor criticality achieved")
-                logger.info("   ✅ Thermal power rising steadily")
+                logger.info("   ✅ Thermal power at maximum")
                 time.sleep(3)
                 
                 # Phase 5: Steam Generator Activation
