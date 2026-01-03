@@ -467,14 +467,13 @@ class OLEDManager:
         display.show()
         time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
     
-    def update_system_status(self, reactor_started: bool, pressure: float, 
+    def update_system_status(self, pressure: float, 
                             pump_primary: int, pump_secondary: int, pump_tertiary: int,
                             interlock: bool, thermal_kw: float, turbine_speed: float):
         """
         Update system status display with user instructions AND system status
         
         Args:
-            reactor_started: Reactor system started flag
             pressure: Current pressure
             pump_primary: Primary pump status
             pump_secondary: Secondary pump status  
@@ -487,7 +486,7 @@ class OLEDManager:
         self.mux.select_esp_channel(2)  # Use ESP channel for TCA9548A #2, Channel 2
         
         # Check if data changed
-        current_data = (reactor_started, pressure, pump_primary, pump_secondary, 
+        current_data = (pressure, pump_primary, pump_secondary, 
                        pump_tertiary, interlock, thermal_kw, turbine_speed)
         
         if self.last_data['system_status'] == current_data:
@@ -500,11 +499,7 @@ class OLEDManager:
         
         # Determine if showing instruction or status
         # Show instruction if system not ready
-        if not reactor_started:
-            instruction = "Press START"
-            display.draw_text_centered("INSTRUKSI", 1, display.font_small)
-            display.draw_text_centered(instruction, 14, display.font_large)
-        elif pressure < 40.0:
+        if pressure < 40.0:
             instruction = f"Raise P to 40"
             display.draw_text_centered("INSTRUKSI", 1, display.font_small)
             display.draw_text_centered(instruction, 11, display.font_small)
@@ -585,7 +580,6 @@ class OLEDManager:
         self.update_thermal_power(state.thermal_kw)
         
         self.update_system_status(
-            reactor_started=state.reactor_started,
             pressure=state.pressure,
             pump_primary=state.pump_primary_status,
             pump_secondary=state.pump_secondary_status,

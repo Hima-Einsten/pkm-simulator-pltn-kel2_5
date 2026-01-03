@@ -131,8 +131,8 @@ def test_esp_bc():
         results.add_test("ESP-BC: Port Open", True)
         
         # Wait for ESP to stabilize
-        print("\n2. Waiting for ESP32 to stabilize (3s)...")
-        time.sleep(3.0)
+        print("\n2. Waiting for ESP32 to stabilize (1s)...")
+        time.sleep(1.0)  # Reduced from 3s to 1s
         ser_bc.reset_input_buffer()
         ser_bc.reset_output_buffer()
         print_success("Buffers cleared")
@@ -362,8 +362,8 @@ def test_esp_e():
         results.add_test("ESP-E: Port Open", True)
         
         # Wait for ESP to stabilize
-        print("\n2. Waiting for ESP32 to stabilize (2s)...")
-        time.sleep(2.0)
+        print("\n2. Waiting for ESP32 to stabilize (1s)...")
+        time.sleep(1.0)  # Reduced from 2s to 1s
         ser_e.reset_input_buffer()
         ser_e.reset_output_buffer()
         print_success("Buffers cleared")
