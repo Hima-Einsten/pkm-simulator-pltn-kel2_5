@@ -302,17 +302,11 @@ class OLEDManager:
             warning: Warning flag (pressure high)
             critical: Critical flag (pressure critical)
         """
-        # Select channel first (before checking data)
+        # Select channel
         self.mux.select_display_channel(1)  # Pressurizer on channel 1
         
         # Round to 1 decimal
         pressure_rounded = round(pressure, 1)
-        current_data = (pressure_rounded, warning, critical)
-        
-        if self.last_data['pressurizer'] == current_data:
-            return  # No change, skip update
-        
-        self.last_data['pressurizer'] = current_data
         
         display = self.oled_pressurizer
         display.clear()
@@ -339,17 +333,8 @@ class OLEDManager:
             status: Pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
             pwm: PWM percentage (0-100)
         """
-        # Select channel first (before checking data)
+        # Select channel
         self.mux.select_display_channel(channel)
-        
-        # Check if data changed
-        data_key = f'pump_{pump_name.lower()}'
-        current_data = (status, pwm)
-        
-        if self.last_data.get(data_key) == current_data:
-            return  # No change, skip update
-        
-        self.last_data[data_key] = current_data
         
         display_obj.clear()
         
@@ -391,16 +376,8 @@ class OLEDManager:
             display_obj: OLED display object
             position: Rod position (0-100%)
         """
-        # Select channel first (before checking data)
+        # Select channel
         self.mux.select_display_channel(channel)
-        
-        # Check if data changed
-        data_key = f'{rod_name.lower()}_rod'
-        
-        if self.last_data.get(data_key) == position:
-            return  # No change, skip update
-        
-        self.last_data[data_key] = position
         
         display_obj.clear()
         
@@ -442,16 +419,11 @@ class OLEDManager:
         Args:
             power_kw: Electrical power in kW (0-300,000 kW = 0-300 MWe)
         """
-        # Select channel first (before checking data)
+        # Select channel
         self.mux.select_esp_channel(1)  # Use ESP channel for TCA9548A #2, Channel 1
         
-        # Round to 1 decimal to avoid unnecessary updates
+        # Round to 1 decimal
         power_kw_rounded = round(power_kw, 1)
-        
-        if self.last_data['thermal_power'] == power_kw_rounded:
-            return  # No change, skip update
-        
-        self.last_data['thermal_power'] = power_kw_rounded
         
         display = self.oled_thermal_power
         display.clear()
@@ -482,17 +454,8 @@ class OLEDManager:
             thermal_kw: Thermal power in kW
             turbine_speed: Turbine speed percentage
         """
-        # Select channel first (before checking data)
+        # Select channel
         self.mux.select_esp_channel(2)  # Use ESP channel for TCA9548A #2, Channel 2
-        
-        # Check if data changed
-        current_data = (pressure, pump_primary, pump_secondary, 
-                       pump_tertiary, interlock, thermal_kw, turbine_speed)
-        
-        if self.last_data['system_status'] == current_data:
-            return  # No change, skip update
-        
-        self.last_data['system_status'] = current_data
         
         display = self.oled_system_status
         display.clear()
