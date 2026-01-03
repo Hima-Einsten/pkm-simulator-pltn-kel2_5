@@ -276,8 +276,8 @@ class SystemHealthMonitor:
             logger.info("  ⏳ Waiting 0.3s before communication...")
             time.sleep(0.3)
             
-            # Try communication via UART
-            success = panel.uart_master.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0)
+            # Try communication via UART (simplified protocol)
+            success = panel.uart_master.update_esp_e(0.0)
             
             if success:
                 health = panel.uart_master.get_health_status()

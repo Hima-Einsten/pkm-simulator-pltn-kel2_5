@@ -964,15 +964,9 @@ class PLTNPanelController:
                             # Add delay before ESP-E to ensure UART buffers are clear
                             time.sleep(0.05)  # 50ms delay for UART stability
                             
-                            # Send to ESP-E (LED Visualizer)
-                            logger.debug(f"Sending to ESP-E: P={self.state.pressure:.1f}bar")
+                            # Send to ESP-E (Power Indicator Only - Simplified)
+                            logger.debug(f"Sending to ESP-E: Thermal={self.state.thermal_kw:.1f}kW")
                             self.uart_master.update_esp_e(
-                                pressure_primary=self.state.pressure,
-                                pump_status_primary=self.state.pump_primary_status,
-                                pressure_secondary=self.state.pressure * 0.35,
-                                pump_status_secondary=self.state.pump_secondary_status,
-                                pressure_tertiary=self.state.pressure * 0.10,
-                                pump_status_tertiary=self.state.pump_tertiary_status,
                                 thermal_power_kw=self.state.thermal_kw
                             )
                             logger.debug("✓ ESP-E update success")
@@ -1360,8 +1354,8 @@ class PLTNPanelController:
                 self.uart_master.update_esp_bc(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
                 time.sleep(0.05)
                 
-                # ESP-E: All pumps off
-                self.uart_master.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0, 0.0)
+                # ESP-E: Power off
+                self.uart_master.update_esp_e(0.0)
                 time.sleep(0.05)
                 
                 logger.info("Safe state sent to ESPs")

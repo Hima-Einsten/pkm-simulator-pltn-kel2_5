@@ -60,19 +60,13 @@ class ESP_BC_Data:
 
 @dataclass
 class ESP_E_Data:
-    """Data structure for ESP-E (3-Flow LED Visualizer)"""
+    """Data structure for ESP-E (Power Indicator Only - Simplified)"""
     # To ESP-E
-    pressure_primary: float = 0.0
-    pump_status_primary: int = 0
-    pressure_secondary: float = 0.0
-    pump_status_secondary: int = 0
-    pressure_tertiary: float = 0.0
-    pump_status_tertiary: int = 0
     thermal_power_kw: float = 0.0
     
     # From ESP-E
-    animation_speed: int = 0
-    led_count: int = 0
+    power_mwe: float = 0.0
+    pwm: int = 0
 
 
 class UARTDevice:
@@ -459,21 +453,12 @@ class UARTMaster:
                 logger.warning(f"ESP-BC: Invalid response: {response}")
             return False
     
-    def update_esp_e(self, pressure_primary: float, pump_status_primary: int,
-                    pressure_secondary: float, pump_status_secondary: int,
-                    pressure_tertiary: float, pump_status_tertiary: int,
-                    thermal_power_kw: float = 0.0) -> bool:
+    def update_esp_e(self, thermal_power_kw: float = 0.0) -> bool:
         """
-        Send update to ESP-E
+        Send update to ESP-E (Power Indicator Only - Simplified)
         
         Args:
-            pressure_primary: Primary loop pressure
-            pump_status_primary: Primary pump status (0-3)
-            pressure_secondary: Secondary loop pressure
-            pump_status_secondary: Secondary pump status
-            pressure_tertiary: Tertiary loop pressure
-            pump_status_tertiary: Tertiary pump status
-            thermal_power_kw: Thermal power for LED indicator
+            thermal_power_kw: Thermal power for LED indicator (0-300000 kW)
             
         Returns:
             True if successful, False otherwise
@@ -482,54 +467,28 @@ class UARTMaster:
             return False
         
         # Update internal state
-        self.esp_e_data.pressure_primary = pressure_primary
-        self.esp_e_data.pump_status_primary = pump_status_primary
-        self.esp_e_data.pressure_secondary = pressure_secondary
-        self.esp_e_data.pump_status_secondary = pump_status_secondary
-        self.esp_e_data.pressure_tertiary = pressure_tertiary
-        self.esp_e_data.pump_status_tertiary = pump_status_tertiary
         self.esp_e_data.thermal_power_kw = thermal_power_kw
         
-        # Sanitize pump statuses and prepare minimal payload (pumps + thermal_kw)
-        def safe_pump_status(s):
-            try:
-                si = int(s)
-            except Exception:
-                si = 0
-            return max(0, min(3, si))
-
-        pumps = [
-            safe_pump_status(pump_status_primary),
-            safe_pump_status(pump_status_secondary),
-            safe_pump_status(pump_status_tertiary)
-        ]
-
-        # CRITICAL FIX: Send complete flows data including pressure
-        # ESP-E needs pressure to calculate LED brightness properly
+        # Prepare simplified command - only thermal power
         command = {
             "cmd": "update",
-            "flows": [
-                {"pressure": float(pressure_primary), "pump": pumps[0]},
-                {"pressure": float(pressure_secondary), "pump": pumps[1]},
-                {"pressure": float(pressure_tertiary), "pump": pumps[2]}
-            ],
             "thermal_kw": float(thermal_power_kw)
         }
         
         # Send without retry - ESP-E is non-critical (just visualization)
-        # Retry would cause buffer overflow
         try:
-            response = self.esp_e.send_receive(command, timeout=1.0)  # Reduced timeout
+            response = self.esp_e.send_receive(command, timeout=0.5)
         except Exception as e:
             logger.debug(f"Error sending to ESP-E: {e}")
             return False
         
         if response and response.get("status") == "ok":
-            self.esp_e_data.animation_speed = response.get("anim_step", 0)
-            self.esp_e_data.led_count = response.get("led_count", 0)
+            # Parse simplified response
+            self.esp_e_data.power_mwe = response.get("power_mwe", 0.0)
+            self.esp_e_data.pwm = response.get("pwm", 0)
             
-            logger.debug(f"ESP-E: Step={self.esp_e_data.animation_speed}, "
-                        f"LEDs={self.esp_e_data.led_count}")
+            logger.debug(f"ESP-E: Power={self.esp_e_data.power_mwe:.1f} MWe, "
+                        f"PWM={self.esp_e_data.pwm}/255")
             return True
         
         # Don't log errors - ESP-E is non-critical
@@ -582,7 +541,7 @@ class UARTMaster:
         try:
             if self.esp_e_enabled and self.esp_e_connected:
                 logger.info("Sending safe state to ESP-E...")
-                self.update_esp_e(0.0, 0, 0.0, 0, 0.0, 0, 0.0)
+                self.update_esp_e(0.0)
         except:
             pass
         
