@@ -635,8 +635,11 @@ class UARTDevice:
                     except Exception:
                         pass
                     
-                    # Send command
-                    self.serial.write(command_bytes)
+                    # Send command byte-by-byte with small delay to prevent ESP buffer overflow
+                    # ESP32 UART buffer is limited, sending too fast causes data loss
+                    for byte in command_bytes:
+                        self.serial.write(bytes([byte]))
+                        time.sleep(0.001)  # 1ms delay between bytes
                     self.serial.flush()
                     
                     # Log TX (hex dump for binary data)
@@ -644,7 +647,7 @@ class UARTDevice:
                     logger.info(f"TX {self.port} (attempt {attempt+1}/{MAX_RETRIES}): [{hex_str}] ({len(command_bytes)} bytes)")
                     
                     # Wait a bit for ESP to process
-                    time.sleep(0.010)  # 10ms
+                    time.sleep(0.020)  # 20ms (increased from 10ms)
                     
                     # Read response with timeout
                     old_timeout = self.serial.timeout

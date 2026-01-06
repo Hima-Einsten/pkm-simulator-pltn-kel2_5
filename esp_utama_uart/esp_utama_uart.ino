@@ -286,13 +286,23 @@ void processBinaryMessage(uint8_t* msg, uint8_t len) {
     return;
   }
   
+  // DEBUG: Print received message
+  Serial.print("RX bytes: [");
+  for (uint8_t i = 0; i < len; i++) {
+    Serial.printf("%02X", msg[i]);
+    if (i < len-1) Serial.print(" ");
+  }
+  Serial.printf("] (%d bytes)\n", len);
+  
   // Extract fields
   uint8_t seq = msg[1];
   uint8_t cmd = msg[2];
   uint8_t received_crc = msg[len-2];
   
   // Validate CRC (over SEQ + CMD + data, excluding STX, CRC, ETX)
-  uint8_t calculated_crc = crc8_maxim(&msg[1], len-3);
+  uint8_t crc_len = len - 3;  // Total - STX - CRC - ETX
+  Serial.printf("CRC calculation: &msg[1], len=%d\n", crc_len);
+  uint8_t calculated_crc = crc8_maxim(&msg[1], crc_len);
   
   if (received_crc != calculated_crc) {
     Serial.printf("CRC mismatch: received=0x%02X, calculated=0x%02X\n", received_crc, calculated_crc);
@@ -419,6 +429,7 @@ void setup() {
 // ============================================
 void loop() {
   // Read UART data (binary protocol)
+  // CRITICAL: Read ALL available bytes, not just one!
   while (UartComm.available()) {
     uint8_t byte = UartComm.read();
     unsigned long current_time = millis();
@@ -465,10 +476,10 @@ void loop() {
       // Silently ignore garbage bytes
     }
     
-    yield();  // Feed watchdog
+    // CRITICAL: Don't yield() here - read all bytes first!
   }
   
-  // Update system state
+  // Update system state (only after reading all UART data)
   updateServos();
   calculateThermalPower();
   updateTurbineState();
