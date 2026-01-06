@@ -644,11 +644,9 @@ class UARTDevice:
                     except Exception:
                         pass
                     
-                    # Send command byte-by-byte with small delay to prevent ESP buffer overflow
-                    # ESP32 UART buffer is limited, sending too fast causes data loss
-                    for byte in command_bytes:
-                        self.serial.write(bytes([byte]))
-                        time.sleep(0.001)  # 1ms delay between bytes
+                    # Send command all at once (not byte-by-byte)
+                    # Byte-by-byte with 1ms delay was causing buffer issues on ESP
+                    self.serial.write(command_bytes)
                     self.serial.flush()
                     
                     # Log TX (hex dump for binary data)

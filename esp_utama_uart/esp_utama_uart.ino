@@ -464,10 +464,19 @@ void loop() {
       rx_index = 0;
       rx_buffer[rx_index++] = byte;
       msg_started = true;
+      Serial.println("RX: STX detected, starting message");
     }
     // End of message
     else if (byte == ETX && msg_started) {
       rx_buffer[rx_index++] = byte;
+      
+      // DEBUG: Print raw bytes received
+      Serial.print("RX complete: [");
+      for (uint8_t i = 0; i < rx_index; i++) {
+        Serial.printf("%02X", rx_buffer[i]);
+        if (i < rx_index-1) Serial.print(" ");
+      }
+      Serial.printf("] (%d bytes)\n", rx_index);
       
       // Process complete message
       processBinaryMessage(rx_buffer, rx_index);
@@ -475,6 +484,11 @@ void loop() {
       // Reset for next message
       rx_index = 0;
       msg_started = false;
+      
+      // CRITICAL: Flush any remaining garbage in buffer
+      while (UartComm.available()) {
+        UartComm.read();
+      }
     }
     // Data byte
     else if (msg_started) {
@@ -489,7 +503,8 @@ void loop() {
     }
     // Garbage byte (not STX and not in message) - ignore
     else {
-      // Silently ignore garbage bytes
+      // Log garbage bytes for debugging
+      Serial.printf("Garbage byte: 0x%02X\n", byte);
     }
     
     // CRITICAL: Don't yield() here - read all bytes first!
