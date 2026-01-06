@@ -83,7 +83,7 @@ unsigned long last_byte_time = 0;
 // LED PINS - Array of 4 LEDs for power visualization
 // ============================================
 const int NUM_LEDS = 4;
-const int POWER_LEDS[NUM_LEDS] = {23, 25, 26, 27};  // 4 GPIO pins for LEDs
+const int POWER_LEDS[NUM_LEDS] = {23, 25, 33, 27};  // 4 GPIO pins for LEDs (26→33: avoid DAC2/ADC2 conflict)
 
 // ============================================
 // DATA
