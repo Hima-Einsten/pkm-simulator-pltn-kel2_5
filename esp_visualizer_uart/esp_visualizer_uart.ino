@@ -61,7 +61,15 @@ HardwareSerial UartComm(2); // RX=16 TX=17
 // ============================================
 uint8_t rx_buffer[16];  // Buffer for incoming binary messages
 uint8_t rx_index = 0;
-bool msg_started = false;
+
+// State machine for robust frame parsing
+// This prevents STX/ETX bytes in payload from breaking frame detection
+enum RxState {
+  WAIT_STX,   // Waiting for start of frame
+  IN_FRAME    // Currently receiving frame data
+};
+RxState rx_state = WAIT_STX;
+
 unsigned long last_byte_time = 0;
 #define RX_TIMEOUT_MS 500  // Reset buffer if no data for 500ms
 
@@ -256,51 +264,51 @@ void setup() {
 // LOOP
 // ============================================
 void loop() {
-  // Read UART data (binary protocol)
+  // Read UART data with state machine for robust frame parsing
   while (UartComm.available()) {
     uint8_t byte = UartComm.read();
     unsigned long current_time = millis();
     
-    // Check for timeout (reset buffer if no data for 500ms)
-    if (msg_started && (current_time - last_byte_time > RX_TIMEOUT_MS)) {
-      Serial.println("RX timeout - resetting buffer");
+    // Check for timeout (reset to WAIT_STX if no data for 500ms)
+    if (rx_state == IN_FRAME && (current_time - last_byte_time > RX_TIMEOUT_MS)) {
+      Serial.println("RX timeout - resetting to WAIT_STX");
+      rx_state = WAIT_STX;
       rx_index = 0;
-      msg_started = false;
     }
     
     last_byte_time = current_time;
     
-    // Start of message
-    if (byte == STX) {
-      rx_index = 0;
-      rx_buffer[rx_index++] = byte;
-      msg_started = true;
+    // State machine for frame parsing
+    if (rx_state == WAIT_STX) {
+      // Only accept STX when waiting for new frame
+      if (byte == STX) {
+        rx_index = 0;
+        rx_buffer[rx_index++] = byte;
+        rx_state = IN_FRAME;
+      }
+      // Ignore all other bytes when waiting for STX
     }
-    // End of message
-    else if (byte == ETX && msg_started) {
-      rx_buffer[rx_index++] = byte;
-      
-      // Process complete message
-      processBinaryMessage(rx_buffer, rx_index);
-      
-      // Reset for next message
-      rx_index = 0;
-      msg_started = false;
-    }
-    // Data byte
-    else if (msg_started) {
+    else if (rx_state == IN_FRAME) {
+      // Add byte to buffer
       if (rx_index < sizeof(rx_buffer)) {
         rx_buffer[rx_index++] = byte;
-      } else {
-        // Buffer overflow - reset
-        Serial.println("Buffer overflow - resetting");
-        rx_index = 0;
-        msg_started = false;
+        
+        // Check if this is ETX (end of frame)
+        if (byte == ETX) {
+          // Process complete message
+          processBinaryMessage(rx_buffer, rx_index);
+          
+          // Return to WAIT_STX state
+          rx_state = WAIT_STX;
+          rx_index = 0;
+        }
       }
-    }
-    // Garbage byte (not STX and not in message) - ignore
-    else {
-      // Silently ignore garbage bytes
+      else {
+        // Buffer overflow - reset to WAIT_STX
+        Serial.println("Buffer overflow - resetting to WAIT_STX");
+        rx_state = WAIT_STX;
+        rx_index = 0;
+      }
     }
     
     yield();  // Feed watchdog
