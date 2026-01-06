@@ -747,7 +747,7 @@ class UARTDevice:
                     time.sleep(0.030)  # 30ms inter-message delay
                     
                     logger.debug(f"✓ Binary communication successful with {self.port}")
-                    return seq, msg_type, payload
+                    return length, msg_type, payload
                     
                 except Exception as e:
                     logger.error(f"Error in send_receive_binary from {self.port}: {e}")
