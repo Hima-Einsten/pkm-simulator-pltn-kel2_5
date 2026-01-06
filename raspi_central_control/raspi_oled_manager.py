@@ -38,15 +38,17 @@ class OLEDDisplay:
         self.image = Image.new('1', (width, height))
         self.draw = ImageDraw.Draw(self.image)
         
-        # Try to load a font - smaller sizes for 128x32 display
+        # Try to load a font - larger sizes for better readability
         try:
-            self.font_small = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 8)
-            self.font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 10)
-            self.font_large = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 12)
+            self.font_small = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 10)
+            self.font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 12)
+            self.font_large = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 14)
+            self.font_xlarge = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 16)
         except:
             self.font_small = ImageFont.load_default()
             self.font = ImageFont.load_default()
             self.font_large = ImageFont.load_default()
+            self.font_xlarge = ImageFont.load_default()
         
         self.initialized = False
     
@@ -207,9 +209,9 @@ class OLEDManager:
         # TCA9548A #1 (0x70) - 7 displays
         displays_mux1 = [
             (1, self.oled_pressurizer, "Pressurizer"),
-            (2, self.oled_pump_primary, "Pump Primer"),
-            (3, self.oled_pump_secondary, "Pump Sekunder"),
-            (4, self.oled_pump_tertiary, "Pump Tersier"),
+            (2, self.oled_pump_primary, "Pompa Primer"),
+            (3, self.oled_pump_secondary, "Pompa Sekunder"),
+            (4, self.oled_pump_tertiary, "Pompa Tersier"),
             (5, self.oled_safety_rod, "Safety Rod"),
             (6, self.oled_shim_rod, "Shim Rod"),
             (7, self.oled_regulating_rod, "Reg Rod")
@@ -217,8 +219,8 @@ class OLEDManager:
         
         # TCA9548A #2 (0x71) - 2 displays
         displays_mux2 = [
-            (1, self.oled_thermal_power, "Thermal Power"),
-            (2, self.oled_system_status, "System Status")
+            (1, self.oled_thermal_power, "Daya"),
+            (2, self.oled_system_status, "Status")
         ]
         
         if not ADAFRUIT_AVAILABLE:
@@ -239,11 +241,10 @@ class OLEDManager:
                     
                     # Try to initialize with 0.5s timeout per display
                     if display.init_hardware(i2c, 0x3C, timeout=0.5):
-                        # Show startup message (3 lines, max y=24)
+                        # Show startup message (2 lines, larger font)
                         display.clear()
-                        display.draw_text_centered(name, 1, display.font_small)
-                        display.draw_text_centered("PLTN v2", 12, display.font)
-                        display.draw_text_centered("Ready", 22, display.font_small)
+                        display.draw_text_centered(name, 4, display.font)
+                        display.draw_text_centered("Siap", 18, display.font_large)
                         display.show()
                         logger.info(f"  ✓ OLED #{channel}: {name}")
                         success_count += 1
@@ -264,11 +265,10 @@ class OLEDManager:
                     
                     # Try to initialize with 0.5s timeout per display
                     if display.init_hardware(i2c, 0x3C, timeout=0.5):
-                        # Show startup message (3 lines, max y=24)
+                        # Show startup message (2 lines, larger font)
                         display.clear()
-                        display.draw_text_centered(name, 1, display.font_small)
-                        display.draw_text_centered("PLTN v2", 12, display.font)
-                        display.draw_text_centered("Ready", 22, display.font_small)
+                        display.draw_text_centered(name, 4, display.font)
+                        display.draw_text_centered("Siap", 18, display.font_large)
                         display.show()
                         logger.info(f"  ✓ OLED #{channel + 7}: {name}")
                         success_count += 1
@@ -311,12 +311,9 @@ class OLEDManager:
         display = self.oled_pressurizer
         display.clear()
         
-        # Title (small font)
-        display.draw_text_centered("PRESSURIZER", 1, display.font_small)
-        
-        # Pressure value (medium font, centered)
+        # Show only value with large font (panel already has label)
         pressure_text = f"{pressure_rounded:.1f} bar"
-        display.draw_text_centered(pressure_text, 12, display.font_large)
+        display.draw_text_centered(pressure_text, 8, display.font_xlarge)
         
         display.show()
         time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
@@ -338,18 +335,9 @@ class OLEDManager:
         
         display_obj.clear()
         
-        # Title - use shorter names (small font)
-        title_map = {
-            "PRIMARY": "PUMP 1",
-            "SECONDARY": "PUMP 2",
-            "TERTIARY": "PUMP 3"
-        }
-        title = title_map.get(pump_name, f"PUMP {pump_name}")
-        display_obj.draw_text_centered(title, 1, display_obj.font_small)
-        
-        # Status on line 2
-        status_text = ["OFF", "START", "ON", "STOP"][status]
-        display_obj.draw_text_centered(status_text, 14, display_obj.font_large)
+        # Show only status in Indonesian with large font (panel already has label)
+        status_text = ["MATI", "MULAI", "HIDUP", "BERHENTI"][status]
+        display_obj.draw_text_centered(status_text, 8, display_obj.font_xlarge)
         
         display_obj.show()
         time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
@@ -381,18 +369,9 @@ class OLEDManager:
         
         display_obj.clear()
         
-        # Title - use shorter names (small font)
-        title_map = {
-            "SAFETY": "SAFETY",
-            "SHIM": "SHIM",
-            "REGULATING": "REG"
-        }
-        title = title_map.get(rod_name, rod_name)
-        display_obj.draw_text_centered(title, 1, display_obj.font_small)
-        
-        # Position value (medium font, centered)
+        # Show only percentage value with large font (panel already has label)
         position_text = f"{position}%"
-        display_obj.draw_text_centered(position_text, 12, display_obj.font_large)
+        display_obj.draw_text_centered(position_text, 8, display_obj.font_xlarge)
         
         display_obj.show()
         time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
@@ -428,13 +407,10 @@ class OLEDManager:
         display = self.oled_thermal_power
         display.clear()
         
-        # Title (small font)
-        display.draw_text_centered("POWER", 1, display.font_small)
-        
-        # Power in MWe (medium font, centered)
+        # Show only power value with large font (panel already has label)
         power_mwe = power_kw_rounded / 1000.0
         power_text = f"{power_mwe:.1f} MWe"
-        display.draw_text_centered(power_text, 12, display.font_large)
+        display.draw_text_centered(power_text, 8, display.font_xlarge)
         
         display.show()
         time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
@@ -463,48 +439,29 @@ class OLEDManager:
         display = self.oled_system_status
         display.clear()
         
-        # Line 1: Mode indicator
+        # Show mode and status in Indonesian
         if auto_sim_running:
             mode_text = "AUTO"
-            display.draw_text_centered(mode_text, 1, display.font_large)
+            display.draw_text_centered(mode_text, 2, display.font_large)
+            display.draw_text_centered("Berjalan...", 18, display.font)
         else:
             mode_text = "MANUAL"
-            display.draw_text_centered(mode_text, 1, display.font_large)
-        
-        # Line 2-3: Status based on mode
-        if auto_sim_running and auto_sim_phase:
-            # Show current auto simulation phase
-            # Truncate if too long (max ~16 chars for 128px width)
-            phase_short = auto_sim_phase[:16]
-            display.draw_text_centered(phase_short, 14, display.font_small)
-            display.draw_text_centered("Running...", 23, display.font_small)
-        else:
-            # Manual mode - show system status
-            if pressure < 40.0:
-                status_line1 = f"P:{pressure:.0f}bar"
-                status_line2 = "Raise to 40+"
-            elif pump_primary != 2 or pump_secondary != 2 or pump_tertiary != 2:
-                status_line1 = "Pumps:"
-                p1 = "ON" if pump_primary == 2 else "OFF"
-                p2 = "ON" if pump_secondary == 2 else "OFF"
-                p3 = "ON" if pump_tertiary == 2 else "OFF"
-                status_line2 = f"{p1}/{p2}/{p3}"
-            elif thermal_kw >= 50000:
-                # System operational
-                power_mwe = thermal_kw / 1000.0
-                status_line1 = f"Pwr:{power_mwe:.0f}MW"
-                if turbine_speed >= 80:
-                    status_line2 = "Turbin:ON"
-                elif turbine_speed >= 10:
-                    status_line2 = "Turbin:START"
-                else:
-                    status_line2 = "Raise Rods"
-            else:
-                status_line1 = "Ready"
-                status_line2 = "Press START"
+            display.draw_text_centered(mode_text, 2, display.font_large)
             
-            display.draw_text_centered(status_line1, 14, display.font_small)
-            display.draw_text_centered(status_line2, 23, display.font_small)
+            # Show simple status in Indonesian
+            if pressure < 40.0:
+                status_text = f"{pressure:.0f} bar"
+                display.draw_text_centered(status_text, 18, display.font)
+            elif pump_primary != 2 or pump_secondary != 2 or pump_tertiary != 2:
+                status_text = "Pompa Siap"
+                display.draw_text_centered(status_text, 18, display.font)
+            elif thermal_kw >= 50000:
+                power_mwe = thermal_kw / 1000.0
+                status_text = f"{power_mwe:.0f} MW"
+                display.draw_text_centered(status_text, 18, display.font)
+            else:
+                status_text = "Siap"
+                display.draw_text_centered(status_text, 18, display.font)
         
         display.show()
         
@@ -560,38 +517,36 @@ class OLEDManager:
     def show_startup_screen(self):
         """Show startup screen on all 9 displays (128x32 layout)"""
         screens_mux1 = [
-            (1, self.oled_pressurizer, "PRESSURIZER"),
-            (2, self.oled_pump_primary, "PUMP 1"),
-            (3, self.oled_pump_secondary, "PUMP 2"),
-            (4, self.oled_pump_tertiary, "PUMP 3"),
-            (5, self.oled_safety_rod, "SAFETY ROD"),
-            (6, self.oled_shim_rod, "SHIM ROD"),
-            (7, self.oled_regulating_rod, "REG ROD")
+            (1, self.oled_pressurizer, "Pressurizer"),
+            (2, self.oled_pump_primary, "Pompa Primer"),
+            (3, self.oled_pump_secondary, "Pompa Sekunder"),
+            (4, self.oled_pump_tertiary, "Pompa Tersier"),
+            (5, self.oled_safety_rod, "Safety Rod"),
+            (6, self.oled_shim_rod, "Shim Rod"),
+            (7, self.oled_regulating_rod, "Reg Rod")
         ]
         
         screens_mux2 = [
-            (1, self.oled_thermal_power, "POWER"),
-            (2, self.oled_system_status, "STATUS")
+            (1, self.oled_thermal_power, "Daya"),
+            (2, self.oled_system_status, "Status")
         ]
         
         # Show on TCA9548A #1
         for channel, display, name in screens_mux1:
             self.mux.select_display_channel(channel)
             display.clear()
-            # 3 lines layout: y=1, y=12, y=22 (max y=24)
-            display.draw_text_centered(name, 1, display.font_small)
-            display.draw_text_centered("PLTN v2.0", 12, display.font)
-            display.draw_text_centered("Ready", 22, display.font_small)
+            # Simple 2-line layout with larger font
+            display.draw_text_centered(name, 4, display.font)
+            display.draw_text_centered("Siap", 18, display.font_large)
             display.show()
         
         # Show on TCA9548A #2
         for channel, display, name in screens_mux2:
             self.mux.select_esp_channel(channel)
             display.clear()
-            # 3 lines layout: y=1, y=12, y=22 (max y=24)
-            display.draw_text_centered(name, 1, display.font_small)
-            display.draw_text_centered("PLTN v2.0", 12, display.font)
-            display.draw_text_centered("Ready", 22, display.font_small)
+            # Simple 2-line layout with larger font
+            display.draw_text_centered(name, 4, display.font)
+            display.draw_text_centered("Siap", 18, display.font_large)
             display.show()
         
         time.sleep(2)
@@ -617,20 +572,18 @@ class OLEDManager:
         for channel, display in screens_mux1:
             self.mux.select_display_channel(channel)
             display.clear()
-            # 3 lines layout: y=1, y=12, y=22 (max y=24)
-            display.draw_text_centered("ERROR", 1, display.font_small)
-            display.draw_text_centered("System", 12, display.font)
-            display.draw_text_centered(message[:12], 22, display.font_small)  # Max 12 chars
+            # 2 lines layout with larger font
+            display.draw_text_centered("ERROR", 4, display.font_large)
+            display.draw_text_centered("Sistem", 18, display.font)
             display.show()
         
         # Show on TCA9548A #2
         for channel, display in screens_mux2:
             self.mux.select_esp_channel(channel)
             display.clear()
-            # 3 lines layout: y=1, y=12, y=22 (max y=24)
-            display.draw_text_centered("ERROR", 1, display.font_small)
-            display.draw_text_centered("System", 12, display.font)
-            display.draw_text_centered(message[:12], 22, display.font_small)  # Max 12 chars
+            # 2 lines layout with larger font
+            display.draw_text_centered("ERROR", 4, display.font_large)
+            display.draw_text_centered("Sistem", 18, display.font)
             display.show()
 
 
