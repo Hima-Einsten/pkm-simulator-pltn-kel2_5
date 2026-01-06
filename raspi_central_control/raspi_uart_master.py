@@ -6,18 +6,70 @@ Architecture:
 - ESP-BC: /dev/ttyAMA0 (GPIO 14/15) - Control Rods + Turbine + Humidifier
 - ESP-E:  /dev/ttyAMA3 (GPIO 4/5)   - LED Visualizer
 
-Protocol: JSON over UART (115200 baud, 8N1)
+Protocol: Binary Protocol with ACK/NACK (115200 baud, 8N1)
+- Message size: 5-27 bytes (vs 42-187 bytes JSON)
+- CRC8 checksum for error detection
+- Sequence numbers for tracking
+- Retry mechanism (3x with exponential backoff)
+- Eliminates buffer garbage issues
 """
 
 import serial
 import json
 import time
 import logging
-from typing import Optional, Dict
+import struct
+from typing import Optional, Dict, Tuple
 from dataclasses import dataclass
 import threading
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# Binary Protocol Constants
+# ============================================
+STX = 0x02  # Start of Text
+ETX = 0x03  # End of Text
+ACK = 0x06  # Acknowledge
+NACK = 0x15  # Negative Acknowledge
+
+# Command types
+CMD_PING = 0x50  # 'P'
+CMD_UPDATE = 0x55  # 'U'
+
+# Protocol configuration
+USE_BINARY_PROTOCOL = True  # Set to False to use legacy JSON protocol
+MAX_RETRIES = 3
+RETRY_DELAYS = [0.05, 0.1, 0.2]  # Exponential backoff (50ms, 100ms, 200ms)
+
+
+# ============================================
+# CRC8 Checksum (CRC-8/MAXIM)
+# ============================================
+def crc8_maxim(data: bytes) -> int:
+    """
+    Calculate CRC-8/MAXIM checksum
+    
+    Polynomial: 0x31
+    Initial value: 0x00
+    
+    Args:
+        data: Bytes to checksum
+        
+    Returns:
+        CRC8 checksum (0-255)
+    """
+    crc = 0x00
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x80:
+                crc = (crc << 1) ^ 0x31
+            else:
+                crc = crc << 1
+            crc &= 0xFF
+    return crc
 
 
 @dataclass
@@ -69,6 +121,205 @@ class ESP_E_Data:
     pwm: int = 0
 
 
+# ============================================
+# Binary Protocol Encoders
+# ============================================
+
+def encode_ping_command(seq: int) -> bytes:
+    """
+    Encode ping command
+    
+    Format: [STX][SEQ][CMD_PING][CRC8][ETX]
+    Total: 5 bytes
+    
+    Args:
+        seq: Sequence number (0-255)
+        
+    Returns:
+        Binary message bytes
+    """
+    payload = bytes([seq, CMD_PING])
+    crc = crc8_maxim(payload)
+    return bytes([STX]) + payload + bytes([crc, ETX])
+
+
+def encode_esp_bc_update(seq: int, rods: list, pumps: list, humid: list) -> bytes:
+    """
+    Encode ESP-BC update command
+    
+    Format: [STX][SEQ][CMD_UPDATE][rod1][rod2][rod3][pump1][pump2][pump3][h1][h2][h3][h4][CRC8][ETX]
+    Total: 15 bytes
+    
+    Args:
+        seq: Sequence number (0-255)
+        rods: [safety, shim, regulating] (0-100)
+        pumps: [primary, secondary, tertiary] (0-3)
+        humid: [ct1, ct2, ct3, ct4] (0-1)
+        
+    Returns:
+        Binary message bytes
+    """
+    # Clamp values to valid ranges
+    rod1 = max(0, min(100, int(rods[0])))
+    rod2 = max(0, min(100, int(rods[1])))
+    rod3 = max(0, min(100, int(rods[2])))
+    
+    pump1 = max(0, min(3, int(pumps[0])))
+    pump2 = max(0, min(3, int(pumps[1])))
+    pump3 = max(0, min(3, int(pumps[2])))
+    
+    h1 = 1 if int(humid[0]) != 0 else 0
+    h2 = 1 if int(humid[1]) != 0 else 0
+    h3 = 1 if int(humid[2]) != 0 else 0
+    h4 = 1 if int(humid[3]) != 0 else 0
+    
+    payload = bytes([seq, CMD_UPDATE, rod1, rod2, rod3, pump1, pump2, pump3, h1, h2, h3, h4])
+    crc = crc8_maxim(payload)
+    return bytes([STX]) + payload + bytes([crc, ETX])
+
+
+def encode_esp_e_update(seq: int, thermal_kw: float) -> bytes:
+    """
+    Encode ESP-E update command
+    
+    Format: [STX][SEQ][CMD_UPDATE][thermal_kw (float32)][CRC8][ETX]
+    Total: 9 bytes
+    
+    Args:
+        seq: Sequence number (0-255)
+        thermal_kw: Thermal power in kW (float)
+        
+    Returns:
+        Binary message bytes
+    """
+    payload = bytes([seq, CMD_UPDATE]) + struct.pack('<f', thermal_kw)
+    crc = crc8_maxim(payload)
+    return bytes([STX]) + payload + bytes([crc, ETX])
+
+
+# ============================================
+# Binary Protocol Decoders
+# ============================================
+
+def decode_binary_response(data: bytes) -> Tuple[Optional[int], Optional[int], Optional[bytes]]:
+    """
+    Decode binary response message
+    
+    Format: [STX][SEQ][TYPE][DATA...][CRC8][ETX]
+    
+    Args:
+        data: Raw bytes from serial port
+        
+    Returns:
+        Tuple of (seq, msg_type, payload) or (None, None, None) if invalid
+    """
+    if len(data) < 5:  # Minimum: STX + SEQ + TYPE + CRC + ETX
+        logger.error(f"Response too short: {len(data)} bytes")
+        return None, None, None
+    
+    if data[0] != STX:
+        logger.error(f"Invalid STX: 0x{data[0]:02X}")
+        return None, None, None
+    
+    if data[-1] != ETX:
+        logger.error(f"Invalid ETX: 0x{data[-1]:02X}")
+        return None, None, None
+    
+    # Extract fields
+    seq = data[1]
+    msg_type = data[2]
+    payload = data[3:-2]  # Everything between TYPE and CRC
+    received_crc = data[-2]
+    
+    # Validate CRC
+    crc_data = data[1:-2]  # SEQ + TYPE + payload
+    calculated_crc = crc8_maxim(crc_data)
+    
+    if received_crc != calculated_crc:
+        logger.error(f"CRC mismatch: received=0x{received_crc:02X}, calculated=0x{calculated_crc:02X}")
+        return None, None, None
+    
+    return seq, msg_type, payload
+
+
+def decode_esp_bc_response(payload: bytes) -> Optional[Dict]:
+    """
+    Decode ESP-BC response payload
+    
+    Format: [rod1][rod2][rod3][thermal_kw (4)][power_lvl (2)][state][turb_spd (2)][pump1 (2)][pump2 (2)][pump3 (2)][h1][h2][h3][h4]
+    Total payload: 23 bytes
+    
+    Args:
+        payload: Response payload bytes
+        
+    Returns:
+        Dictionary with decoded data or None if invalid
+    """
+    if len(payload) < 23:
+        logger.error(f"ESP-BC payload too short: {len(payload)} bytes (expected 23)")
+        return None
+    
+    try:
+        # Unpack fixed-size fields
+        rod1 = payload[0]
+        rod2 = payload[1]
+        rod3 = payload[2]
+        thermal_kw = struct.unpack('<f', payload[3:7])[0]
+        power_lvl = struct.unpack('<H', payload[7:9])[0] / 100.0  # uint16 → float (0.00-100.00)
+        state = payload[9]
+        turb_spd = struct.unpack('<H', payload[10:12])[0] / 100.0
+        pump1 = struct.unpack('<H', payload[12:14])[0] / 100.0
+        pump2 = struct.unpack('<H', payload[14:16])[0] / 100.0
+        pump3 = struct.unpack('<H', payload[16:18])[0] / 100.0
+        h1 = payload[18]
+        h2 = payload[19]
+        h3 = payload[20]
+        h4 = payload[21]
+        
+        return {
+            'rods': [rod1, rod2, rod3],
+            'thermal_kw': thermal_kw,
+            'power_level': power_lvl,
+            'state': state,
+            'turbine_speed': turb_spd,
+            'pump_speeds': [pump1, pump2, pump3],
+            'humid_status': [h1, h2, h3, h4]
+        }
+    except Exception as e:
+        logger.error(f"Error decoding ESP-BC response: {e}")
+        return None
+
+
+def decode_esp_e_response(payload: bytes) -> Optional[Dict]:
+    """
+    Decode ESP-E response payload
+    
+    Format: [power_mwe (4)][pwm]
+    Total payload: 5 bytes
+    
+    Args:
+        payload: Response payload bytes
+        
+    Returns:
+        Dictionary with decoded data or None if invalid
+    """
+    if len(payload) < 5:
+        logger.error(f"ESP-E payload too short: {len(payload)} bytes (expected 5)")
+        return None
+    
+    try:
+        power_mwe = struct.unpack('<f', payload[0:4])[0]
+        pwm = payload[4]
+        
+        return {
+            'power_mwe': power_mwe,
+            'pwm': pwm
+        }
+    except Exception as e:
+        logger.error(f"Error decoding ESP-E response: {e}")
+        return None
+
+
 class UARTDevice:
     """Base class for UART device communication"""
     
@@ -88,6 +339,7 @@ class UARTDevice:
         self.lock = threading.Lock()
         self.error_count = 0
         self.last_comm_time = 0.0
+        self.seq_number = 0  # Sequence number for binary protocol (0-255, rolling)
         
     def connect(self) -> bool:
         """
@@ -341,6 +593,168 @@ class UARTDevice:
                 return None
 
 
+    def send_receive_binary(self, command_bytes: bytes, expected_response_len: int, 
+                           timeout: float = 1.0) -> Optional[Tuple[int, int, bytes]]:
+        """
+        Send binary command and wait for response with ACK/NACK and retry mechanism
+        
+        This method implements:
+        - Sequence number tracking
+        - CRC8 checksum validation
+        - ACK/NACK response handling
+        - Automatic retry (up to 3 attempts) with exponential backoff
+        - Buffer garbage prevention
+        
+        Args:
+            command_bytes: Binary command to send (already encoded with STX/ETX/CRC)
+            expected_response_len: Expected response length in bytes
+            timeout: Response timeout in seconds
+            
+        Returns:
+            Tuple of (seq, msg_type, payload) or None if failed after all retries
+        """
+        with self.lock:
+            # Increment and wrap sequence number (0-255)
+            self.seq_number = (self.seq_number + 1) % 256
+            current_seq = self.seq_number
+            
+            for attempt in range(MAX_RETRIES):
+                try:
+                    if not self.serial or not self.serial.is_open:
+                        logger.error(f"Serial port {self.port} not open")
+                        return None
+                    
+                    # CRITICAL: Flush buffers BEFORE sending to prevent garbage
+                    try:
+                        self.serial.reset_input_buffer()
+                        self.serial.reset_output_buffer()
+                    except Exception:
+                        pass
+                    
+                    # Send command
+                    self.serial.write(command_bytes)
+                    self.serial.flush()
+                    
+                    # Log TX (hex dump for binary data)
+                    hex_str = ' '.join(f'{b:02X}' for b in command_bytes)
+                    logger.info(f"TX {self.port} (attempt {attempt+1}/{MAX_RETRIES}): [{hex_str}] ({len(command_bytes)} bytes)")
+                    
+                    # Wait a bit for ESP to process
+                    time.sleep(0.010)  # 10ms
+                    
+                    # Read response with timeout
+                    old_timeout = self.serial.timeout
+                    self.serial.timeout = timeout
+                    
+                    # Read exact number of bytes expected
+                    response_data = self.serial.read(expected_response_len)
+                    
+                    # Restore timeout
+                    self.serial.timeout = old_timeout
+                    
+                    if not response_data or len(response_data) < expected_response_len:
+                        logger.warning(f"No response or incomplete from {self.port} (got {len(response_data)} bytes, expected {expected_response_len})")
+                        
+                        # Flush and retry
+                        try:
+                            self.serial.reset_input_buffer()
+                        except Exception:
+                            pass
+                        
+                        if attempt < MAX_RETRIES - 1:
+                            time.sleep(RETRY_DELAYS[attempt])
+                            continue
+                        else:
+                            self.error_count += 1
+                            return None
+                    
+                    # Log RX (hex dump)
+                    hex_str_rx = ' '.join(f'{b:02X}' for b in response_data)
+                    logger.info(f"RX {self.port}: [{hex_str_rx}] ({len(response_data)} bytes)")
+                    
+                    # Decode response
+                    seq, msg_type, payload = decode_binary_response(response_data)
+                    
+                    if seq is None or msg_type is None:
+                        logger.error(f"Failed to decode response from {self.port}")
+                        
+                        # Flush and retry
+                        try:
+                            self.serial.reset_input_buffer()
+                        except Exception:
+                            pass
+                        
+                        if attempt < MAX_RETRIES - 1:
+                            time.sleep(RETRY_DELAYS[attempt])
+                            continue
+                        else:
+                            self.error_count += 1
+                            return None
+                    
+                    # Validate sequence number
+                    if seq != current_seq:
+                        logger.warning(f"Sequence mismatch: sent={current_seq}, received={seq}")
+                        # Don't retry for sequence mismatch - might be old response
+                        self.error_count += 1
+                        return None
+                    
+                    # Check message type
+                    if msg_type == NACK:
+                        logger.warning(f"Received NACK from {self.port}")
+                        
+                        # Flush and retry
+                        try:
+                            self.serial.reset_input_buffer()
+                        except Exception:
+                            pass
+                        
+                        if attempt < MAX_RETRIES - 1:
+                            time.sleep(RETRY_DELAYS[attempt])
+                            continue
+                        else:
+                            self.error_count += 1
+                            return None
+                    
+                    if msg_type != ACK:
+                        logger.error(f"Unexpected message type: 0x{msg_type:02X} (expected ACK=0x06)")
+                        self.error_count += 1
+                        return None
+                    
+                    # Success! Reset error count
+                    self.last_comm_time = time.time()
+                    if self.error_count > 0:
+                        logger.info(f"Communication restored with {self.port}")
+                        self.error_count = 0
+                    
+                    # Flush input buffer after successful read (clear any garbage)
+                    try:
+                        self.serial.reset_input_buffer()
+                    except Exception:
+                        pass
+                    
+                    logger.debug(f"✓ Binary communication successful with {self.port}")
+                    return seq, msg_type, payload
+                    
+                except Exception as e:
+                    logger.error(f"Error in send_receive_binary from {self.port}: {e}")
+                    
+                    # Flush and retry
+                    try:
+                        self.serial.reset_input_buffer()
+                    except Exception:
+                        pass
+                    
+                    if attempt < MAX_RETRIES - 1:
+                        time.sleep(RETRY_DELAYS[attempt])
+                        continue
+                    else:
+                        self.error_count += 1
+                        return None
+            
+            # All retries exhausted
+            logger.error(f"All {MAX_RETRIES} retry attempts failed for {self.port}")
+            self.error_count += 1
+            return None
 
 class UARTMaster:
     """
@@ -433,7 +847,7 @@ class UARTMaster:
                       humid_ct1: int = 0, humid_ct2: int = 0,
                       humid_ct3: int = 0, humid_ct4: int = 0) -> bool:
         """
-        Send update to ESP-BC
+        Send update to ESP-BC using binary protocol
         
         Args:
             safety: Safety rod target (0-100%)
@@ -459,99 +873,105 @@ class UARTMaster:
         self.esp_bc_data.humid_ct3_cmd = humid_ct3
         self.esp_bc_data.humid_ct4_cmd = humid_ct4
         
-        # Coerce and validate inputs to safe JSON-friendly primitives
-        try:
-            safety_i = int(max(0, min(100, int(safety))))
-        except Exception:
-            safety_i = 0
-        try:
-            shim_i = int(max(0, min(100, int(shim))))
-        except Exception:
-            shim_i = 0
-        try:
-            regulating_i = int(max(0, min(100, int(regulating))))
-        except Exception:
-            regulating_i = 0
-
-        def clamp_pump(x):
-            try:
-                xi = int(x)
-            except Exception:
-                return 0
-            return max(0, min(3, xi))
-
-        pump_p = clamp_pump(pump_primary)
-        pump_s = clamp_pump(pump_secondary)
-        pump_t = clamp_pump(pump_tertiary)
-
-        def bool_to_int(v):
-            try:
-                return 1 if int(v) != 0 else 0
-            except Exception:
-                return 0
-
-        humid_ct1_i = bool_to_int(humid_ct1)
-        humid_ct2_i = bool_to_int(humid_ct2)
-        humid_ct3_i = bool_to_int(humid_ct3)
-        humid_ct4_i = bool_to_int(humid_ct4)
-
-        # Prepare command (sanitized)
-        command = {
-            "cmd": "update",
-            "rods": [safety_i, shim_i, regulating_i],
-            "pumps": [pump_p, pump_s, pump_t],
-            "humid_ct": [humid_ct1_i, humid_ct2_i, humid_ct3_i, humid_ct4_i]
-        }
-
-        # Send and receive (increased timeout for reliability)
-        # ESP-BC has more processing (rods + pumps + turbine + humid) so needs longer timeout
-        try:
-            response = self.esp_bc.send_receive(command, timeout=2.5)  # Increased from 2.0s
-        except Exception as e:
-            logger.error(f"Error sending to ESP-BC: {e}")
-            response = None
-        
-        if response and response.get("status") == "ok":
-            # Parse response - Control Rods
-            self.esp_bc_data.safety_actual = response.get("rods", [0,0,0])[0]
-            self.esp_bc_data.shim_actual = response.get("rods", [0,0,0])[1]
-            self.esp_bc_data.regulating_actual = response.get("rods", [0,0,0])[2]
+        if USE_BINARY_PROTOCOL:
+            # === BINARY PROTOCOL ===
+            # Encode binary command
+            command_bytes = encode_esp_bc_update(
+                seq=self.esp_bc.seq_number + 1,  # Will be incremented in send_receive_binary
+                rods=[safety, shim, regulating],
+                pumps=[pump_primary, pump_secondary, pump_tertiary],
+                humid=[humid_ct1, humid_ct2, humid_ct3, humid_ct4]
+            )
             
-            # Parse response - Turbine & Power
-            self.esp_bc_data.kw_thermal = response.get("thermal_kw", 0.0)
-            self.esp_bc_data.power_level = response.get("power_level", 0.0)
-            self.esp_bc_data.state = response.get("state", 0)
-            self.esp_bc_data.turbine_speed = response.get("turbine_speed", 0.0)
+            # Expected response: [STX][SEQ][ACK][23 bytes payload][CRC][ETX] = 28 bytes
+            expected_len = 28
             
-            # Parse response - Pump Speeds (automatic by ESP)
-            pump_speeds = response.get("pump_speeds", [0.0, 0.0, 0.0])
-            self.esp_bc_data.pump_primary_speed = pump_speeds[0]
-            self.esp_bc_data.pump_secondary_speed = pump_speeds[1]
-            self.esp_bc_data.pump_tertiary_speed = pump_speeds[2]
+            # Send and receive with retry
+            result = self.esp_bc.send_receive_binary(command_bytes, expected_len, timeout=1.5)
             
-            # Parse response - Cooling Tower Humidifier Status (flat array)
-            humid_status = response.get("humid_status", [0, 0, 0, 0])
-            self.esp_bc_data.humid_ct1_status = humid_status[0]
-            self.esp_bc_data.humid_ct2_status = humid_status[1]
-            self.esp_bc_data.humid_ct3_status = humid_status[2]
-            self.esp_bc_data.humid_ct4_status = humid_status[3]
+            if result is None:
+                logger.warning("ESP-BC: Binary communication failed")
+                return False
             
-            logger.debug(f"ESP-BC: Rods={response.get('rods')}, "
+            seq, msg_type, payload = result
+            
+            # Decode response
+            response_data = decode_esp_bc_response(payload)
+            
+            if response_data is None:
+                logger.error("ESP-BC: Failed to decode binary response")
+                return False
+            
+            # Update internal state from response
+            self.esp_bc_data.safety_actual = response_data['rods'][0]
+            self.esp_bc_data.shim_actual = response_data['rods'][1]
+            self.esp_bc_data.regulating_actual = response_data['rods'][2]
+            
+            self.esp_bc_data.kw_thermal = response_data['thermal_kw']
+            self.esp_bc_data.power_level = response_data['power_level']
+            self.esp_bc_data.state = response_data['state']
+            self.esp_bc_data.turbine_speed = response_data['turbine_speed']
+            
+            self.esp_bc_data.pump_primary_speed = response_data['pump_speeds'][0]
+            self.esp_bc_data.pump_secondary_speed = response_data['pump_speeds'][1]
+            self.esp_bc_data.pump_tertiary_speed = response_data['pump_speeds'][2]
+            
+            self.esp_bc_data.humid_ct1_status = response_data['humid_status'][0]
+            self.esp_bc_data.humid_ct2_status = response_data['humid_status'][1]
+            self.esp_bc_data.humid_ct3_status = response_data['humid_status'][2]
+            self.esp_bc_data.humid_ct4_status = response_data['humid_status'][3]
+            
+            logger.debug(f"ESP-BC: Rods={response_data['rods']}, "
                         f"Thermal={self.esp_bc_data.kw_thermal:.1f}kW, "
                         f"Pumps=[{self.esp_bc_data.pump_primary_speed:.1f}%, "
                         f"{self.esp_bc_data.pump_secondary_speed:.1f}%, "
                         f"{self.esp_bc_data.pump_tertiary_speed:.1f}%]")
             return True
+        
         else:
-            if response is None:
-                logger.warning("ESP-BC: No response or timeout")
+            # === LEGACY JSON PROTOCOL (for fallback/debugging) ===
+            command = {
+                "cmd": "update",
+                "rods": [int(safety), int(shim), int(regulating)],
+                "pumps": [int(pump_primary), int(pump_secondary), int(pump_tertiary)],
+                "humid_ct": [int(humid_ct1), int(humid_ct2), int(humid_ct3), int(humid_ct4)]
+            }
+            
+            try:
+                response = self.esp_bc.send_receive(command, timeout=2.5)
+            except Exception as e:
+                logger.error(f"Error sending to ESP-BC: {e}")
+                return False
+            
+            if response and response.get("status") == "ok":
+                self.esp_bc_data.safety_actual = response.get("rods", [0,0,0])[0]
+                self.esp_bc_data.shim_actual = response.get("rods", [0,0,0])[1]
+                self.esp_bc_data.regulating_actual = response.get("rods", [0,0,0])[2]
+                
+                self.esp_bc_data.kw_thermal = response.get("thermal_kw", 0.0)
+                self.esp_bc_data.power_level = response.get("power_level", 0.0)
+                self.esp_bc_data.state = response.get("state", 0)
+                self.esp_bc_data.turbine_speed = response.get("turbine_speed", 0.0)
+                
+                pump_speeds = response.get("pump_speeds", [0.0, 0.0, 0.0])
+                self.esp_bc_data.pump_primary_speed = pump_speeds[0]
+                self.esp_bc_data.pump_secondary_speed = pump_speeds[1]
+                self.esp_bc_data.pump_tertiary_speed = pump_speeds[2]
+                
+                humid_status = response.get("humid_status", [0, 0, 0, 0])
+                self.esp_bc_data.humid_ct1_status = humid_status[0]
+                self.esp_bc_data.humid_ct2_status = humid_status[1]
+                self.esp_bc_data.humid_ct3_status = humid_status[2]
+                self.esp_bc_data.humid_ct4_status = humid_status[3]
+                
+                return True
             else:
-                logger.warning(f"ESP-BC: Invalid response: {response}")
-            return False
+                logger.warning("ESP-BC: No valid JSON response")
+                return False
     
     def update_esp_e(self, thermal_power_kw: float = 0.0) -> bool:
         """
-        Send update to ESP-E (Power Indicator Only - Simplified)
+        Send update to ESP-E using binary protocol (Power Indicator Only - Simplified)
         
         Args:
             thermal_power_kw: Thermal power for LED indicator (0-300000 kW)
@@ -565,30 +985,63 @@ class UARTMaster:
         # Update internal state
         self.esp_e_data.thermal_power_kw = thermal_power_kw
         
-        # Prepare simplified command - only thermal power
-        command = {
-            "cmd": "update",
-            "thermal_kw": float(thermal_power_kw)
-        }
-        
-        # Send without retry - ESP-E is non-critical (just visualization)
-        try:
-            response = self.esp_e.send_receive(command, timeout=1.0)  # Increased from 0.5s
-        except Exception as e:
-            logger.debug(f"Error sending to ESP-E: {e}")
-            return False
-        
-        if response and response.get("status") == "ok":
-            # Parse simplified response
-            self.esp_e_data.power_mwe = response.get("power_mwe", 0.0)
-            self.esp_e_data.pwm = response.get("pwm", 0)
+        if USE_BINARY_PROTOCOL:
+            # === BINARY PROTOCOL ===
+            # Encode binary command
+            command_bytes = encode_esp_e_update(
+                seq=self.esp_e.seq_number + 1,  # Will be incremented in send_receive_binary
+                thermal_kw=thermal_power_kw
+            )
+            
+            # Expected response: [STX][SEQ][ACK][5 bytes payload][CRC][ETX] = 10 bytes
+            expected_len = 10
+            
+            # Send and receive with retry
+            result = self.esp_e.send_receive_binary(command_bytes, expected_len, timeout=1.0)
+            
+            if result is None:
+                logger.debug("ESP-E: Binary communication failed (non-critical)")
+                return False
+            
+            seq, msg_type, payload = result
+            
+            # Decode response
+            response_data = decode_esp_e_response(payload)
+            
+            if response_data is None:
+                logger.debug("ESP-E: Failed to decode binary response")
+                return False
+            
+            # Update internal state from response
+            self.esp_e_data.power_mwe = response_data['power_mwe']
+            self.esp_e_data.pwm = response_data['pwm']
             
             logger.debug(f"ESP-E: Power={self.esp_e_data.power_mwe:.1f} MWe, "
                         f"PWM={self.esp_e_data.pwm}/255")
             return True
         
-        # Don't log errors - ESP-E is non-critical
-        return False
+        else:
+            # === LEGACY JSON PROTOCOL (for fallback/debugging) ===
+            command = {
+                "cmd": "update",
+                "thermal_kw": float(thermal_power_kw)
+            }
+            
+            try:
+                response = self.esp_e.send_receive(command, timeout=1.0)
+            except Exception as e:
+                logger.debug(f"Error sending to ESP-E: {e}")
+                return False
+            
+            if response and response.get("status") == "ok":
+                self.esp_e_data.power_mwe = response.get("power_mwe", 0.0)
+                self.esp_e_data.pwm = response.get("pwm", 0)
+                
+                logger.debug(f"ESP-E: Power={self.esp_e_data.power_mwe:.1f} MWe, "
+                            f"PWM={self.esp_e_data.pwm}/255")
+                return True
+            
+            return False
     
     def get_esp_bc_data(self) -> ESP_BC_Data:
         """Get latest data from ESP-BC"""
