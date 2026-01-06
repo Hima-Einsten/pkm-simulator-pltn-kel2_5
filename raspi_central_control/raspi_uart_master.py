@@ -42,7 +42,7 @@ CMD_UPDATE = 0x55  # 'U'
 # Protocol configuration
 USE_BINARY_PROTOCOL = True  # Set to False to use legacy JSON protocol
 MAX_RETRIES = 3
-RETRY_DELAYS = [0.05, 0.1, 0.2]  # Exponential backoff (50ms, 100ms, 200ms)
+RETRY_DELAYS = [0.03, 0.05, 0.1]  # Optimized: 30ms, 50ms, 100ms (was 50ms, 100ms, 200ms)
 
 
 # ============================================
@@ -376,7 +376,7 @@ class UARTDevice:
             )
             
             # Flush buffers and wait for ESP32 to be ready
-            time.sleep(2.0)  # Wait for ESP32 to fully initialize (same as test_uart_timing)
+            time.sleep(0.5)  # Optimized: 500ms sufficient for ESP32 boot (was 2.0s)
             self.serial.reset_input_buffer()
             self.serial.reset_output_buffer()
             
