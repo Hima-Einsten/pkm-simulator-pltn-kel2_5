@@ -655,15 +655,30 @@ class UARTDevice:
                     hex_str = ' '.join(f'{b:02X}' for b in command_bytes)
                     logger.info(f"TX {self.port} (attempt {attempt+1}/{MAX_RETRIES}): [{hex_str}] ({len(command_bytes)} bytes)")
                     
-                    # Wait a bit for ESP to process
-                    time.sleep(0.020)  # 20ms (increased from 10ms)
+                    # Wait for ESP to process and prepare response
+                    # For 28-byte response @ 115200 baud = ~2.4ms transmission + processing time
+                    time.sleep(0.050)  # 50ms to ensure ESP finishes processing and starts transmitting
                     
                     # Read response with timeout
                     old_timeout = self.serial.timeout
                     self.serial.timeout = timeout
                     
                     # Read exact number of bytes expected
-                    response_data = self.serial.read(expected_response_len)
+                    # Use a loop to ensure we get all bytes (serial.read may return partial data)
+                    response_data = b''
+                    bytes_remaining = expected_response_len
+                    read_attempts = 0
+                    max_read_attempts = 10
+                    
+                    while bytes_remaining > 0 and read_attempts < max_read_attempts:
+                        chunk = self.serial.read(bytes_remaining)
+                        if chunk:
+                            response_data += chunk
+                            bytes_remaining -= len(chunk)
+                        else:
+                            # No data available, wait a bit
+                            time.sleep(0.010)  # 10ms
+                            read_attempts += 1
                     
                     # Restore timeout
                     self.serial.timeout = old_timeout
