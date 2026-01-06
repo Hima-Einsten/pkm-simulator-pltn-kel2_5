@@ -655,36 +655,44 @@ class UARTDevice:
                     hex_str = ' '.join(f'{b:02X}' for b in command_bytes)
                     logger.info(f"TX {self.port} (attempt {attempt+1}/{MAX_RETRIES}): [{hex_str}] ({len(command_bytes)} bytes)")
                     
-                    # Wait for ESP to process and prepare response
-                    # For 28-byte response @ 115200 baud = ~2.4ms transmission + processing time
-                    time.sleep(0.050)  # 50ms to ensure ESP finishes processing and starts transmitting
+                    # Wait for ESP to process and start transmitting
+                    time.sleep(0.030)  # 30ms for ESP processing
                     
                     # Read response with timeout
                     old_timeout = self.serial.timeout
                     self.serial.timeout = timeout
                     
-                    # Read exact number of bytes expected
-                    # Use a loop to ensure we get all bytes (serial.read may return partial data)
+                    # Read until ETX (0x03) - more robust than fixed length
+                    # This ensures we get the complete message regardless of timing
                     response_data = b''
-                    bytes_remaining = expected_response_len
-                    read_attempts = 0
-                    max_read_attempts = 10
+                    max_bytes = 50  # Safety limit (max expected is 28 bytes)
+                    start_time = time.time()
                     
-                    while bytes_remaining > 0 and read_attempts < max_read_attempts:
-                        chunk = self.serial.read(bytes_remaining)
-                        if chunk:
-                            response_data += chunk
-                            bytes_remaining -= len(chunk)
+                    while len(response_data) < max_bytes:
+                        # Check timeout
+                        if time.time() - start_time > timeout:
+                            logger.warning(f"Timeout waiting for ETX from {self.port}")
+                            break
+                        
+                        # Read one byte at a time
+                        byte = self.serial.read(1)
+                        if byte:
+                            response_data += byte
+                            # Check if we got ETX (end of message)
+                            if byte[0] == ETX:
+                                break
                         else:
                             # No data available, wait a bit
-                            time.sleep(0.010)  # 10ms
-                            read_attempts += 1
+                            time.sleep(0.005)  # 5ms
                     
                     # Restore timeout
                     self.serial.timeout = old_timeout
                     
-                    if not response_data or len(response_data) < expected_response_len:
-                        logger.warning(f"No response or incomplete from {self.port} (got {len(response_data)} bytes, expected {expected_response_len})")
+                    # Validate we got a complete message
+                    if not response_data or len(response_data) < 5:
+                        logger.warning(f"No response or too short from {self.port} (got {len(response_data)} bytes)")
+                    elif response_data[-1] != ETX:
+                        logger.warning(f"Response from {self.port} does not end with ETX (got {len(response_data)} bytes)")
                         
                         # Flush and retry
                         try:
