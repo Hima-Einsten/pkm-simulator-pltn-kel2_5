@@ -1473,25 +1473,23 @@ class PLTNPanelController:
             self.shutdown()
     
     def health_monitoring_thread(self):
-        """Thread for system health monitoring - run once at startup only"""
-        logger.info("Health monitoring: Running initial check...")
+        """Thread for system health monitoring - disabled (already done in __init__)"""
+        logger.info("Health monitoring: Initial check already completed during initialization")
         
-        # Run health check ONCE at startup
-        try:
-            time.sleep(2.0)  # Wait for system to stabilize
-            
-            logger.info("\n" + "="*70)
-            logger.info("INITIAL SYSTEM HEALTH CHECK")
-            logger.info("="*70)
-            
-            with self.uart_lock:
-                self.health_monitor.check_all(self)
-            
-            logger.info("Initial health check complete - periodic checks disabled")
-            logger.info("(Periodic checks would reset simulation by sending rods=0)")
-            
-        except Exception as e:
-            logger.error(f"Initial health check error: {e}")
+        # Health check already done in __init__ (line 173)
+        # No need to run it again here - this was causing duplicate checks
+        # 
+        # Original code (now disabled):
+        # try:
+        #     time.sleep(2.0)  # Wait for system to stabilize
+        #     logger.info("\n" + "="*70)
+        #     logger.info("INITIAL SYSTEM HEALTH CHECK")
+        #     logger.info("="*70)
+        #     with self.uart_lock:
+        #         self.health_monitor.check_all(self)
+        #     logger.info("Initial health check complete - periodic checks disabled")
+        # except Exception as e:
+        #     logger.error(f"Initial health check error: {e}")
         
         # Thread stays alive but does nothing (just sleeps)
         while self.state.running:
