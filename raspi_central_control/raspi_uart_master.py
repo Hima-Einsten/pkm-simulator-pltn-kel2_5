@@ -739,6 +739,11 @@ class UARTDevice:
                     except Exception:
                         pass
                     
+                    # CRITICAL: Wait before next command to prevent collision
+                    # ESP needs time to finish transmitting response (28 bytes @ 115200 = ~2.4ms)
+                    # Add safety margin for processing
+                    time.sleep(0.030)  # 30ms inter-message delay
+                    
                     logger.debug(f"✓ Binary communication successful with {self.port}")
                     return seq, msg_type, payload
                     
