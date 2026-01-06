@@ -797,14 +797,30 @@ class UARTMaster:
         if self.esp_bc_connected:
             logger.info("⏳ Waiting 1 second for ESP32 to stabilize...")
             time.sleep(1.0)
-            # Handshake ping to ensure ESP firmware ready to parse JSON
+            # Handshake ping to ensure ESP firmware ready
             try:
-                ping_resp = self.esp_bc.send_receive({"cmd":"ping"}, timeout=1.0)
-                if ping_resp and ping_resp.get("status") == "ok" and ping_resp.get("message") == "pong":
-                    logger.info("✅ ESP-BC handshake successful (pong)")
+                if USE_BINARY_PROTOCOL:
+                    # Binary ping: [STX][SEQ][CMD_PING][CRC][ETX] = 5 bytes
+                    ping_cmd = encode_ping_command(seq=0)
+                    result = self.esp_bc.send_receive_binary(ping_cmd, expected_response_len=5, timeout=1.0)
+                    if result:
+                        seq, msg_type, payload = result
+                        if msg_type == ACK:
+                            logger.info("✅ ESP-BC handshake successful (binary pong)")
+                        else:
+                            logger.warning("⚠️  ESP-BC sent unexpected response")
+                            self.esp_bc_connected = False
+                    else:
+                        logger.warning("⚠️  ESP-BC did not respond to binary ping - marking as not connected")
+                        self.esp_bc_connected = False
                 else:
-                    logger.warning("⚠️  ESP-BC did not respond to ping - marking as not connected")
-                    self.esp_bc_connected = False
+                    # JSON ping (fallback)
+                    ping_resp = self.esp_bc.send_receive({"cmd":"ping"}, timeout=1.0)
+                    if ping_resp and ping_resp.get("status") == "ok" and ping_resp.get("message") == "pong":
+                        logger.info("✅ ESP-BC handshake successful (JSON pong)")
+                    else:
+                        logger.warning("⚠️  ESP-BC did not respond to JSON ping - marking as not connected")
+                        self.esp_bc_connected = False
             except Exception as e:
                 logger.warning(f"⚠️  ESP-BC handshake error: {e}")
                 self.esp_bc_connected = False
@@ -821,12 +837,28 @@ class UARTMaster:
                 time.sleep(1.0)
                 # Handshake ping to ensure ESP-E firmware ready
                 try:
-                    ping_resp_e = self.esp_e.send_receive({"cmd":"ping"}, timeout=1.0)
-                    if ping_resp_e and ping_resp_e.get("status") == "ok" and ping_resp_e.get("message") == "pong":
-                        logger.info("✅ ESP-E handshake successful (pong)")
+                    if USE_BINARY_PROTOCOL:
+                        # Binary ping
+                        ping_cmd = encode_ping_command(seq=0)
+                        result = self.esp_e.send_receive_binary(ping_cmd, expected_response_len=5, timeout=1.0)
+                        if result:
+                            seq, msg_type, payload = result
+                            if msg_type == ACK:
+                                logger.info("✅ ESP-E handshake successful (binary pong)")
+                            else:
+                                logger.warning("⚠️  ESP-E sent unexpected response")
+                                self.esp_e_connected = False
+                        else:
+                            logger.warning("⚠️  ESP-E did not respond to binary ping - marking as not connected")
+                            self.esp_e_connected = False
                     else:
-                        logger.warning("⚠️  ESP-E did not respond to ping - marking as not connected")
-                        self.esp_e_connected = False
+                        # JSON ping (fallback)
+                        ping_resp_e = self.esp_e.send_receive({"cmd":"ping"}, timeout=1.0)
+                        if ping_resp_e and ping_resp_e.get("status") == "ok" and ping_resp_e.get("message") == "pong":
+                            logger.info("✅ ESP-E handshake successful (JSON pong)")
+                        else:
+                            logger.warning("⚠️  ESP-E did not respond to JSON ping - marking as not connected")
+                            self.esp_e_connected = False
                 except Exception as e:
                     logger.warning(f"⚠️  ESP-E handshake error: {e}")
                     self.esp_e_connected = False
