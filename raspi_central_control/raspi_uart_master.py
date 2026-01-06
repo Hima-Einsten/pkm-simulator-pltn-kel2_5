@@ -593,6 +593,7 @@ class UARTDevice:
                 return None
 
 
+
     def send_receive_binary(self, command_bytes: bytes, expected_response_len: int, 
                            timeout: float = 1.0) -> Optional[Tuple[int, int, bytes]]:
         """
@@ -614,9 +615,12 @@ class UARTDevice:
             Tuple of (seq, msg_type, payload) or None if failed after all retries
         """
         with self.lock:
-            # Increment and wrap sequence number (0-255)
-            self.seq_number = (self.seq_number + 1) % 256
-            current_seq = self.seq_number
+            # Extract sequence number from command (byte 1, after STX)
+            if len(command_bytes) < 2:
+                logger.error("Command too short to extract sequence number")
+                return None
+            
+            current_seq = command_bytes[1]  # SEQ is at index 1
             
             for attempt in range(MAX_RETRIES):
                 try:
@@ -755,6 +759,7 @@ class UARTDevice:
             logger.error(f"All {MAX_RETRIES} retry attempts failed for {self.port}")
             self.error_count += 1
             return None
+
 
 class UARTMaster:
     """
