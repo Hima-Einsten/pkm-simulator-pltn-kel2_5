@@ -7,9 +7,10 @@ Architecture:
 - ESP-E:  /dev/ttyAMA3 (GPIO 4/5)   - LED Visualizer
 
 Protocol: Binary Protocol with ACK/NACK (115200 baud, 8N1)
+- Format: STX | CMD | LEN | PAYLOAD | CRC | ETX
 - Message size: 5-27 bytes (vs 42-187 bytes JSON)
-- CRC8 checksum for error detection
-- Sequence numbers for tracking
+- CRC8 checksum for error detection (CMD+LEN+PAYLOAD only)
+- LEN field for payload validation
 - Retry mechanism (3x with exponential backoff)
 - Eliminates buffer garbage issues
 """
@@ -125,33 +126,31 @@ class ESP_E_Data:
 # Binary Protocol Encoders
 # ============================================
 
-def encode_ping_command(seq: int) -> bytes:
+def encode_ping_command() -> bytes:
     """
     Encode ping command
     
-    Format: [STX][SEQ][CMD_PING][CRC8][ETX]
+    Format: [STX][CMD_PING][LEN=0][CRC8][ETX]
     Total: 5 bytes
     
-    Args:
-        seq: Sequence number (0-255)
-        
     Returns:
         Binary message bytes
     """
-    payload = bytes([seq, CMD_PING])
-    crc = crc8_maxim(payload)
-    return bytes([STX]) + payload + bytes([crc, ETX])
+    cmd = CMD_PING
+    length = 0  # No payload
+    crc_data = bytes([cmd, length])
+    crc = crc8_maxim(crc_data)
+    return bytes([STX, cmd, length, crc, ETX])
 
 
-def encode_esp_bc_update(seq: int, rods: list, pumps: list, humid: list) -> bytes:
+def encode_esp_bc_update(rods: list, pumps: list, humid: list) -> bytes:
     """
     Encode ESP-BC update command
     
-    Format: [STX][SEQ][CMD_UPDATE][rod1][rod2][rod3][pump1][pump2][pump3][h1][h2][h3][h4][CRC8][ETX]
+    Format: [STX][CMD_UPDATE][LEN=10][rod1][rod2][rod3][pump1][pump2][pump3][h1][h2][h3][h4][CRC8][ETX]
     Total: 15 bytes
     
     Args:
-        seq: Sequence number (0-255)
         rods: [safety, shim, regulating] (0-100)
         pumps: [primary, secondary, tertiary] (0-3)
         humid: [ct1, ct2, ct3, ct4] (0-1)
@@ -173,28 +172,39 @@ def encode_esp_bc_update(seq: int, rods: list, pumps: list, humid: list) -> byte
     h3 = 1 if int(humid[2]) != 0 else 0
     h4 = 1 if int(humid[3]) != 0 else 0
     
-    payload = bytes([seq, CMD_UPDATE, rod1, rod2, rod3, pump1, pump2, pump3, h1, h2, h3, h4])
-    crc = crc8_maxim(payload)
-    return bytes([STX]) + payload + bytes([crc, ETX])
+    cmd = CMD_UPDATE
+    payload = bytes([rod1, rod2, rod3, pump1, pump2, pump3, h1, h2, h3, h4])
+    length = len(payload)  # 10 bytes
+    
+    # CRC over CMD + LEN + PAYLOAD
+    crc_data = bytes([cmd, length]) + payload
+    crc = crc8_maxim(crc_data)
+    
+    return bytes([STX, cmd, length]) + payload + bytes([crc, ETX])
 
 
-def encode_esp_e_update(seq: int, thermal_kw: float) -> bytes:
+def encode_esp_e_update(thermal_kw: float) -> bytes:
     """
     Encode ESP-E update command
     
-    Format: [STX][SEQ][CMD_UPDATE][thermal_kw (float32)][CRC8][ETX]
+    Format: [STX][CMD_UPDATE][LEN=4][thermal_kw (float32)][CRC8][ETX]
     Total: 9 bytes
     
     Args:
-        seq: Sequence number (0-255)
         thermal_kw: Thermal power in kW (float)
         
     Returns:
         Binary message bytes
     """
-    payload = bytes([seq, CMD_UPDATE]) + struct.pack('<f', thermal_kw)
-    crc = crc8_maxim(payload)
-    return bytes([STX]) + payload + bytes([crc, ETX])
+    cmd = CMD_UPDATE
+    payload = struct.pack('<f', thermal_kw)  # 4 bytes
+    length = len(payload)  # 4
+    
+    # CRC over CMD + LEN + PAYLOAD
+    crc_data = bytes([cmd, length]) + payload
+    crc = crc8_maxim(crc_data)
+    
+    return bytes([STX, cmd, length]) + payload + bytes([crc, ETX])
 
 
 # ============================================
@@ -205,15 +215,15 @@ def decode_binary_response(data: bytes) -> Tuple[Optional[int], Optional[int], O
     """
     Decode binary response message
     
-    Format: [STX][SEQ][TYPE][DATA...][CRC8][ETX]
+    Format: [STX][CMD][LEN][PAYLOAD...][CRC8][ETX]
     
     Args:
         data: Raw bytes from serial port
         
     Returns:
-        Tuple of (seq, msg_type, payload) or (None, None, None) if invalid
+        Tuple of (length, msg_type, payload) or (None, None, None) if invalid
     """
-    if len(data) < 5:  # Minimum: STX + SEQ + TYPE + CRC + ETX
+    if len(data) < 5:  # Minimum: STX + CMD + LEN + CRC + ETX
         logger.error(f"Response too short: {len(data)} bytes")
         return None, None, None
     
@@ -226,20 +236,27 @@ def decode_binary_response(data: bytes) -> Tuple[Optional[int], Optional[int], O
         return None, None, None
     
     # Extract fields
-    seq = data[1]
-    msg_type = data[2]
-    payload = data[3:-2]  # Everything between TYPE and CRC
+    msg_type = data[1]  # CMD/ACK/NACK
+    length = data[2]    # Payload length
+    
+    # Validate message length
+    expected_total_len = 5 + length  # STX + CMD + LEN + PAYLOAD + CRC + ETX
+    if len(data) != expected_total_len:
+        logger.error(f"Length mismatch: got {len(data)} bytes, expected {expected_total_len} (LEN field={length})")
+        return None, None, None
+    
+    payload = data[3:3+length]  # Extract payload based on LEN field
     received_crc = data[-2]
     
-    # Validate CRC
-    crc_data = data[1:-2]  # SEQ + TYPE + payload
+    # Validate CRC (over CMD + LEN + PAYLOAD)
+    crc_data = data[1:3+length]  # CMD + LEN + payload
     calculated_crc = crc8_maxim(crc_data)
     
     if received_crc != calculated_crc:
         logger.error(f"CRC mismatch: received=0x{received_crc:02X}, calculated=0x{calculated_crc:02X}")
         return None, None, None
     
-    return seq, msg_type, payload
+    return length, msg_type, payload
 
 
 def decode_esp_bc_response(payload: bytes) -> Optional[Dict]:
@@ -339,7 +356,6 @@ class UARTDevice:
         self.lock = threading.Lock()
         self.error_count = 0
         self.last_comm_time = 0.0
-        self.seq_number = 0  # Sequence number for binary protocol (0-255, rolling)
         
     def connect(self) -> bool:
         """
@@ -600,7 +616,6 @@ class UARTDevice:
         Send binary command and wait for response with ACK/NACK and retry mechanism
         
         This method implements:
-        - Sequence number tracking
         - CRC8 checksum validation
         - ACK/NACK response handling
         - Automatic retry (up to 3 attempts) with exponential backoff
@@ -612,15 +627,9 @@ class UARTDevice:
             timeout: Response timeout in seconds
             
         Returns:
-            Tuple of (seq, msg_type, payload) or None if failed after all retries
+            Tuple of (length, msg_type, payload) or None if failed after all retries
         """
         with self.lock:
-            # Extract sequence number from command (byte 1, after STX)
-            if len(command_bytes) < 2:
-                logger.error("Command too short to extract sequence number")
-                return None
-            
-            current_seq = command_bytes[1]  # SEQ is at index 1
             
             for attempt in range(MAX_RETRIES):
                 try:
@@ -680,9 +689,9 @@ class UARTDevice:
                     logger.info(f"RX {self.port}: [{hex_str_rx}] ({len(response_data)} bytes)")
                     
                     # Decode response
-                    seq, msg_type, payload = decode_binary_response(response_data)
+                    length, msg_type, payload = decode_binary_response(response_data)
                     
-                    if seq is None or msg_type is None:
+                    if length is None or msg_type is None:
                         logger.error(f"Failed to decode response from {self.port}")
                         
                         # Flush and retry
@@ -697,13 +706,6 @@ class UARTDevice:
                         else:
                             self.error_count += 1
                             return None
-                    
-                    # Validate sequence number
-                    if seq != current_seq:
-                        logger.warning(f"Sequence mismatch: sent={current_seq}, received={seq}")
-                        # Don't retry for sequence mismatch - might be old response
-                        self.error_count += 1
-                        return None
                     
                     # Check message type
                     if msg_type == NACK:
@@ -813,11 +815,11 @@ class UARTMaster:
             # Handshake ping to ensure ESP firmware ready
             try:
                 if USE_BINARY_PROTOCOL:
-                    # Binary ping: [STX][SEQ][CMD_PING][CRC][ETX] = 5 bytes
-                    ping_cmd = encode_ping_command(seq=0)
+                    # Binary ping: [STX][CMD_PING][LEN=0][CRC][ETX] = 5 bytes
+                    ping_cmd = encode_ping_command()
                     result = self.esp_bc.send_receive_binary(ping_cmd, expected_response_len=5, timeout=1.0)
                     if result:
-                        seq, msg_type, payload = result
+                        length, msg_type, payload = result
                         if msg_type == ACK:
                             logger.info("✅ ESP-BC handshake successful (binary pong)")
                         else:
@@ -852,10 +854,10 @@ class UARTMaster:
                 try:
                     if USE_BINARY_PROTOCOL:
                         # Binary ping
-                        ping_cmd = encode_ping_command(seq=0)
+                        ping_cmd = encode_ping_command()
                         result = self.esp_e.send_receive_binary(ping_cmd, expected_response_len=5, timeout=1.0)
                         if result:
-                            seq, msg_type, payload = result
+                            length, msg_type, payload = result
                             if msg_type == ACK:
                                 logger.info("✅ ESP-E handshake successful (binary pong)")
                             else:
@@ -922,13 +924,12 @@ class UARTMaster:
             # === BINARY PROTOCOL ===
             # Encode binary command
             command_bytes = encode_esp_bc_update(
-                seq=self.esp_bc.seq_number + 1,  # Will be incremented in send_receive_binary
                 rods=[safety, shim, regulating],
                 pumps=[pump_primary, pump_secondary, pump_tertiary],
                 humid=[humid_ct1, humid_ct2, humid_ct3, humid_ct4]
             )
             
-            # Expected response: [STX][SEQ][ACK][23 bytes payload][CRC][ETX] = 28 bytes
+            # Expected response: [STX][ACK][LEN=23][23 bytes payload][CRC][ETX] = 28 bytes
             expected_len = 28
             
             # Send and receive with retry
@@ -938,7 +939,7 @@ class UARTMaster:
                 logger.warning("ESP-BC: Binary communication failed")
                 return False
             
-            seq, msg_type, payload = result
+            length, msg_type, payload = result
             
             # Decode response
             response_data = decode_esp_bc_response(payload)
@@ -1034,11 +1035,10 @@ class UARTMaster:
             # === BINARY PROTOCOL ===
             # Encode binary command
             command_bytes = encode_esp_e_update(
-                seq=self.esp_e.seq_number + 1,  # Will be incremented in send_receive_binary
                 thermal_kw=thermal_power_kw
             )
             
-            # Expected response: [STX][SEQ][ACK][5 bytes payload][CRC][ETX] = 10 bytes
+            # Expected response: [STX][ACK][LEN=5][5 bytes payload][CRC][ETX] = 10 bytes
             expected_len = 10
             
             # Send and receive with retry
@@ -1048,7 +1048,7 @@ class UARTMaster:
                 logger.debug("ESP-E: Binary communication failed (non-critical)")
                 return False
             
-            seq, msg_type, payload = result
+            length, msg_type, payload = result
             
             # Decode response
             response_data = decode_esp_e_response(payload)

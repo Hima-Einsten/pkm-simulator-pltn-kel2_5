@@ -27,10 +27,10 @@
 #define CMD_UPDATE 0x55   // 'U' - Update command
 
 // Message lengths
-#define PING_CMD_LEN 5    // [STX][SEQ][CMD][CRC][ETX]
-#define UPDATE_CMD_LEN 9  // [STX][SEQ][CMD][thermal_kw (4 bytes)][CRC][ETX]
-#define PING_RESP_LEN 5   // [STX][SEQ][ACK][CRC][ETX]
-#define UPDATE_RESP_LEN 10 // [STX][SEQ][ACK][power_mwe (4)][pwm][CRC][ETX]
+#define PING_CMD_LEN 5    // [STX][CMD][LEN=0][CRC][ETX]
+#define UPDATE_CMD_LEN 9  // [STX][CMD][LEN=4][thermal_kw (4 bytes)][CRC][ETX]
+#define PING_RESP_LEN 5   // [STX][ACK][LEN=0][CRC][ETX]
+#define UPDATE_RESP_LEN 10 // [STX][ACK][LEN=5][power_mwe (4)][pwm][CRC][ETX]
 
 // ============================================
 // CRC8 Checksum (CRC-8/MAXIM)
@@ -81,15 +81,15 @@ int current_pwm = 0;         // Current PWM value (0-255)
 // Binary Protocol Functions
 // ============================================
 
-void sendNACK(uint8_t seq) {
-  // Send NACK response: [STX][SEQ][NACK][CRC][ETX]
+void sendNACK() {
+  // Send NACK response: [STX][NACK][LEN=0][CRC][ETX]
   uint8_t response[5];
   response[0] = STX;
-  response[1] = seq;
-  response[2] = NACK;
+  response[1] = NACK;
+  response[2] = 0;  // LEN = 0 (no payload)
   
-  // Calculate CRC over SEQ + NACK
-  uint8_t crc_data[2] = {seq, NACK};
+  // Calculate CRC over CMD + LEN
+  uint8_t crc_data[2] = {NACK, 0};
   response[3] = crc8_maxim(crc_data, 2);
   response[4] = ETX;
   
@@ -99,15 +99,15 @@ void sendNACK(uint8_t seq) {
   Serial.println("TX: NACK");
 }
 
-void sendPongResponse(uint8_t seq) {
-  // Send pong response: [STX][SEQ][ACK][CRC][ETX]
+void sendPongResponse() {
+  // Send pong response: [STX][ACK][LEN=0][CRC][ETX]
   uint8_t response[5];
   response[0] = STX;
-  response[1] = seq;
-  response[2] = ACK;
+  response[1] = ACK;
+  response[2] = 0;  // LEN = 0 (no payload)
   
-  // Calculate CRC over SEQ + ACK
-  uint8_t crc_data[2] = {seq, ACK};
+  // Calculate CRC over CMD + LEN
+  uint8_t crc_data[2] = {ACK, 0};
   response[3] = crc8_maxim(crc_data, 2);
   response[4] = ETX;
   
@@ -117,12 +117,12 @@ void sendPongResponse(uint8_t seq) {
   Serial.println("TX: Pong ACK");
 }
 
-void sendUpdateResponse(uint8_t seq) {
-  // Send update response: [STX][SEQ][ACK][power_mwe (4)][pwm][CRC][ETX]
+void sendUpdateResponse() {
+  // Send update response: [STX][ACK][LEN=5][power_mwe (4)][pwm][CRC][ETX]
   uint8_t response[10];
   response[0] = STX;
-  response[1] = seq;
-  response[2] = ACK;
+  response[1] = ACK;
+  response[2] = 5;  // LEN = 5 bytes payload
   
   // Pack data (5 bytes total)
   uint8_t* data = &response[3];
@@ -133,7 +133,7 @@ void sendUpdateResponse(uint8_t seq) {
   // PWM (1 byte)
   data[4] = (uint8_t)current_pwm;
   
-  // Calculate CRC over SEQ + ACK + data (7 bytes total)
+  // Calculate CRC over CMD + LEN + data (7 bytes total)
   response[8] = crc8_maxim(&response[1], 7);
   response[9] = ETX;
   
@@ -155,33 +155,48 @@ void processBinaryMessage(uint8_t* msg, uint8_t len) {
     return;
   }
   
-  // Extract fields
-  uint8_t seq = msg[1];
-  uint8_t cmd = msg[2];
+  // Extract fields: [STX][CMD][LEN][PAYLOAD...][CRC][ETX]
+  uint8_t cmd = msg[1];
+  uint8_t payload_len = msg[2];
   uint8_t received_crc = msg[len-2];
   
-  // Validate CRC (over SEQ + CMD + data, excluding STX, CRC, ETX)
-  uint8_t calculated_crc = crc8_maxim(&msg[1], len-3);
+  // Validate total message length
+  uint8_t expected_len = 5 + payload_len;  // STX + CMD + LEN + PAYLOAD + CRC + ETX
+  if (len != expected_len) {
+    Serial.printf("Length mismatch: got %d bytes, expected %d (LEN field=%d)\n", len, expected_len, payload_len);
+    sendNACK();
+    return;
+  }
+  
+  // Validate CRC (over CMD + LEN + PAYLOAD)
+  uint8_t crc_len = 2 + payload_len;  // CMD + LEN + payload
+  uint8_t calculated_crc = crc8_maxim(&msg[1], crc_len);
   
   if (received_crc != calculated_crc) {
     Serial.printf("CRC mismatch: received=0x%02X, calculated=0x%02X\n", received_crc, calculated_crc);
-    sendNACK(seq);
+    sendNACK();
     return;
   }
   
   // Process command
   if (cmd == CMD_PING) {
+    if (payload_len != 0) {
+      Serial.printf("Invalid ping payload length: %d (expected 0)\n", payload_len);
+      sendNACK();
+      return;
+    }
     Serial.println("RX: Ping");
-    sendPongResponse(seq);
+    sendPongResponse();
   }
   else if (cmd == CMD_UPDATE) {
-    if (len != UPDATE_CMD_LEN) {
-      Serial.printf("Invalid update length: %d (expected %d)\n", len, UPDATE_CMD_LEN);
-      sendNACK(seq);
+    if (payload_len != 4) {
+      Serial.printf("Invalid update payload length: %d (expected 4)\n", payload_len);
+      sendNACK();
       return;
     }
     
     // Parse update data - thermal_kw (4 bytes, float32, little-endian)
+    // Payload starts at index 3
     memcpy(&thermal_kw, &msg[3], 4);
     
     // Convert kW to MWe
@@ -189,11 +204,11 @@ void processBinaryMessage(uint8_t* msg, uint8_t len) {
     
     Serial.printf("RX: Update - Thermal=%.1f kW → Power=%.1f MWe\n", thermal_kw, power_mwe);
     
-    sendUpdateResponse(seq);
+    sendUpdateResponse();
   }
   else {
     Serial.printf("Unknown command: 0x%02X\n", cmd);
-    sendNACK(seq);
+    sendNACK();
   }
 }
 
