@@ -585,7 +585,9 @@ void calculateThermalPower() {
   if (reactor_thermal_kw > 900000.0) reactor_thermal_kw = 900000.0;
   
   float turbine_load = power_level / 100.0;
-  const float TURBINE_EFFICIENCY = 0.33;
+  // Increased efficiency to 34% to allow reaching full 300 MW
+  // At max: 900,000 kW × 0.34 × 1.0 = 306,000 kW (capped at 300,000)
+  const float TURBINE_EFFICIENCY = 0.34;
   
   thermal_kw_calculated = reactor_thermal_kw * TURBINE_EFFICIENCY * turbine_load;
   

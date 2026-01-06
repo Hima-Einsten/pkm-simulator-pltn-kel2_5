@@ -74,9 +74,10 @@ unsigned long last_byte_time = 0;
 #define RX_TIMEOUT_MS 500  // Reset buffer if no data for 500ms
 
 // ============================================
-// LED PIN
+// LED PINS - Array of 4 LEDs for power visualization
 // ============================================
-#define POWER_LED 23  // LED visualisasi daya reaktor
+const int NUM_LEDS = 4;
+const int POWER_LEDS[NUM_LEDS] = {23, 25, 26, 27};  // 4 GPIO pins for LEDs
 
 // ============================================
 // DATA
@@ -238,23 +239,30 @@ void setup() {
   UartComm.begin(UART_BAUD, SERIAL_8N1, 16, 17);
   delay(500);
 
-  // Initialize power LED
-  pinMode(POWER_LED, OUTPUT);
-  ledcAttach(POWER_LED, 5000, 8);  // 5kHz, 8-bit
-  ledcWrite(POWER_LED, 0);
+  // Initialize all 4 power LEDs
+  Serial.println("Initializing 4 power LEDs...");
+  for (int i = 0; i < NUM_LEDS; i++) {
+    pinMode(POWER_LEDS[i], OUTPUT);
+    ledcAttach(POWER_LEDS[i], 5000, 8);  // 5kHz, 8-bit
+    ledcWrite(POWER_LEDS[i], 0);
+    Serial.printf("  LED %d: GPIO %d initialized\n", i+1, POWER_LEDS[i]);
+  }
 
-  Serial.println("Power LED initialized (GPIO 23)");
   Serial.println("UART ready at 115200 baud");
   Serial.println("===========================================");
   Serial.println("ESP32 Power Indicator READY");
   Serial.println("===========================================\n");
   
-  // Test LED - flash 3 times
-  Serial.println("Testing LED...");
+  // Test LEDs - flash 3 times
+  Serial.println("Testing all LEDs...");
   for (int i = 0; i < 3; i++) {
-    ledcWrite(POWER_LED, 255);
+    for (int j = 0; j < NUM_LEDS; j++) {
+      ledcWrite(POWER_LEDS[j], 255);
+    }
     delay(200);
-    ledcWrite(POWER_LED, 0);
+    for (int j = 0; j < NUM_LEDS; j++) {
+      ledcWrite(POWER_LEDS[j], 0);
+    }
     delay(200);
   }
   Serial.println("LED test complete\n");
@@ -322,7 +330,7 @@ void loop() {
 }
 
 // ============================================
-// POWER LED UPDATE
+// POWER LED UPDATE - Controls all 4 LEDs with same PWM
 // ============================================
 void updatePowerLED() {
   static unsigned long last_update = 0;
@@ -352,14 +360,16 @@ void updatePowerLED() {
     current_pwm -= min(5, current_pwm - target_pwm);
   }
   
-  // Apply PWM
-  ledcWrite(POWER_LED, current_pwm);
+  // Apply PWM to all 4 LEDs
+  for (int i = 0; i < NUM_LEDS; i++) {
+    ledcWrite(POWER_LEDS[i], current_pwm);
+  }
   
   // Debug output every 2 seconds
   static unsigned long last_debug = 0;
   if (millis() - last_debug > 2000) {
     last_debug = millis();
-    Serial.printf("Power: %.1f MWe | PWM: %d/255 | Brightness: %d%%\n", 
-                  power_mwe, current_pwm, (current_pwm * 100) / 255);
+    Serial.printf("Power: %.1f MWe | PWM: %d/255 | Brightness: %d%% | All %d LEDs\n", 
+                  power_mwe, current_pwm, (current_pwm * 100) / 255, NUM_LEDS);
   }
 }
