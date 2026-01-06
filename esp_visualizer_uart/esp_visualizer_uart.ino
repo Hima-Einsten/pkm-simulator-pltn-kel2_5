@@ -2,9 +2,15 @@
  * ESP32 Power Indicator - BINARY PROTOCOL VERSION
  * 
  * Fungsi:
- * - Hanya kontrol 1 LED power indicator untuk visualisasi daya reaktor
+ * - Kontrol 4 LED power indicator untuk visualisasi daya reaktor
  * - Komunikasi UART dengan Raspberry Pi menggunakan BINARY protocol
  * - LED brightness proporsional dengan daya output (0-300 MWe)
+ * - Auto-switching PWM → HIGH mode untuk kecerahan maksimal (≥250 PWM)
+ * 
+ * LED Mode Control:
+ * - PWM Mode (0-249): LED dikontrol dengan PWM (0-255) untuk brightness bertahap
+ * - HIGH Mode (≥250): LED menerima 3.3V penuh untuk kecerahan maksimal
+ * - Hysteresis: Switch ke HIGH di ≥250, kembali ke PWM di <240
  * 
  * Protocol: BINARY Protocol with ACK/NACK (115200 baud, 8N1)
  * - Command: 9 bytes (vs 42 bytes JSON) - 79% reduction
@@ -85,6 +91,11 @@ const int POWER_LEDS[NUM_LEDS] = {23, 25, 26, 27};  // 4 GPIO pins for LEDs
 float thermal_kw = 0.0;      // Thermal power dalam kW (0-300000)
 float power_mwe = 0.0;       // Electrical power dalam MWe (0-300)
 int current_pwm = 0;         // Current PWM value (0-255)
+
+// LED Mode Control (PWM vs HIGH mode)
+#define PWM_THRESHOLD_HIGH 250    // Switch to HIGH mode when PWM >= 250
+#define PWM_THRESHOLD_LOW 240     // Switch back to PWM mode when PWM < 240 (hysteresis)
+bool led_mode_high = false;       // true = HIGH mode (full 3.3V), false = PWM mode
 
 // ============================================
 // Binary Protocol Functions
@@ -330,7 +341,7 @@ void loop() {
 }
 
 // ============================================
-// POWER LED UPDATE - Controls all 4 LEDs with same PWM
+// POWER LED UPDATE - Controls all 4 LEDs with PWM/HIGH mode switching
 // ============================================
 void updatePowerLED() {
   static unsigned long last_update = 0;
@@ -360,16 +371,58 @@ void updatePowerLED() {
     current_pwm -= min(5, current_pwm - target_pwm);
   }
   
-  // Apply PWM to all 4 LEDs
-  for (int i = 0; i < NUM_LEDS; i++) {
-    ledcWrite(POWER_LEDS[i], current_pwm);
+  // ============================================
+  // Mode Switching Logic with Hysteresis
+  // ============================================
+  
+  // Check if we need to switch to HIGH mode (PWM → HIGH)
+  if (!led_mode_high && current_pwm >= PWM_THRESHOLD_HIGH) {
+    // Switch to HIGH mode for maximum brightness
+    Serial.println("Switching to HIGH mode (full 3.3V)");
+    
+    for (int i = 0; i < NUM_LEDS; i++) {
+      // Detach PWM
+      ledcDetach(POWER_LEDS[i]);
+      
+      // Reconfigure as digital OUTPUT
+      pinMode(POWER_LEDS[i], OUTPUT);
+      
+      // Set to HIGH (full 3.3V)
+      digitalWrite(POWER_LEDS[i], HIGH);
+    }
+    
+    led_mode_high = true;
   }
+  // Check if we need to switch back to PWM mode (HIGH → PWM)
+  else if (led_mode_high && current_pwm < PWM_THRESHOLD_LOW) {
+    // Switch back to PWM mode
+    Serial.println("Switching to PWM mode");
+    
+    for (int i = 0; i < NUM_LEDS; i++) {
+      // Re-attach PWM
+      ledcAttach(POWER_LEDS[i], 5000, 8);  // 5kHz, 8-bit
+      
+      // Set initial PWM value
+      ledcWrite(POWER_LEDS[i], current_pwm);
+    }
+    
+    led_mode_high = false;
+  }
+  // If in PWM mode, update PWM values
+  else if (!led_mode_high) {
+    // Apply PWM to all 4 LEDs
+    for (int i = 0; i < NUM_LEDS; i++) {
+      ledcWrite(POWER_LEDS[i], current_pwm);
+    }
+  }
+  // If in HIGH mode, LEDs stay at HIGH (no action needed)
   
   // Debug output every 2 seconds
   static unsigned long last_debug = 0;
   if (millis() - last_debug > 2000) {
     last_debug = millis();
-    Serial.printf("Power: %.1f MWe | PWM: %d/255 | Brightness: %d%% | All %d LEDs\n", 
-                  power_mwe, current_pwm, (current_pwm * 100) / 255, NUM_LEDS);
+    const char* mode_str = led_mode_high ? "HIGH" : "PWM";
+    Serial.printf("Power: %.1f MWe | PWM: %d/255 | Mode: %s | Brightness: %d%% | All %d LEDs\n", 
+                  power_mwe, current_pwm, mode_str, (current_pwm * 100) / 255, NUM_LEDS);
   }
 }
