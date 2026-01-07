@@ -521,50 +521,50 @@ class PLTNPanelController:
         """
         with self.state_lock:
             
-            if event == ButtonEvent.PRESSURE_UP:
+            elif event == ButtonEvent.PRESSURE_UP:
                 self.state.pressure = min(self.state.pressure + 1.0, 200.0)  # 1 bar increment
-                logger.info(f"✓ Pressure UP: {self.state.pressure:.1f} bar")
+                # Removed logging for performance (too verbose)
             
             elif event == ButtonEvent.PRESSURE_DOWN:
                 self.state.pressure = max(self.state.pressure - 1.0, 0.0)  # 1 bar decrement
-                logger.info(f"✓ Pressure DOWN: {self.state.pressure:.1f} bar")
+                # Removed logging for performance
             
             elif event == ButtonEvent.PUMP_PRIMARY_ON:
                 if self.state.pump_primary_status == 0:
                     self.state.pump_primary_status = 1
-                    logger.info("✓ Primary pump: STARTING")
+                    # Removed logging for performance
             
             elif event == ButtonEvent.PUMP_PRIMARY_OFF:
                 if self.state.pump_primary_status == 2:
                     self.state.pump_primary_status = 3
-                    logger.info("✓ Primary pump: SHUTTING DOWN")
+                    # Removed logging for performance
             
             elif event == ButtonEvent.PUMP_SECONDARY_ON:
                 if self.state.pump_secondary_status == 0:
                     self.state.pump_secondary_status = 1
-                    logger.info("✓ Secondary pump: STARTING")
+                    # Removed logging for performance
             
             elif event == ButtonEvent.PUMP_SECONDARY_OFF:
                 if self.state.pump_secondary_status == 2:
                     self.state.pump_secondary_status = 3
-                    logger.info("✓ Secondary pump: SHUTTING DOWN")
+                    # Removed logging for performance
             
             elif event == ButtonEvent.PUMP_TERTIARY_ON:
                 if self.state.pump_tertiary_status == 0:
                     self.state.pump_tertiary_status = 1
-                    logger.info("✓ Tertiary pump: STARTING")
+                    # Removed logging for performance
             
             elif event == ButtonEvent.PUMP_TERTIARY_OFF:
                 if self.state.pump_tertiary_status == 2:
                     self.state.pump_tertiary_status = 3
-                    logger.info("✓ Tertiary pump: SHUTTING DOWN")
+                    # Removed logging for performance
             
             elif event == ButtonEvent.SAFETY_ROD_UP:
                 if not self._check_interlock_internal():
                     logger.warning("Interlock not satisfied!")
                     return
                 self.state.safety_rod = min(self.state.safety_rod + 1, 100)  # 1% increment
-                logger.info(f"✓ Safety rod UP: {self.state.safety_rod}%")
+                # Removed logging for performance
             
             elif event == ButtonEvent.SAFETY_ROD_DOWN:
                 # Safety rod hanya bisa turun jika shim dan regulating sudah 0%
@@ -575,33 +575,33 @@ class PLTNPanelController:
                         try:
                             self.buzzer.beep(duration=0.2)
                         except Exception:
-                            logger.debug("Buzzer beep failed")
+                            pass  # Silent fail
                     return
 
                 self.state.safety_rod = max(self.state.safety_rod - 1, 0)  # 1% decrement
-                logger.info(f"✓ Safety rod DOWN: {self.state.safety_rod}%")
+                # Removed logging for performance
             
             elif event == ButtonEvent.SHIM_ROD_UP:
                 if not self._check_interlock_internal():
                     logger.warning("Interlock not satisfied!")
                     return
                 self.state.shim_rod = min(self.state.shim_rod + 1, 100)  # 1% increment
-                logger.info(f"✓ Shim rod UP: {self.state.shim_rod}%")
+                # Removed logging for performance
             
             elif event == ButtonEvent.SHIM_ROD_DOWN:
                 self.state.shim_rod = max(self.state.shim_rod - 1, 0)  # 1% decrement
-                logger.info(f"✓ Shim rod DOWN: {self.state.shim_rod}%")
+                # Removed logging for performance
             
             elif event == ButtonEvent.REGULATING_ROD_UP:
                 if not self._check_interlock_internal():
                     logger.warning("⚠️  Interlock not satisfied!")
                     return
                 self.state.regulating_rod = min(self.state.regulating_rod + 1, 100)  # 1% increment
-                logger.info(f"✓ Regulating rod UP: {self.state.regulating_rod}%")
+                # Removed logging for performance
             
             elif event == ButtonEvent.REGULATING_ROD_DOWN:
                 self.state.regulating_rod = max(self.state.regulating_rod - 1, 0)  # 1% decrement
-                logger.info(f"✓ Regulating rod DOWN: {self.state.regulating_rod}%")
+                # Removed logging for performance
             
             elif event == ButtonEvent.EMERGENCY:
                 self.state.emergency_active = True
@@ -687,16 +687,16 @@ class PLTNPanelController:
             loop_count = 0
             while self.state.running:
                 try:
-                    # Heartbeat every 10 seconds
+                    # Heartbeat every 60 seconds (reduced logging)
                     loop_count += 1
-                    if loop_count >= 100:  # 100 * 0.1s = 10s
+                    if loop_count >= 6000:  # 6000 * 0.01s = 60s
                         logger.info(f"💓 Event processor alive - Queue size: {self.button_event_queue.qsize()}")
                         loop_count = 0
                     
                     # Wait for event (blocking, with timeout) - optimized to 10ms for fast response
                     event = self.button_event_queue.get(timeout=0.01)
                     
-                    logger.info(f"🔹 Processing: {event.value}")
+                    # Removed event processing log for performance (too verbose)
                     
                     # Process event with lock
                     self.process_button_event(event)
@@ -989,8 +989,8 @@ class PLTNPanelController:
                             esp_bc_data = self.uart_master.get_esp_bc_data()
                             self.state.thermal_kw = esp_bc_data.kw_thermal
                             self.state.turbine_speed = esp_bc_data.turbine_speed
-                            # Gap before sending to ESP-E to ensure buffers clear
-                            time.sleep(0.03)  # 30ms (increased from 20ms)
+                            # Gap before sending to ESP-E (reduced for faster response)
+                            time.sleep(0.005)  # 5ms (reduced from 30ms)
                         else:
                             logger.warning("⚠️  ESP-BC update failed")
                 
@@ -1000,8 +1000,7 @@ class PLTNPanelController:
                 if current_time - last_esp_e_update >= ESP_E_UPDATE_INTERVAL:
                     with self.uart_lock:
                         try:
-                            # Small delay before ESP-E to ensure previous command completed
-                            time.sleep(0.010)  # 10ms delay (reduced from 50ms)
+                            # ESP-E communication (no delay needed, throttled by interval)
                             
                             # Send to ESP-E (Power Indicator + Water Flow Visualization)
                             # Only show power when turbine PWM > 50% (DC motor minimum voltage)
