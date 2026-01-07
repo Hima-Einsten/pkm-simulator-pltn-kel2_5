@@ -636,17 +636,17 @@ class PLTNPanelController:
         Check if interlock conditions are satisfied for rod movement
         INTERNAL version - assumes caller already holds state_lock
         
-        INTERLOCK LOGIC v3.3 (FIXED):
+        INTERLOCK LOGIC v3.4 (UPDATED):
         Berdasarkan alur simulasi 8-phase PWR startup yang realistis:
         
-        Phase 1-2: Reactor START → Raise pressure → Raise rods
-        - Allow: Pressure >= 40 bar
+        Phase 1-3: Reactor START → Raise pressure to operating level → Raise rods
+        - Allow: Pressure >= 140 bar (operating pressure)
         - Allow: Reactor started
         - Allow: No emergency
         - Require: All three pumps in ON state (status == 2)
         - NO NEED: Turbine running (turbine belum jalan saat initial rod raise)
         
-        Phase 3+: Normal operation
+        Phase 4+: Normal operation
         - Same checks as above
         - Turbine akan auto-start dari ESP-BC ketika thermal > 50 MWth
         
@@ -654,10 +654,10 @@ class PLTNPanelController:
             True if safe to move rods, False otherwise
         """
         
-        # Check 2: Pressure >= 40 bar (minimum for safe operation)
-        # Pressure harus dinaikkan dulu sebelum rod movement
-        if self.state.pressure < 40.0:
-            logger.debug(f"Interlock: Pressure too low ({self.state.pressure:.1f} bar < 40 bar)")
+        # Check 2: Pressure >= 140 bar (operating pressure for rod withdrawal)
+        # Pressure harus mencapai tekanan operasi penuh sebelum rod movement
+        if self.state.pressure < 140.0:
+            logger.debug(f"Interlock: Pressure too low ({self.state.pressure:.1f} bar < 140 bar)")
             return False
         
         # Check 3: No emergency active
@@ -1152,44 +1152,12 @@ class PLTNPanelController:
                         self.state.auto_sim_phase = ""
                     continue
                 
-                # Phase 4A: Safety Rod Withdrawal (100%)
-                with self.state_lock:
-                    self.state.auto_sim_phase = "Safety Rod"
-                logger.info("\n📍 Phase 4A: Safety Rod Withdrawal")
-                logger.info("   Raising safety rod to 100% (3 seconds)...")
-                logger.info("   (Safety rod must be fully withdrawn before power rods)")
-                
-                start_time = time.time()
-                duration = 3.0
-                start_pos = 0
-                target_pos = 100
-                
-                while time.time() - start_time < duration:
-                    if not self.state.auto_sim_running:
-                        logger.warning("   ⚠️ Auto simulation cancelled by user")
-                        return
-                    
-                    elapsed = time.time() - start_time
-                    progress = elapsed / duration
-                    current_pos = int(start_pos + (target_pos - start_pos) * progress)
-                    
-                    with self.state_lock:
-                        self.state.safety_rod = current_pos
-                    
-                    self.esp_send_immediate.set()
-                    time.sleep(0.05)
-                
-                with self.state_lock:
-                    self.state.safety_rod = 100
-                
-                logger.info("   ✅ Safety rod at 100%")
-                time.sleep(2)
-                
-                # Phase 4B: Raise Pressure to 140 bar
+                # Phase 4A: Raise Pressure to 140 bar (MOVED FIRST for interlock)
                 with self.state_lock:
                     self.state.auto_sim_phase = "Pressure 140"
-                logger.info("\n📍 Phase 4B: Pressurizer to Operating Pressure")
+                logger.info("\n📍 Phase 4A: Pressurizer to Operating Pressure")
                 logger.info("   Raising pressure to 140 bar (7 seconds)...")
+                logger.info("   (Operating pressure required before rod withdrawal)")
                 
                 start_time = time.time()
                 duration = 7.0
@@ -1220,6 +1188,41 @@ class PLTNPanelController:
                     self.state.pressure = 140.0
                 
                 logger.info("   ✅ Pressure at 140 bar (operating pressure)")
+                time.sleep(2)
+                
+                # Phase 4B: Safety Rod Withdrawal (100%) - MOVED AFTER pressure
+                with self.state_lock:
+                    self.state.auto_sim_phase = "Safety Rod"
+                logger.info("\n📍 Phase 4B: Safety Rod Withdrawal")
+                logger.info("   Raising safety rod to 100% (3 seconds)...")
+                logger.info("   (Safety rod must be fully withdrawn before power rods)")
+                
+                start_time = time.time()
+                duration = 3.0
+                start_pos = 0
+                target_pos = 100
+                
+                while time.time() - start_time < duration:
+                    if not self.state.auto_sim_running:
+                        logger.warning("   ⚠️ Auto simulation cancelled by user")
+                        return
+                    
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration
+                    current_pos = int(start_pos + (target_pos - start_pos) * progress)
+                    
+                    with self.state_lock:
+                        self.state.safety_rod = current_pos
+                    
+                    self.esp_send_immediate.set()
+                    time.sleep(0.05)
+                
+                with self.state_lock:
+                    self.state.safety_rod = 100
+                
+                logger.info("   ✅ Safety rod at 100%")
+                time.sleep(2)
+                
                 logger.info("   ✅ Ready for power rod withdrawal")
                 time.sleep(2)
                 
