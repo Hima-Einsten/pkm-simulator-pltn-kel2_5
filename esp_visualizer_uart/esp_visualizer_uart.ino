@@ -102,11 +102,9 @@ const int POWER_LEDS[NUM_LEDS] = {23, 25, 33, 27};  // 4 GPIO pins for LEDs (26â
 #define LATCH_PIN_TERTIARY 21  // IC #3 - Tertiary pump flow
 
 // Flow animation configuration
-#define FLOW_ANIM_DELAY 120    // Animation delay in ms (120ms per frame)
-byte flowPattern_Primary = B00011000;    // Initial flow pattern for primary
-byte flowPattern_Secondary = B00011000;  // Initial flow pattern for secondary
-byte flowPattern_Tertiary = B00011000;   // Initial flow pattern for tertiary
-unsigned long lastFlowAnim = 0;          // Last animation update time
+// Animation delays are now dynamic based on pump status (see updateFlowAnimation)
+// Pattern: 4-LED block (B11110000) that rotates around 8 LEDs
+unsigned long lastFlowAnim = 0;  // Last animation update time
 
 // ============================================
 // DATA
@@ -142,51 +140,138 @@ void writeShiftRegisterIC(byte data, int dataPin, int latchPin) {
 }
 
 /**
- * Rotate byte left (for flow animation)
- * @param value - byte to rotate
- * @return rotated byte
- */
-byte rotateLeft(byte value) {
-  return (value << 1) | (value >> 7);
-}
-
-/**
  * Update water flow animations for all 3 pumps
- * Only animates when pump status == 2 (PUMP_ON)
+ * Based on reference implementation with adaptations for shift register
+ * Uses multi-LED blocks with variable speed per pump status
  */
 void updateFlowAnimation() {
   unsigned long currentTime = millis();
   
-  // Check if it's time to update animation
-  if (currentTime - lastFlowAnim < FLOW_ANIM_DELAY) {
+  // Track previous status to detect changes
+  static uint8_t prev_pump_primary = 255;
+  static uint8_t prev_pump_secondary = 255;
+  static uint8_t prev_pump_tertiary = 255;
+  
+  // Track animation positions for each pump
+  static int pos_primary = 0;
+  static int pos_secondary = 0;
+  static int pos_tertiary = 0;
+  
+  // Variable animation delays per pump status (from reference)
+  static unsigned long delay_primary = 200;
+  static unsigned long delay_secondary = 250;
+  static unsigned long delay_tertiary = 250;
+  
+  // Detect pump status changes and handle accordingly
+  if (pump_primary_status != prev_pump_primary) {
+    if (pump_primary_status != 2) {
+      // Pump stopped - immediately clear and reset
+      writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+      pos_primary = 0;
+      Serial.println("Primary pump stopped - LEDs cleared");
+    } else {
+      Serial.println("Primary pump started");
+      pos_primary = 0;  // Reset position on start
+    }
+    prev_pump_primary = pump_primary_status;
+  }
+  
+  if (pump_secondary_status != prev_pump_secondary) {
+    if (pump_secondary_status != 2) {
+      writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+      pos_secondary = 0;
+      Serial.println("Secondary pump stopped - LEDs cleared");
+    } else {
+      Serial.println("Secondary pump started");
+      pos_secondary = 0;
+    }
+    prev_pump_secondary = pump_secondary_status;
+  }
+  
+  if (pump_tertiary_status != prev_pump_tertiary) {
+    if (pump_tertiary_status != 2) {
+      writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+      pos_tertiary = 0;
+      Serial.println("Tertiary pump stopped - LEDs cleared");
+    } else {
+      Serial.println("Tertiary pump started");
+      pos_tertiary = 0;
+    }
+    prev_pump_tertiary = pump_tertiary_status;
+  }
+  
+  // Update animation delays based on pump status (from reference)
+  // Primary pump
+  switch (pump_primary_status) {
+    case 1: delay_primary = 500; break;  // STARTING
+    case 2: delay_primary = 200; break;  // ON (fastest)
+    case 3: delay_primary = 600; break;  // SHUTTING_DOWN
+    default: delay_primary = 1000; break;
+  }
+  
+  // Secondary pump
+  switch (pump_secondary_status) {
+    case 1: delay_secondary = 500; break;  // STARTING
+    case 2: delay_secondary = 250; break;  // ON (medium speed)
+    case 3: delay_secondary = 600; break;  // SHUTTING_DOWN
+    default: delay_secondary = 1000; break;
+  }
+  
+  // Tertiary pump
+  switch (pump_tertiary_status) {
+    case 1: delay_tertiary = 500; break;  // STARTING
+    case 2: delay_tertiary = 250; break;  // ON (medium speed)
+    case 3: delay_tertiary = 600; break;  // SHUTTING_DOWN
+    default: delay_tertiary = 1000; break;
+  }
+  
+  // Check if it's time to update animation (using shortest delay for smooth updates)
+  unsigned long min_delay = min(delay_primary, min(delay_secondary, delay_tertiary));
+  if (currentTime - lastFlowAnim < min_delay) {
     return;
   }
   
   lastFlowAnim = currentTime;
   
-  // Primary pump flow (IC #1)
+  // Primary pump flow - 4-LED block pattern (adapted from reference)
   if (pump_primary_status == 2) {  // PUMP_ON
-    flowPattern_Primary = rotateLeft(flowPattern_Primary);
-    writeShiftRegisterIC(flowPattern_Primary, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
-  } else {
-    // Turn off flow when pump is not ON
-    writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+    // Create 4-LED block pattern: B11110000 rotated
+    byte pattern = 0;
+    for (int i = 0; i < 4; i++) {
+      int ledPos = (pos_primary + i) % 8;
+      pattern |= (1 << ledPos);
+    }
+    writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+    
+    // Advance position
+    pos_primary++;
+    if (pos_primary >= 8) pos_primary = 0;
   }
   
-  // Secondary pump flow (IC #2)
+  // Secondary pump flow - 4-LED block pattern
   if (pump_secondary_status == 2) {  // PUMP_ON
-    flowPattern_Secondary = rotateLeft(flowPattern_Secondary);
-    writeShiftRegisterIC(flowPattern_Secondary, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
-  } else {
-    writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+    byte pattern = 0;
+    for (int i = 0; i < 4; i++) {
+      int ledPos = (pos_secondary + i) % 8;
+      pattern |= (1 << ledPos);
+    }
+    writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+    
+    pos_secondary++;
+    if (pos_secondary >= 8) pos_secondary = 0;
   }
   
-  // Tertiary pump flow (IC #3)
+  // Tertiary pump flow - 4-LED block pattern
   if (pump_tertiary_status == 2) {  // PUMP_ON
-    flowPattern_Tertiary = rotateLeft(flowPattern_Tertiary);
-    writeShiftRegisterIC(flowPattern_Tertiary, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
-  } else {
-    writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+    byte pattern = 0;
+    for (int i = 0; i < 4; i++) {
+      int ledPos = (pos_tertiary + i) % 8;
+      pattern |= (1 << ledPos);
+    }
+    writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+    
+    pos_tertiary++;
+    if (pos_tertiary >= 8) pos_tertiary = 0;
   }
 }
 
