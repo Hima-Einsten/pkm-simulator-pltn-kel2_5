@@ -431,6 +431,19 @@ class PLTNPanelController:
                 logger.critical("🔴 SCRAM SEQUENCE INITIATED")
                 logger.critical("   Sequential rod insertion: Regulating → Shim → Safety")
                 
+                # Capture initial turbine speed for spin-down
+                with self.state_lock:
+                    initial_turbine_speed = self.state.turbine_speed
+                
+                # Start turbine spin-down immediately (runs in parallel)
+                if initial_turbine_speed > 0:
+                    turbine_thread = threading.Thread(
+                        target=self._turbine_spindown,
+                        args=(initial_turbine_speed,),
+                        daemon=True
+                    )
+                    turbine_thread.start()
+                
                 # Step 1: Drop regulating rod (2 seconds, smooth)
                 logger.critical("   ⬇️  Lowering regulating rod...")
                 start_time = time.time()
@@ -499,6 +512,7 @@ class PLTNPanelController:
                 self.esp_send_immediate.set()
                 
                 logger.critical("✅ SCRAM SEQUENCE COMPLETE - All rods inserted (6 seconds total)")
+                logger.critical("   Turbine spin-down continues (~12 seconds total)")
                 
             except Exception as e:
                 logger.error(f"❌ SCRAM sequence error: {e}")
@@ -508,6 +522,48 @@ class PLTNPanelController:
         # Run in separate thread (non-blocking)
         scram_thread_obj = threading.Thread(target=scram_thread, daemon=True)
         scram_thread_obj.start()
+    
+    def _turbine_spindown(self, initial_speed):
+        """
+        Gradually reduce turbine speed to 0 (realistic spin-down)
+        Simulates turbine inertia and residual steam energy
+        Duration: ~12 seconds (linear deceleration)
+        
+        Args:
+            initial_speed: Starting turbine speed (%)
+        """
+        try:
+            logger.info(f"🌀 Turbine spin-down started (initial: {initial_speed:.1f}%)")
+            
+            duration = 12.0  # 12 seconds total spin-down
+            start_time = time.time()
+            
+            while True:
+                elapsed = time.time() - start_time
+                if elapsed >= duration:
+                    break
+                
+                # Linear deceleration (could use exponential for more realism)
+                progress = elapsed / duration
+                current_speed = initial_speed * (1 - progress)
+                
+                with self.state_lock:
+                    self.state.turbine_speed = max(0, current_speed)
+                
+                self.esp_send_immediate.set()  # Trigger immediate ESP update
+                time.sleep(0.1)  # 100ms update rate (smooth animation)
+            
+            # Ensure final speed is exactly 0
+            with self.state_lock:
+                self.state.turbine_speed = 0
+            self.esp_send_immediate.set()
+            
+            logger.info("✅ Turbine spin-down complete (0%)")
+            
+        except Exception as e:
+            logger.error(f"❌ Turbine spin-down error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     
     # ============================================
