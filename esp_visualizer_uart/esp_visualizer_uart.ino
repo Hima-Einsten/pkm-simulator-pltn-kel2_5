@@ -204,15 +204,18 @@ void updateFlowAnimation() {
       if (currentTime - lastUpdate_Primary >= delay_Primary) {
         lastUpdate_Primary = currentTime;
         
-        // Generate ONLY 2-LED pattern (main + tail)
-        // IMPORTANT: Each write is independent, not cumulative
-        byte pattern = 0;  // Start with all LEDs OFF
+        // Generate 2 ADJACENT LEDs pattern that shifts right
+        // Pattern: 11000000 → 01100000 → 00110000 → ... → 10000001 → 11000000
+        byte pattern = 0;
         
-        pattern |= (1 << pos_Primary);  // Main LED
+        // Set 2 adjacent bits based on position
+        pattern |= (1 << (7 - pos_Primary));      // First LED (MSB side)
+        pattern |= (1 << (7 - pos_Primary - 1));  // Second LED (adjacent)
         
-        // Add tail LED (previous position for smooth flow)
-        int tailPos = (pos_Primary == 0) ? 7 : (pos_Primary - 1);
-        pattern |= (1 << tailPos);  // Tail LED
+        // Special case: when pos=7, wrap around (10000001)
+        if (pos_Primary == 7) {
+          pattern = 0b10000001;  // bit 7 and bit 0
+        }
         
         // Write complete pattern (only 2 bits set)
         writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
@@ -229,11 +232,14 @@ void updateFlowAnimation() {
       if (currentTime - lastUpdate_Primary >= delay_Primary) {
         lastUpdate_Primary = currentTime;
         
-        // Same 2-LED pattern
+        // Same 2 adjacent LEDs pattern
         byte pattern = 0;
-        pattern |= (1 << pos_Primary);
-        int tailPos = (pos_Primary == 0) ? 7 : (pos_Primary - 1);
-        pattern |= (1 << tailPos);
+        pattern |= (1 << (7 - pos_Primary));
+        pattern |= (1 << (7 - pos_Primary - 1));
+        
+        if (pos_Primary == 7) {
+          pattern = 0b10000001;
+        }
         
         writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
         
@@ -275,11 +281,14 @@ void updateFlowAnimation() {
       if (currentTime - lastUpdate_Secondary >= delay_Secondary) {
         lastUpdate_Secondary = currentTime;
         
-        // 2-LED pattern only
+        // 2 adjacent LEDs pattern
         byte pattern = 0;
-        pattern |= (1 << pos_Secondary);
-        int tailPos = (pos_Secondary == 0) ? 7 : (pos_Secondary - 1);
-        pattern |= (1 << tailPos);
+        pattern |= (1 << (7 - pos_Secondary));
+        pattern |= (1 << (7 - pos_Secondary - 1));
+        
+        if (pos_Secondary == 7) {
+          pattern = 0b10000001;
+        }
         
         writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
         
@@ -295,9 +304,12 @@ void updateFlowAnimation() {
         lastUpdate_Secondary = currentTime;
         
         byte pattern = 0;
-        pattern |= (1 << pos_Secondary);
-        int tailPos = (pos_Secondary == 0) ? 7 : (pos_Secondary - 1);
-        pattern |= (1 << tailPos);
+        pattern |= (1 << (7 - pos_Secondary));
+        pattern |= (1 << (7 - pos_Secondary - 1));
+        
+        if (pos_Secondary == 7) {
+          pattern = 0b10000001;
+        }
         
         writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
         
@@ -338,11 +350,14 @@ void updateFlowAnimation() {
       if (currentTime - lastUpdate_Tertiary >= delay_Tertiary) {
         lastUpdate_Tertiary = currentTime;
         
-        // 2-LED pattern only
+        // 2 adjacent LEDs pattern
         byte pattern = 0;
-        pattern |= (1 << pos_Tertiary);
-        int tailPos = (pos_Tertiary == 0) ? 7 : (pos_Tertiary - 1);
-        pattern |= (1 << tailPos);
+        pattern |= (1 << (7 - pos_Tertiary));
+        pattern |= (1 << (7 - pos_Tertiary - 1));
+        
+        if (pos_Tertiary == 7) {
+          pattern = 0b10000001;
+        }
         
         writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
         
@@ -358,9 +373,12 @@ void updateFlowAnimation() {
         lastUpdate_Tertiary = currentTime;
         
         byte pattern = 0;
-        pattern |= (1 << pos_Tertiary);
-        int tailPos = (pos_Tertiary == 0) ? 7 : (pos_Tertiary - 1);
-        pattern |= (1 << tailPos);
+        pattern |= (1 << (7 - pos_Tertiary));
+        pattern |= (1 << (7 - pos_Tertiary - 1));
+        
+        if (pos_Tertiary == 7) {
+          pattern = 0b10000001;
+        }
         
         writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
         
