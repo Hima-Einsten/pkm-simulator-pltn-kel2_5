@@ -102,9 +102,9 @@ const int POWER_LEDS[NUM_LEDS] = {23, 25, 33, 27};  // 4 GPIO pins for LEDs (26�
 #define LATCH_PIN_TERTIARY 21  // IC #3 - Tertiary pump flow
 
 // Flow animation configuration
-// Animation delays are now dynamic based on pump status (see updateFlowAnimation)
+// Animation delays are now dynamic per pump (see updateFlowAnimation)
+// Each pump has independent timer - no global timer needed
 // Pattern: 4-LED block (B11110000) that rotates around 8 LEDs
-unsigned long lastFlowAnim = 0;  // Last animation update time
 
 // ============================================
 // DATA
@@ -132,147 +132,221 @@ bool led_mode_high = false;       // true = HIGH mode (full 3.3V), false = PWM m
  * @param data - 8-bit pattern to write
  * @param dataPin - DATA pin for this IC
  * @param latchPin - LATCH pin for this IC
+ * 
+ * CRITICAL: Uses MSBFIRST to match physical LED wiring
+ * Bit 7 (MSB) = Q7 (LED 8), Bit 0 (LSB) = Q0 (LED 1)
  */
 void writeShiftRegisterIC(byte data, int dataPin, int latchPin) {
   digitalWrite(latchPin, LOW);
-  shiftOut(dataPin, CLOCK_PIN, LSBFIRST, data);
+  shiftOut(dataPin, CLOCK_PIN, MSBFIRST, data);  // CHANGED: LSBFIRST → MSBFIRST
   digitalWrite(latchPin, HIGH);
 }
 
 /**
  * Update water flow animations for all 3 pumps
- * Based on reference implementation with adaptations for shift register
- * Uses multi-LED blocks with variable speed per pump status
+ * 
+ * CRITICAL IMPROVEMENTS:
+ * 1. Independent timer per pump (no global timer blocking)
+ * 2. Continuous LED refresh (not just on status change)
+ * 3. Non-blocking design (animation runs on millis(), not UART events)
+ * 4. Explicit LED clear when pump is OFF
+ * 
+ * Based on reference implementation adapted for shift register
  */
 void updateFlowAnimation() {
   unsigned long currentTime = millis();
   
-  // Track previous status to detect changes
-  static uint8_t prev_pump_primary = 255;
-  static uint8_t prev_pump_secondary = 255;
-  static uint8_t prev_pump_tertiary = 255;
+  // ========================================
+  // PRIMARY PUMP - Independent timer and position
+  // ========================================
+  static unsigned long lastUpdate_Primary = 0;
+  static int pos_Primary = 0;
+  static unsigned long delay_Primary = 200;
+  static uint8_t lastStatus_Primary = 255;
   
-  // Track animation positions for each pump
-  static int pos_primary = 0;
-  static int pos_secondary = 0;
-  static int pos_tertiary = 0;
-  
-  // Variable animation delays per pump status (from reference)
-  static unsigned long delay_primary = 200;
-  static unsigned long delay_secondary = 250;
-  static unsigned long delay_tertiary = 250;
-  
-  // Detect pump status changes and handle accordingly
-  if (pump_primary_status != prev_pump_primary) {
-    if (pump_primary_status != 2) {
-      // Pump stopped - immediately clear and reset
-      writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
-      pos_primary = 0;
-      Serial.println("Primary pump stopped - LEDs cleared");
-    } else {
-      Serial.println("Primary pump started");
-      pos_primary = 0;  // Reset position on start
-    }
-    prev_pump_primary = pump_primary_status;
+  // Detect status change for primary pump
+  if (pump_primary_status != lastStatus_Primary) {
+    Serial.printf("Primary pump status changed: %d → %d\n", lastStatus_Primary, pump_primary_status);
+    lastStatus_Primary = pump_primary_status;
+    pos_Primary = 0;  // Reset position on status change
   }
   
-  if (pump_secondary_status != prev_pump_secondary) {
-    if (pump_secondary_status != 2) {
-      writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
-      pos_secondary = 0;
-      Serial.println("Secondary pump stopped - LEDs cleared");
-    } else {
-      Serial.println("Secondary pump started");
-      pos_secondary = 0;
-    }
-    prev_pump_secondary = pump_secondary_status;
-  }
-  
-  if (pump_tertiary_status != prev_pump_tertiary) {
-    if (pump_tertiary_status != 2) {
-      writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
-      pos_tertiary = 0;
-      Serial.println("Tertiary pump stopped - LEDs cleared");
-    } else {
-      Serial.println("Tertiary pump started");
-      pos_tertiary = 0;
-    }
-    prev_pump_tertiary = pump_tertiary_status;
-  }
-  
-  // Update animation delays based on pump status (from reference)
-  // Primary pump
+  // Update delay based on current status
   switch (pump_primary_status) {
-    case 1: delay_primary = 500; break;  // STARTING
-    case 2: delay_primary = 200; break;  // ON (fastest)
-    case 3: delay_primary = 600; break;  // SHUTTING_DOWN
-    default: delay_primary = 1000; break;
+    case 0:  // OFF
+      // Explicitly clear LEDs when OFF (continuous, not just on change)
+      writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+      break;
+      
+    case 1:  // STARTING
+      delay_Primary = 500;
+      // Fall through to animation
+      
+    case 2:  // ON
+      if (pump_primary_status == 2) delay_Primary = 200;  // Fastest
+      // Fall through to animation
+      
+    case 3:  // SHUTTING_DOWN
+      if (pump_primary_status == 3) delay_Primary = 600;  // Slowest
+      
+      // Animate if enough time has passed
+      if (currentTime - lastUpdate_Primary >= delay_Primary) {
+        lastUpdate_Primary = currentTime;
+        
+        // Generate 4-LED block pattern
+        byte pattern = 0;
+        for (int i = 0; i < 4; i++) {
+          int ledPos = (pos_Primary + i) % 8;
+          pattern |= (1 << (7 - ledPos));  // MSB first: bit 7 = Q7
+        }
+        
+        writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+        
+        // Advance position
+        pos_Primary++;
+        if (pos_Primary >= 8) pos_Primary = 0;
+      }
+      break;
   }
   
-  // Secondary pump
+  // ========================================
+  // SECONDARY PUMP - Independent timer and position
+  // ========================================
+  static unsigned long lastUpdate_Secondary = 0;
+  static int pos_Secondary = 0;
+  static unsigned long delay_Secondary = 250;
+  static uint8_t lastStatus_Secondary = 255;
+  
+  // Detect status change for secondary pump
+  if (pump_secondary_status != lastStatus_Secondary) {
+    Serial.printf("Secondary pump status changed: %d → %d\n", lastStatus_Secondary, pump_secondary_status);
+    lastStatus_Secondary = pump_secondary_status;
+    pos_Secondary = 0;
+  }
+  
+  // Update delay and animate
   switch (pump_secondary_status) {
-    case 1: delay_secondary = 500; break;  // STARTING
-    case 2: delay_secondary = 250; break;  // ON (medium speed)
-    case 3: delay_secondary = 600; break;  // SHUTTING_DOWN
-    default: delay_secondary = 1000; break;
+    case 0:  // OFF
+      writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+      break;
+      
+    case 1:  // STARTING
+      delay_Secondary = 500;
+      
+    case 2:  // ON
+      if (pump_secondary_status == 2) delay_Secondary = 250;  // Medium speed
+      
+    case 3:  // SHUTTING_DOWN
+      if (pump_secondary_status == 3) delay_Secondary = 600;
+      
+      if (currentTime - lastUpdate_Secondary >= delay_Secondary) {
+        lastUpdate_Secondary = currentTime;
+        
+        byte pattern = 0;
+        for (int i = 0; i < 4; i++) {
+          int ledPos = (pos_Secondary + i) % 8;
+          pattern |= (1 << (7 - ledPos));  // MSB first
+        }
+        
+        writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+        
+        pos_Secondary++;
+        if (pos_Secondary >= 8) pos_Secondary = 0;
+      }
+      break;
   }
   
-  // Tertiary pump
+  // ========================================
+  // TERTIARY PUMP - Independent timer and position
+  // ========================================
+  static unsigned long lastUpdate_Tertiary = 0;
+  static int pos_Tertiary = 0;
+  static unsigned long delay_Tertiary = 250;
+  static uint8_t lastStatus_Tertiary = 255;
+  
+  // Detect status change for tertiary pump
+  if (pump_tertiary_status != lastStatus_Tertiary) {
+    Serial.printf("Tertiary pump status changed: %d → %d\n", lastStatus_Tertiary, pump_tertiary_status);
+    lastStatus_Tertiary = pump_tertiary_status;
+    pos_Tertiary = 0;
+  }
+  
+  // Update delay and animate
   switch (pump_tertiary_status) {
-    case 1: delay_tertiary = 500; break;  // STARTING
-    case 2: delay_tertiary = 250; break;  // ON (medium speed)
-    case 3: delay_tertiary = 600; break;  // SHUTTING_DOWN
-    default: delay_tertiary = 1000; break;
+    case 0:  // OFF
+      writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+      break;
+      
+    case 1:  // STARTING
+      delay_Tertiary = 500;
+      
+    case 2:  // ON
+      if (pump_tertiary_status == 2) delay_Tertiary = 250;  // Medium speed
+      
+    case 3:  // SHUTTING_DOWN
+      if (pump_tertiary_status == 3) delay_Tertiary = 600;
+      
+      if (currentTime - lastUpdate_Tertiary >= delay_Tertiary) {
+        lastUpdate_Tertiary = currentTime;
+        
+        byte pattern = 0;
+        for (int i = 0; i < 4; i++) {
+          int ledPos = (pos_Tertiary + i) % 8;
+          pattern |= (1 << (7 - ledPos));  // MSB first
+        }
+        
+        writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+        
+        pos_Tertiary++;
+        if (pos_Tertiary >= 8) pos_Tertiary = 0;
+      }
+      break;
   }
+}
+
+// ============================================
+// Hardware Test Patterns
+// ============================================
+
+/**
+ * Test all shift register outputs with alternating patterns
+ * Call this from setup() to verify hardware before normal operation
+ * 
+ * Tests:
+ * - 0xAA (10101010) - Alternating bits
+ * - 0x55 (01010101) - Inverted alternating bits
+ * - 0xFF (11111111) - All LEDs on
+ * - 0x00 (00000000) - All LEDs off
+ */
+void testShiftRegisterHardware() {
+  Serial.println("\n========================================");
+  Serial.println("HARDWARE TEST: Shift Register Validation");
+  Serial.println("========================================");
   
-  // Check if it's time to update animation (using shortest delay for smooth updates)
-  unsigned long min_delay = min(delay_primary, min(delay_secondary, delay_tertiary));
-  if (currentTime - lastFlowAnim < min_delay) {
-    return;
-  }
+  byte testPatterns[] = {0xAA, 0x55, 0xFF, 0x00};
+  const char* patternNames[] = {"0xAA (10101010)", "0x55 (01010101)", "0xFF (all ON)", "0x00 (all OFF)"};
   
-  lastFlowAnim = currentTime;
-  
-  // Primary pump flow - 4-LED block pattern (adapted from reference)
-  if (pump_primary_status == 2) {  // PUMP_ON
-    // Create 4-LED block pattern: B11110000 rotated
-    byte pattern = 0;
-    for (int i = 0; i < 4; i++) {
-      int ledPos = (pos_primary + i) % 8;
-      pattern |= (1 << ledPos);
-    }
-    writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+  for (int test = 0; test < 4; test++) {
+    Serial.printf("\nTest %d: Pattern %s\n", test + 1, patternNames[test]);
+    Serial.println("Applying to all 3 shift registers...");
     
-    // Advance position
-    pos_primary++;
-    if (pos_primary >= 8) pos_primary = 0;
+    // Apply same pattern to all 3 ICs
+    writeShiftRegisterIC(testPatterns[test], DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+    writeShiftRegisterIC(testPatterns[test], DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+    writeShiftRegisterIC(testPatterns[test], DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+    
+    Serial.println("✓ Pattern applied - verify LEDs visually");
+    delay(2000);  // 2 seconds to observe
   }
   
-  // Secondary pump flow - 4-LED block pattern
-  if (pump_secondary_status == 2) {  // PUMP_ON
-    byte pattern = 0;
-    for (int i = 0; i < 4; i++) {
-      int ledPos = (pos_secondary + i) % 8;
-      pattern |= (1 << ledPos);
-    }
-    writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
-    
-    pos_secondary++;
-    if (pos_secondary >= 8) pos_secondary = 0;
-  }
+  // Clear all at end
+  writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+  writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+  writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
   
-  // Tertiary pump flow - 4-LED block pattern
-  if (pump_tertiary_status == 2) {  // PUMP_ON
-    byte pattern = 0;
-    for (int i = 0; i < 4; i++) {
-      int ledPos = (pos_tertiary + i) % 8;
-      pattern |= (1 << ledPos);
-    }
-    writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
-    
-    pos_tertiary++;
-    if (pos_tertiary >= 8) pos_tertiary = 0;
-  }
+  Serial.println("\n✅ Hardware test complete - all ICs cleared");
+  Serial.println("If all patterns displayed correctly, hardware is OK");
+  Serial.println("========================================\n");
 }
 
 // ============================================
@@ -453,6 +527,10 @@ void setup() {
   writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
   writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
   Serial.println("Shift registers initialized and cleared");
+  
+  // OPTIONAL: Hardware test mode - uncomment to test all Q0-Q7 pins
+  // Recommended for first-time setup or troubleshooting
+  // testShiftRegisterHardware();  // Uncomment this line to run hardware test
 
 
   // Initialize all 4 power LEDs
