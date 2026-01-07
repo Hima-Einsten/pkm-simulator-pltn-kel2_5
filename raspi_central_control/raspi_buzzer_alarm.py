@@ -84,6 +84,7 @@ class BuzzerAlarm:
         self.alarm_thread = None
         self.alarm_lock = threading.Lock()
         self.stop_alarm_flag = False
+        self.emergency_beep_active = False  # Flag to protect emergency beep from being cleared
         
         # Initialize GPIO
         if GPIO_AVAILABLE:
@@ -201,6 +202,10 @@ class BuzzerAlarm:
         # REMOVED: Emergency check (now handled by trigger_emergency_beep)
         # Emergency SCRAM uses timed beep instead of continuous alarm
         
+        # Don't clear alarm if emergency beep is active (protected)
+        if self.emergency_beep_active:
+            return  # Let emergency beep finish its duration
+        
         # Priority 1: Pressure CRITICAL (>= 180 bar)
         if state.pressure >= 180.0:
             self.set_alarm(self.ALARM_PRESSURE_CRITICAL)
@@ -218,6 +223,7 @@ class BuzzerAlarm:
         """
         Trigger emergency beep for a fixed duration (non-blocking)
         Used for SCRAM - beeps for 5 seconds then stops automatically
+        Protected from being cleared by check_alarms()
         
         Args:
             duration: How long to beep (default 5 seconds)
@@ -227,11 +233,14 @@ class BuzzerAlarm:
         def beep_for_duration():
             try:
                 logger.info(f"🔊 Emergency beep thread started ({duration}s)")
+                self.emergency_beep_active = True  # Protect from check_alarms()
                 self.set_alarm(self.ALARM_EMERGENCY)
                 time.sleep(duration)
+                self.emergency_beep_active = False  # Release protection
                 self.clear_alarm()
                 logger.info(f"✅ Emergency beep completed ({duration}s)")
             except Exception as e:
+                self.emergency_beep_active = False  # Release on error
                 logger.error(f"❌ Emergency beep error: {e}")
                 import traceback
                 logger.error(traceback.format_exc())

@@ -416,6 +416,101 @@ class PLTNPanelController:
     
     
     # ============================================
+    # Sequential SCRAM Execution
+    # ============================================
+    
+    def _execute_scram_sequence(self):
+        """
+        Execute SCRAM sequence: drop rods sequentially with smooth animation
+        Order: Regulating → Shim → Safety
+        Duration: 2 seconds per rod (smooth descent)
+        Runs in separate thread (non-blocking)
+        """
+        def scram_thread():
+            try:
+                logger.critical("🔴 SCRAM SEQUENCE INITIATED")
+                logger.critical("   Sequential rod insertion: Regulating → Shim → Safety")
+                
+                # Step 1: Drop regulating rod (2 seconds, smooth)
+                logger.critical("   ⬇️  Lowering regulating rod...")
+                start_time = time.time()
+                duration = 2.0
+                with self.state_lock:
+                    start_pos = self.state.regulating_rod
+                
+                while time.time() - start_time < duration:
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration
+                    current_pos = int(start_pos * (1 - progress))
+                    
+                    with self.state_lock:
+                        self.state.regulating_rod = max(0, current_pos)
+                    
+                    self.esp_send_immediate.set()
+                    time.sleep(0.05)  # 50ms update rate
+                
+                with self.state_lock:
+                    self.state.regulating_rod = 0
+                logger.critical("   ✅ Regulating rod inserted (0%)")
+                self.esp_send_immediate.set()
+                
+                # Step 2: Drop shim rod (2 seconds, smooth)
+                logger.critical("   ⬇️  Lowering shim rod...")
+                start_time = time.time()
+                with self.state_lock:
+                    start_pos = self.state.shim_rod
+                
+                while time.time() - start_time < duration:
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration
+                    current_pos = int(start_pos * (1 - progress))
+                    
+                    with self.state_lock:
+                        self.state.shim_rod = max(0, current_pos)
+                    
+                    self.esp_send_immediate.set()
+                    time.sleep(0.05)
+                
+                with self.state_lock:
+                    self.state.shim_rod = 0
+                logger.critical("   ✅ Shim rod inserted (0%)")
+                self.esp_send_immediate.set()
+                
+                # Step 3: Drop safety rod (2 seconds, smooth)
+                logger.critical("   ⬇️  Lowering safety rod...")
+                start_time = time.time()
+                with self.state_lock:
+                    start_pos = self.state.safety_rod
+                
+                while time.time() - start_time < duration:
+                    elapsed = time.time() - start_time
+                    progress = elapsed / duration
+                    current_pos = int(start_pos * (1 - progress))
+                    
+                    with self.state_lock:
+                        self.state.safety_rod = max(0, current_pos)
+                    
+                    self.esp_send_immediate.set()
+                    time.sleep(0.05)
+                
+                with self.state_lock:
+                    self.state.safety_rod = 0
+                logger.critical("   ✅ Safety rod inserted (0%)")
+                self.esp_send_immediate.set()
+                
+                logger.critical("✅ SCRAM SEQUENCE COMPLETE - All rods inserted (6 seconds total)")
+                
+            except Exception as e:
+                logger.error(f"❌ SCRAM sequence error: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
+        # Run in separate thread (non-blocking)
+        scram_thread_obj = threading.Thread(target=scram_thread, daemon=True)
+        scram_thread_obj.start()
+    
+    
+    # ============================================
     # Event Processing (Heavy Work with Lock)
     # ============================================
     
@@ -510,15 +605,11 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.EMERGENCY:
                 self.state.emergency_active = True
-                # Drop all control rods immediately (SCRAM)
-                self.state.safety_rod = 0
-                self.state.shim_rod = 0
-                self.state.regulating_rod = 0
-                # ✅ KEEP PUMPS RUNNING for cooling (do NOT shut down)
-                # Pumps must continue to remove decay heat after SCRAM
+                
+                # Execute sequential SCRAM (non-blocking, smooth animation)
                 logger.critical("✓ EMERGENCY SCRAM ACTIVATED!")
-                logger.critical("   All control rods inserted")
                 logger.critical("   Pumps remain ON for decay heat removal")
+                self._execute_scram_sequence()
                 
                 # Trigger emergency buzzer (will beep for 5 seconds then stop)
                 if self.buzzer:
@@ -913,8 +1004,8 @@ class PLTNPanelController:
                             time.sleep(0.010)  # 10ms delay (reduced from 50ms)
                             
                             # Send to ESP-E (Power Indicator + Water Flow Visualization)
-                            # Only show power when turbine PWM > 25% (DC motor minimum voltage)
-                            display_power = self.state.thermal_kw if self.state.turbine_speed > 25 else 0.0
+                            # Only show power when turbine PWM > 50% (DC motor minimum voltage)
+                            display_power = self.state.thermal_kw if self.state.turbine_speed > 50 else 0.0
                             logger.debug(f"Sending to ESP-E: Thermal={self.state.thermal_kw:.1f}kW (Display={display_power:.1f}kW, Turbine={self.state.turbine_speed:.1f}%), Pumps: P={self.state.pump_primary_status} S={self.state.pump_secondary_status} T={self.state.pump_tertiary_status}")
                             self.uart_master.update_esp_e(
                                 thermal_power_kw=display_power,
