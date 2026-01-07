@@ -197,7 +197,7 @@ void updateFlowAnimation() {
         byte pattern = 0;
         for (int i = 0; i < 4; i++) {
           int ledPos = (pos_Primary + i) % 8;
-          pattern |= (1 << (7 - ledPos));  // MSB first: bit 7 = Q7
+          pattern |= (1 << ledPos);  // Direct bit mapping: bit 0 = Q0, bit 7 = Q7
         }
         
         writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
@@ -245,7 +245,7 @@ void updateFlowAnimation() {
         byte pattern = 0;
         for (int i = 0; i < 4; i++) {
           int ledPos = (pos_Secondary + i) % 8;
-          pattern |= (1 << (7 - ledPos));  // MSB first
+          pattern |= (1 << ledPos);  // Direct bit mapping
         }
         
         writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
@@ -292,7 +292,7 @@ void updateFlowAnimation() {
         byte pattern = 0;
         for (int i = 0; i < 4; i++) {
           int ledPos = (pos_Tertiary + i) % 8;
-          pattern |= (1 << (7 - ledPos));  // MSB first
+          pattern |= (1 << ledPos);  // Direct bit mapping
         }
         
         writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
