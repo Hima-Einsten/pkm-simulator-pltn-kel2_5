@@ -222,19 +222,24 @@ class BuzzerAlarm:
         Args:
             duration: How long to beep (default 5 seconds)
         """
+        logger.info(f"🔔 trigger_emergency_beep() called (duration={duration}s)")
+        
         def beep_for_duration():
             try:
-                logger.info(f"Emergency beep started ({duration}s)")
+                logger.info(f"🔊 Emergency beep thread started ({duration}s)")
                 self.set_alarm(self.ALARM_EMERGENCY)
                 time.sleep(duration)
                 self.clear_alarm()
-                logger.info(f"Emergency beep completed ({duration}s)")
+                logger.info(f"✅ Emergency beep completed ({duration}s)")
             except Exception as e:
-                logger.error(f"Emergency beep error: {e}")
+                logger.error(f"❌ Emergency beep error: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
         
         # Run in separate thread (non-blocking)
         beep_thread = threading.Thread(target=beep_for_duration, daemon=True)
         beep_thread.start()
+        logger.info(f"✓ Emergency beep thread created and started")
     
     def sound_procedure_warning(self, duration=2.0):
         """
