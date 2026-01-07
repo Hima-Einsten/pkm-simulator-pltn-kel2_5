@@ -133,13 +133,27 @@ bool led_mode_high = false;       // true = HIGH mode (full 3.3V), false = PWM m
  * @param dataPin - DATA pin for this IC
  * @param latchPin - LATCH pin for this IC
  * 
+ * 74HC595 Protocol:
+ * 1. LATCH (RCLK) LOW - prepare to receive data
+ * 2. Shift 8 bits via DATA + CLOCK (SRCLK) - shiftOut() handles this
+ * 3. LATCH (RCLK) HIGH - transfer shift register to output register
+ * 4. Data appears on Q0-Q7, UDN2981 sources current to LEDs
+ * 
  * CRITICAL: Uses MSBFIRST to match physical LED wiring
  * Bit 7 (MSB) = Q7 (LED 8), Bit 0 (LSB) = Q0 (LED 1)
  */
 void writeShiftRegisterIC(byte data, int dataPin, int latchPin) {
+  // Step 1: LATCH LOW - disable output update
   digitalWrite(latchPin, LOW);
-  shiftOut(dataPin, CLOCK_PIN, MSBFIRST, data);  // CHANGED: LSBFIRST → MSBFIRST
+  delayMicroseconds(1);  // Setup time
+  
+  // Step 2: Shift 8 bits (shiftOut generates clock pulses automatically)
+  shiftOut(dataPin, CLOCK_PIN, MSBFIRST, data);
+  
+  // Step 3: LATCH HIGH - transfer to output register
+  delayMicroseconds(1);  // Hold time
   digitalWrite(latchPin, HIGH);
+  delayMicroseconds(1);  // Propagation delay
 }
 
 /**
@@ -514,13 +528,30 @@ void setup() {
 
   // Initialize shift register pins
   Serial.println("Initializing shift register pins...");
+  
+  // CLOCK - shared by all 3 ICs
   pinMode(CLOCK_PIN, OUTPUT);
+  digitalWrite(CLOCK_PIN, LOW);
+  
+  // PRIMARY circuit
   pinMode(DATA_PIN_PRIMARY, OUTPUT);
-  pinMode(DATA_PIN_SECONDARY, OUTPUT);
-  pinMode(DATA_PIN_TERTIARY, OUTPUT);
   pinMode(LATCH_PIN_PRIMARY, OUTPUT);
+  digitalWrite(DATA_PIN_PRIMARY, LOW);
+  digitalWrite(LATCH_PIN_PRIMARY, LOW);
+  
+  // SECONDARY circuit
+  pinMode(DATA_PIN_SECONDARY, OUTPUT);
   pinMode(LATCH_PIN_SECONDARY, OUTPUT);
+  digitalWrite(DATA_PIN_SECONDARY, LOW);
+  digitalWrite(LATCH_PIN_SECONDARY, LOW);
+  
+  // TERTIARY circuit
+  pinMode(DATA_PIN_TERTIARY, OUTPUT);
   pinMode(LATCH_PIN_TERTIARY, OUTPUT);
+  digitalWrite(DATA_PIN_TERTIARY, LOW);
+  digitalWrite(LATCH_PIN_TERTIARY, LOW);
+  
+  delay(10);  // Let pins stabilize
   
   // Clear all shift registers
   writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);

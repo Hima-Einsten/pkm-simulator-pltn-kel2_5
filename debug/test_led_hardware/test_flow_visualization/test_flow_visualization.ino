@@ -1,10 +1,18 @@
 #include <Arduino.h>
 
+// Pre-compiler check to ensure ESP32 platform
+#if !defined(ESP32)
+#error This code is for ESP32 only! Please select ESP32 board from Tools > Board menu.
+#endif
+
 /**
  * STANDALONE TEST: Water Flow Visualization
  * 
  * File ini untuk test visualisasi aliran air tanpa dependency UART
  * Upload ke ESP32 untuk test hardware shift register + LED
+ * 
+ * Platform: ESP32 (Arduino framework)
+ * Board: ESP32 Dev Module atau sejenisnya
  * 
  * Hardware:
  * - 3x 74HC595 shift register
@@ -43,10 +51,35 @@
 // FUNCTIONS
 // ============================================
 
+/**
+ * Write data to 74HC595 shift register
+ * 
+ * 74HC595 Protocol:
+ * 1. LATCH (RCLK) LOW - prepare to receive data
+ * 2. Shift 8 bits via DATA + CLOCK (SRCLK)
+ *    - shiftOut() handles this automatically
+ * 3. LATCH (RCLK) HIGH - transfer shift register to output register
+ * 4. Data appears on Q0-Q7 outputs
+ * 
+ * UDN2981 then sources current to LEDs based on Q0-Q7 state
+ */
 void writeShiftRegister(byte data, int dataPin, int latchPin) {
+  // Step 1: LATCH LOW - disable output update, prepare to receive
   digitalWrite(latchPin, LOW);
+  delayMicroseconds(1);  // tsu (setup time) ~20ns minimum
+  
+  // Step 2: Shift 8 bits (MSB first)
+  // shiftOut() automatically generates clock pulses on CLOCK_PIN
+  // Each bit: DATA set → CLOCK HIGH → CLOCK LOW
   shiftOut(dataPin, CLOCK_PIN, MSBFIRST, data);
+  
+  // Step 3: LATCH HIGH - transfer shift register to output register
+  delayMicroseconds(1);  // th (hold time) ~20ns minimum
   digitalWrite(latchPin, HIGH);
+  delayMicroseconds(1);  // Output propagation delay
+  
+  // Now Q0-Q7 outputs reflect the 8 bits we sent
+  // UDN2981 sources current to LEDs based on Q0-Q7 HIGH/LOW
 }
 
 void testAllPins() {
@@ -243,22 +276,50 @@ void setup() {
   Serial.println("LEDs: 24 total (8 per circuit)");
   Serial.println("========================================\n");
   
-  // Initialize pins
-  pinMode(CLOCK_PIN, OUTPUT);
-  pinMode(DATA_PIN_PRIMARY, OUTPUT);
-  pinMode(DATA_PIN_SECONDARY, OUTPUT);
-  pinMode(DATA_PIN_TERTIARY, OUTPUT);
-  pinMode(LATCH_PIN_PRIMARY, OUTPUT);
-  pinMode(LATCH_PIN_SECONDARY, OUTPUT);
-  pinMode(LATCH_PIN_TERTIARY, OUTPUT);
+  // Initialize pins with explicit states
+  Serial.println("Initializing pins...");
   
-  // Clear all shift registers
+  // CLOCK pin - shared by all 3 ICs
+  pinMode(CLOCK_PIN, OUTPUT);
+  digitalWrite(CLOCK_PIN, LOW);  // Ensure CLOCK starts LOW
+  Serial.printf("  CLOCK (GPIO %d): OUTPUT, LOW\n", CLOCK_PIN);
+  
+  // PRIMARY circuit
+  pinMode(DATA_PIN_PRIMARY, OUTPUT);
+  pinMode(LATCH_PIN_PRIMARY, OUTPUT);
+  digitalWrite(DATA_PIN_PRIMARY, LOW);
+  digitalWrite(LATCH_PIN_PRIMARY, LOW);  // LATCH starts LOW
+  Serial.printf("  PRIMARY - DATA (GPIO %d), LATCH (GPIO %d): OUTPUT, LOW\n", 
+                DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+  
+  // SECONDARY circuit
+  pinMode(DATA_PIN_SECONDARY, OUTPUT);
+  pinMode(LATCH_PIN_SECONDARY, OUTPUT);
+  digitalWrite(DATA_PIN_SECONDARY, LOW);
+  digitalWrite(LATCH_PIN_SECONDARY, LOW);
+  Serial.printf("  SECONDARY - DATA (GPIO %d), LATCH (GPIO %d): OUTPUT, LOW\n", 
+                DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+  
+  // TERTIARY circuit
+  pinMode(DATA_PIN_TERTIARY, OUTPUT);
+  pinMode(LATCH_PIN_TERTIARY, OUTPUT);
+  digitalWrite(DATA_PIN_TERTIARY, LOW);
+  digitalWrite(LATCH_PIN_TERTIARY, LOW);
+  Serial.printf("  TERTIARY - DATA (GPIO %d), LATCH (GPIO %d): OUTPUT, LOW\n", 
+                DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+  
+  Serial.println("\n✓ All pins initialized to LOW state");
+  delay(100);  // Let pins stabilize
+  
+  // Clear all shift registers - ensure all LEDs are OFF
+  Serial.println("\nClearing all shift registers...");
   writeShiftRegister(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
   writeShiftRegister(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
   writeShiftRegister(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+  Serial.println("✓ All shift registers cleared (0x00)");
+  Serial.println("  All LEDs should be OFF now\n");
   
-  Serial.println("✓ Pins initialized\n");
-  delay(2000);
+  delay(2000);  // 2 seconds to verify all LEDs are OFF
   
   // Run tests
   testAllPins();
