@@ -104,7 +104,8 @@ const int POWER_LEDS[NUM_LEDS] = {23, 25, 33, 27};  // 4 GPIO pins for LEDs (26�
 // Flow animation configuration
 // Animation delays are now dynamic per pump (see updateFlowAnimation)
 // Each pump has independent timer - no global timer needed
-// Pattern: Single LED shifting from bit 0 → 7 → 0 (water flow effect)
+// Pattern: 2 LEDs (main + tail) shifting for smooth flow effect
+// Animation only active when pump status = 2 (ON) or 3 (SHUTTING_DOWN)
 
 // ============================================
 // DATA
@@ -188,27 +189,46 @@ void updateFlowAnimation() {
   // Update delay based on current status
   switch (pump_primary_status) {
     case 0:  // OFF
-      // Explicitly clear LEDs when OFF (continuous, not just on change)
+      // Explicitly clear LEDs when OFF
       writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
       break;
       
-    case 1:  // STARTING
-      delay_Primary = 500;
-      // Fall through to animation
+    case 1:  // STARTING - no flow animation yet
+      writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+      break;
       
-    case 2:  // ON
-      if (pump_primary_status == 2) delay_Primary = 200;  // Fastest
-      // Fall through to animation
-      
-    case 3:  // SHUTTING_DOWN
-      if (pump_primary_status == 3) delay_Primary = 600;  // Slowest
+    case 2:  // ON - show flow animation
+      delay_Primary = 400;  // Medium speed for visibility
       
       // Animate if enough time has passed
       if (currentTime - lastUpdate_Primary >= delay_Primary) {
         lastUpdate_Primary = currentTime;
         
-        // Generate single LED pattern - shift from bit 0 to bit 7
-        byte pattern = (1 << pos_Primary);  // Single bit: 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80
+        // Generate 2-LED pattern (main + tail) for smooth flow
+        byte pattern = (1 << pos_Primary);  // Main LED
+        
+        // Add tail LED (previous position)
+        int tailPos = (pos_Primary == 0) ? 7 : (pos_Primary - 1);
+        pattern |= (1 << tailPos);  // Tail LED (dimmer in hardware with resistor)
+        
+        writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+        
+        // Advance position
+        pos_Primary++;
+        if (pos_Primary >= 8) pos_Primary = 0;
+      }
+      break;
+      
+    case 3:  // SHUTTING_DOWN - slow flow
+      delay_Primary = 1000;  // Very slow
+      
+      if (currentTime - lastUpdate_Primary >= delay_Primary) {
+        lastUpdate_Primary = currentTime;
+        
+        // Same 2-LED pattern
+        byte pattern = (1 << pos_Primary);
+        int tailPos = (pos_Primary == 0) ? 7 : (pos_Primary - 1);
+        pattern |= (1 << tailPos);
         
         writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
         
@@ -240,20 +260,37 @@ void updateFlowAnimation() {
       writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
       break;
       
-    case 1:  // STARTING
-      delay_Secondary = 500;
+    case 1:  // STARTING - no flow
+      writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+      break;
       
-    case 2:  // ON
-      if (pump_secondary_status == 2) delay_Secondary = 250;  // Medium speed
-      
-    case 3:  // SHUTTING_DOWN
-      if (pump_secondary_status == 3) delay_Secondary = 600;
+    case 2:  // ON - show flow
+      delay_Secondary = 500;  // Slower than primary
       
       if (currentTime - lastUpdate_Secondary >= delay_Secondary) {
         lastUpdate_Secondary = currentTime;
         
-        // Single LED pattern
+        // 2-LED pattern (main + tail)
         byte pattern = (1 << pos_Secondary);
+        int tailPos = (pos_Secondary == 0) ? 7 : (pos_Secondary - 1);
+        pattern |= (1 << tailPos);
+        
+        writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+        
+        pos_Secondary++;
+        if (pos_Secondary >= 8) pos_Secondary = 0;
+      }
+      break;
+      
+    case 3:  // SHUTTING_DOWN
+      delay_Secondary = 1000;
+      
+      if (currentTime - lastUpdate_Secondary >= delay_Secondary) {
+        lastUpdate_Secondary = currentTime;
+        
+        byte pattern = (1 << pos_Secondary);
+        int tailPos = (pos_Secondary == 0) ? 7 : (pos_Secondary - 1);
+        pattern |= (1 << tailPos);
         
         writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
         
@@ -284,20 +321,37 @@ void updateFlowAnimation() {
       writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
       break;
       
-    case 1:  // STARTING
-      delay_Tertiary = 500;
+    case 1:  // STARTING - no flow
+      writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+      break;
       
-    case 2:  // ON
-      if (pump_tertiary_status == 2) delay_Tertiary = 250;  // Medium speed
-      
-    case 3:  // SHUTTING_DOWN
-      if (pump_tertiary_status == 3) delay_Tertiary = 600;
+    case 2:  // ON - show flow
+      delay_Tertiary = 500;  // Slower than primary
       
       if (currentTime - lastUpdate_Tertiary >= delay_Tertiary) {
         lastUpdate_Tertiary = currentTime;
         
-        // Single LED pattern
+        // 2-LED pattern (main + tail)
         byte pattern = (1 << pos_Tertiary);
+        int tailPos = (pos_Tertiary == 0) ? 7 : (pos_Tertiary - 1);
+        pattern |= (1 << tailPos);
+        
+        writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+        
+        pos_Tertiary++;
+        if (pos_Tertiary >= 8) pos_Tertiary = 0;
+      }
+      break;
+      
+    case 3:  // SHUTTING_DOWN
+      delay_Tertiary = 1000;
+      
+      if (currentTime - lastUpdate_Tertiary >= delay_Tertiary) {
+        lastUpdate_Tertiary = currentTime;
+        
+        byte pattern = (1 << pos_Tertiary);
+        int tailPos = (pos_Tertiary == 0) ? 7 : (pos_Tertiary - 1);
+        pattern |= (1 << tailPos);
         
         writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
         
