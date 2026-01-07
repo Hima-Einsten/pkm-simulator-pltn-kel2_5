@@ -510,13 +510,22 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.EMERGENCY:
                 self.state.emergency_active = True
+                # Drop all control rods immediately (SCRAM)
                 self.state.safety_rod = 0
                 self.state.shim_rod = 0
                 self.state.regulating_rod = 0
-                self.state.pump_primary_status = 3
-                self.state.pump_secondary_status = 3
-                self.state.pump_tertiary_status = 3
-                logger.critical("✓ EMERGENCY SHUTDOWN ACTIVATED!")
+                # ✅ KEEP PUMPS RUNNING for cooling (do NOT shut down)
+                # Pumps must continue to remove decay heat after SCRAM
+                logger.critical("✓ EMERGENCY SCRAM ACTIVATED!")
+                logger.critical("   All control rods inserted")
+                logger.critical("   Pumps remain ON for decay heat removal")
+                
+                # Trigger emergency buzzer (will beep for 5 seconds then stop)
+                if self.buzzer:
+                    try:
+                        self.buzzer.trigger_emergency_beep()
+                    except Exception as e:
+                        logger.debug(f"Buzzer trigger failed: {e}")
                     
             elif event == ButtonEvent.REACTOR_RESET:
                 # Stop auto simulation if running
@@ -898,9 +907,11 @@ class PLTNPanelController:
                             time.sleep(0.010)  # 10ms delay (reduced from 50ms)
                             
                             # Send to ESP-E (Power Indicator + Water Flow Visualization)
-                            logger.debug(f"Sending to ESP-E: Thermal={self.state.thermal_kw:.1f}kW, Pumps: P={self.state.pump_primary_status} S={self.state.pump_secondary_status} T={self.state.pump_tertiary_status}")
+                            # Only show power when turbine is spinning (realistic)
+                            display_power = self.state.thermal_kw if self.state.turbine_speed > 0 else 0.0
+                            logger.debug(f"Sending to ESP-E: Thermal={self.state.thermal_kw:.1f}kW (Display={display_power:.1f}kW, Turbine={self.state.turbine_speed:.1f}%), Pumps: P={self.state.pump_primary_status} S={self.state.pump_secondary_status} T={self.state.pump_tertiary_status}")
                             self.uart_master.update_esp_e(
-                                thermal_power_kw=self.state.thermal_kw,
+                                thermal_power_kw=display_power,
                                 pump_primary_status=self.state.pump_primary_status,
                                 pump_secondary_status=self.state.pump_secondary_status,
                                 pump_tertiary_status=self.state.pump_tertiary_status

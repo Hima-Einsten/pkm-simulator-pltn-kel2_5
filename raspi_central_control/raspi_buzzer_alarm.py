@@ -188,31 +188,53 @@ class BuzzerAlarm:
         Check system state and activate appropriate alarms
         
         Priority (highest first):
-        1. EMERGENCY (SCRAM)
-        2. PRESSURE_CRITICAL (>= 180 bar)
-        3. PRESSURE_WARNING (>= 160 bar)
-        4. Other alarms cleared automatically
+        1. PRESSURE_CRITICAL (>= 180 bar)
+        2. PRESSURE_WARNING (>= 160 bar)
+        3. Other alarms cleared automatically
+        
+        NOTE: Emergency SCRAM alarm is now handled by trigger_emergency_beep()
+              and is NOT continuous - it beeps for 5 seconds then stops.
         
         Args:
             state: PanelState object
         """
-        # Priority 1: Emergency SCRAM
-        if state.emergency_active:
-            self.set_alarm(self.ALARM_EMERGENCY)
-            return
+        # REMOVED: Emergency check (now handled by trigger_emergency_beep)
+        # Emergency SCRAM uses timed beep instead of continuous alarm
         
-        # Priority 2: Pressure CRITICAL (>= 180 bar)
+        # Priority 1: Pressure CRITICAL (>= 180 bar)
         if state.pressure >= 180.0:
             self.set_alarm(self.ALARM_PRESSURE_CRITICAL)
             return
         
-        # Priority 3: Pressure WARNING (>= 160 bar)
+        # Priority 2: Pressure WARNING (>= 160 bar)
         if state.pressure >= 160.0:
             self.set_alarm(self.ALARM_PRESSURE_WARNING)
             return
         
         # All clear - no continuous alarm
         self.clear_alarm()
+    
+    def trigger_emergency_beep(self, duration=5.0):
+        """
+        Trigger emergency beep for a fixed duration (non-blocking)
+        Used for SCRAM - beeps for 5 seconds then stops automatically
+        
+        Args:
+            duration: How long to beep (default 5 seconds)
+        """
+        def beep_for_duration():
+            try:
+                logger.info(f"Emergency beep started ({duration}s)")
+                self.set_alarm(self.ALARM_EMERGENCY)
+                time.sleep(duration)
+                self.clear_alarm()
+                logger.info(f"Emergency beep completed ({duration}s)")
+            except Exception as e:
+                logger.error(f"Emergency beep error: {e}")
+        
+        # Run in separate thread (non-blocking)
+        beep_thread = threading.Thread(target=beep_for_duration, daemon=True)
+        beep_thread.start()
     
     def sound_procedure_warning(self, duration=2.0):
         """
