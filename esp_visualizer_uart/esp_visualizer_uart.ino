@@ -198,19 +198,23 @@ void updateFlowAnimation() {
       break;
       
     case 2:  // ON - show flow animation
-      delay_Primary = 400;  // Medium speed for visibility
+      delay_Primary = 1000;  // 1 second per step for clear visibility
       
       // Animate if enough time has passed
       if (currentTime - lastUpdate_Primary >= delay_Primary) {
         lastUpdate_Primary = currentTime;
         
-        // Generate 2-LED pattern (main + tail) for smooth flow
-        byte pattern = (1 << pos_Primary);  // Main LED
+        // Generate ONLY 2-LED pattern (main + tail)
+        // IMPORTANT: Each write is independent, not cumulative
+        byte pattern = 0;  // Start with all LEDs OFF
         
-        // Add tail LED (previous position)
+        pattern |= (1 << pos_Primary);  // Main LED
+        
+        // Add tail LED (previous position for smooth flow)
         int tailPos = (pos_Primary == 0) ? 7 : (pos_Primary - 1);
-        pattern |= (1 << tailPos);  // Tail LED (dimmer in hardware with resistor)
+        pattern |= (1 << tailPos);  // Tail LED
         
+        // Write complete pattern (only 2 bits set)
         writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
         
         // Advance position
@@ -220,13 +224,14 @@ void updateFlowAnimation() {
       break;
       
     case 3:  // SHUTTING_DOWN - slow flow
-      delay_Primary = 1000;  // Very slow
+      delay_Primary = 2000;  // Very slow (2 seconds)
       
       if (currentTime - lastUpdate_Primary >= delay_Primary) {
         lastUpdate_Primary = currentTime;
         
         // Same 2-LED pattern
-        byte pattern = (1 << pos_Primary);
+        byte pattern = 0;
+        pattern |= (1 << pos_Primary);
         int tailPos = (pos_Primary == 0) ? 7 : (pos_Primary - 1);
         pattern |= (1 << tailPos);
         
@@ -265,13 +270,14 @@ void updateFlowAnimation() {
       break;
       
     case 2:  // ON - show flow
-      delay_Secondary = 500;  // Slower than primary
+      delay_Secondary = 1000;  // 1 second
       
       if (currentTime - lastUpdate_Secondary >= delay_Secondary) {
         lastUpdate_Secondary = currentTime;
         
-        // 2-LED pattern (main + tail)
-        byte pattern = (1 << pos_Secondary);
+        // 2-LED pattern only
+        byte pattern = 0;
+        pattern |= (1 << pos_Secondary);
         int tailPos = (pos_Secondary == 0) ? 7 : (pos_Secondary - 1);
         pattern |= (1 << tailPos);
         
@@ -283,12 +289,13 @@ void updateFlowAnimation() {
       break;
       
     case 3:  // SHUTTING_DOWN
-      delay_Secondary = 1000;
+      delay_Secondary = 2000;
       
       if (currentTime - lastUpdate_Secondary >= delay_Secondary) {
         lastUpdate_Secondary = currentTime;
         
-        byte pattern = (1 << pos_Secondary);
+        byte pattern = 0;
+        pattern |= (1 << pos_Secondary);
         int tailPos = (pos_Secondary == 0) ? 7 : (pos_Secondary - 1);
         pattern |= (1 << tailPos);
         
@@ -326,13 +333,14 @@ void updateFlowAnimation() {
       break;
       
     case 2:  // ON - show flow
-      delay_Tertiary = 500;  // Slower than primary
+      delay_Tertiary = 1000;  // 1 second
       
       if (currentTime - lastUpdate_Tertiary >= delay_Tertiary) {
         lastUpdate_Tertiary = currentTime;
         
-        // 2-LED pattern (main + tail)
-        byte pattern = (1 << pos_Tertiary);
+        // 2-LED pattern only
+        byte pattern = 0;
+        pattern |= (1 << pos_Tertiary);
         int tailPos = (pos_Tertiary == 0) ? 7 : (pos_Tertiary - 1);
         pattern |= (1 << tailPos);
         
@@ -344,12 +352,13 @@ void updateFlowAnimation() {
       break;
       
     case 3:  // SHUTTING_DOWN
-      delay_Tertiary = 1000;
+      delay_Tertiary = 2000;
       
       if (currentTime - lastUpdate_Tertiary >= delay_Tertiary) {
         lastUpdate_Tertiary = currentTime;
         
-        byte pattern = (1 << pos_Tertiary);
+        byte pattern = 0;
+        pattern |= (1 << pos_Tertiary);
         int tailPos = (pos_Tertiary == 0) ? 7 : (pos_Tertiary - 1);
         pattern |= (1 << tailPos);
         
