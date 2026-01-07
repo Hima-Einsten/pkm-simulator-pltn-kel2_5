@@ -104,7 +104,7 @@ const int POWER_LEDS[NUM_LEDS] = {23, 25, 33, 27};  // 4 GPIO pins for LEDs (26�
 // Flow animation configuration
 // Animation delays are now dynamic per pump (see updateFlowAnimation)
 // Each pump has independent timer - no global timer needed
-// Pattern: 4-LED block (B11110000) that rotates around 8 LEDs
+// Pattern: Single LED shifting from bit 0 → 7 → 0 (water flow effect)
 
 // ============================================
 // DATA
@@ -207,12 +207,8 @@ void updateFlowAnimation() {
       if (currentTime - lastUpdate_Primary >= delay_Primary) {
         lastUpdate_Primary = currentTime;
         
-        // Generate 4-LED block pattern
-        byte pattern = 0;
-        for (int i = 0; i < 4; i++) {
-          int ledPos = (pos_Primary + i) % 8;
-          pattern |= (1 << ledPos);  // Direct bit mapping: bit 0 = Q0, bit 7 = Q7
-        }
+        // Generate single LED pattern - shift from bit 0 to bit 7
+        byte pattern = (1 << pos_Primary);  // Single bit: 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80
         
         writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
         
@@ -256,11 +252,8 @@ void updateFlowAnimation() {
       if (currentTime - lastUpdate_Secondary >= delay_Secondary) {
         lastUpdate_Secondary = currentTime;
         
-        byte pattern = 0;
-        for (int i = 0; i < 4; i++) {
-          int ledPos = (pos_Secondary + i) % 8;
-          pattern |= (1 << ledPos);  // Direct bit mapping
-        }
+        // Single LED pattern
+        byte pattern = (1 << pos_Secondary);
         
         writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
         
@@ -303,11 +296,8 @@ void updateFlowAnimation() {
       if (currentTime - lastUpdate_Tertiary >= delay_Tertiary) {
         lastUpdate_Tertiary = currentTime;
         
-        byte pattern = 0;
-        for (int i = 0; i < 4; i++) {
-          int ledPos = (pos_Tertiary + i) % 8;
-          pattern |= (1 << ledPos);  // Direct bit mapping
-        }
+        // Single LED pattern
+        byte pattern = (1 << pos_Tertiary);
         
         writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
         
