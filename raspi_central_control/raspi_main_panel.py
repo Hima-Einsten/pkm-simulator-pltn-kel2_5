@@ -521,7 +521,7 @@ class PLTNPanelController:
         """
         with self.state_lock:
             
-            elif event == ButtonEvent.PRESSURE_UP:
+            if event == ButtonEvent.PRESSURE_UP:
                 self.state.pressure = min(self.state.pressure + 1.0, 200.0)  # 1 bar increment
                 # Removed logging for performance (too verbose)
             
