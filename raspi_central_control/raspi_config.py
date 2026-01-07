@@ -4,18 +4,28 @@ PLTN Simulator v2.0 with Full I2C Architecture
 """
 
 # ============================================
-# I2C Configuration
+# UART Configuration (NEW - Replaces I2C for ESP)
 # ============================================
-# TCA9548A Multiplexer Addresses
-TCA9548A_DISPLAY_ADDRESS = 0x70  # For OLED displays
-TCA9548A_ESP_ADDRESS = 0x71      # For ESP32 slaves
+# UART Ports for ESP Communication
+UART_ESP_BC_PORT = '/dev/ttyAMA0'    # GPIO 14/15 (Built-in UART0)
+UART_ESP_E_PORT = '/dev/ttyAMA3'     # GPIO 4/5 (UART3)
+UART_BAUDRATE = 115200               # Standard baudrate
+UART_TIMEOUT = 0.5                   # Read timeout in seconds
+UART_UPDATE_INTERVAL = 0.1           # Update interval (100ms)
+
+# ============================================
+# I2C Configuration (OLEDs ONLY now)
+# ============================================
+# TCA9548A Multiplexer Addresses (OLEDs ONLY)
+TCA9548A_DISPLAY_ADDRESS = 0x70  # For OLED displays only
+TCA9548A_ESP_ADDRESS = 0x71      # For OLED displays only (ESP now on UART)
 
 # I2C Bus Configuration
 # NOTE: Raspberry Pi typically only has I2C bus 1 available
 # Both multiplexers will share the same I2C bus
+# ESPs are now on UART, not I2C!
 I2C_BUS = 1          # I2C Bus 1 (GPIO 2=SDA, GPIO 3=SCL)
 I2C_BUS_DISPLAY = 1  # Same bus for displays
-I2C_BUS_ESP = 1      # Same bus for ESP slaves
 
 # OLED Configuration
 OLED_ADDRESS = 0x3C
@@ -26,20 +36,21 @@ OLED_CHANNEL_PUMP_TERTIARY = 3
 SCREEN_WIDTH = 128
 SCREEN_HEIGHT = 32
 
-# ESP32 Slave Addresses (SIMPLIFIED - Only 3 ESP needed)
-ESP_B_ADDRESS = 0x08  # Batang Kendali & Reaktor
-ESP_C_ADDRESS = 0x09  # Turbin & Generator
-ESP_E_ADDRESS = 0x0A  # 3-Flow Visualizer (Primer, Sekunder, Tersier)
+# ESP32 Slave Addresses (2-ESP Architecture MERGED)
+ESP_BC_ADDRESS = 0x08  # ESP-BC: Control Rods + Turbine + Humidifier + Pumps (MERGED B+C)
+ESP_E_ADDRESS = 0x0A   # ESP-E: 3-Flow Visualizer (Primer, Sekunder, Tersier)
 
 # TCA9548A Channel Mapping for ESP
-ESP_B_CHANNEL = 0
-ESP_C_CHANNEL = 1
-ESP_E_CHANNEL = 2  # Single ESP for all 3 flow visualizers
+# ESP-BC is on TCA9548A #1 (0x70), Channel 0
+# ESP-E is on TCA9548A #2 (0x71), Channel 0
+ESP_BC_CHANNEL = 0     # ESP-BC on multiplexer #1 (0x70)
+ESP_E_CHANNEL = 0      # ESP-E on multiplexer #2 (0x71)
 
 # ============================================
 # GPIO Pin Configuration
 # ============================================
 # Button Pins (Input with Pull-up)
+BTN_PUMP_PRIM_ON = 11    # Pompa Primer ON - MOVED from GPIO 5 (UART3 conflict)
 BTN_PRES_UP = 5          # Naik tekanan pressurizer
 BTN_PRES_DOWN = 6        # Turun tekanan pressurizer
 BTN_PUMP_PRIM_ON = 4     # Pompa Primer ON
@@ -50,10 +61,13 @@ BTN_PUMP_TER_ON = 10     # Pompa Tersier ON
 BTN_PUMP_TER_OFF = 9     # Pompa Tersier OFF
 
 # Output Pins
-BUZZER_PIN = 18          # Hardware PWM untuk alarm
-MOTOR_PRIM_PWM = 12      # Hardware PWM Pompa Primer
-MOTOR_SEC_PWM = 13       # Hardware PWM Pompa Sekunder
-MOTOR_TER_PWM = 19       # Hardware PWM Pompa Tersier
+BUZZER_PIN = 22          # GPIO 22 for passive buzzer alarm (software PWM)
+
+# ❌ DEPRECATED - Motor control via ESP32, NOT Raspberry Pi!
+# These pins are NOT used - motor control is done by ESP32 Utama via L298N
+# MOTOR_PRIM_PWM = 12      # NOT USED
+# MOTOR_SEC_PWM = 13       # NOT USED
+# MOTOR_TER_PWM = 19       # NOT USED
 
 # ============================================
 # System Parameters

@@ -38,37 +38,60 @@ class OLEDDisplay:
         self.image = Image.new('1', (width, height))
         self.draw = ImageDraw.Draw(self.image)
         
-        # Try to load a font
+        # Try to load a font - larger sizes for better readability
         try:
+            self.font_small = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 10)
             self.font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 12)
-            self.font_large = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 16)
+            self.font_large = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 14)
+            self.font_xlarge = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 16)
         except:
+            self.font_small = ImageFont.load_default()
             self.font = ImageFont.load_default()
             self.font_large = ImageFont.load_default()
+            self.font_xlarge = ImageFont.load_default()
         
         self.initialized = False
     
-    def init_hardware(self, i2c, address: int = 0x3C):
+    def init_hardware(self, i2c, address: int = 0x3C, timeout: float = 1.0):
         """
-        Initialize hardware OLED display
+        Initialize hardware OLED display with timeout
         
         Args:
             i2c: I2C bus object
             address: I2C address of OLED
+            timeout: Timeout in seconds (default 1.0s)
         """
         if not ADAFRUIT_AVAILABLE:
             logger.warning("Hardware display not available")
             return False
         
+        import threading
+        import queue
+        
+        result_queue = queue.Queue()
+        
+        def try_init():
+            try:
+                self.device = adafruit_ssd1306.SSD1306_I2C(self.width, self.height, i2c, addr=address)
+                self.device.fill(0)
+                self.device.show()
+                self.initialized = True
+                result_queue.put(True)
+                logger.debug(f"OLED display initialized at 0x{address:02X}")
+            except Exception as e:
+                logger.debug(f"Failed to initialize OLED at 0x{address:02X}: {e}")
+                result_queue.put(False)
+        
+        # Try init with timeout
+        init_thread = threading.Thread(target=try_init, daemon=True)
+        init_thread.start()
+        init_thread.join(timeout=timeout)
+        
+        # Check result
         try:
-            self.device = adafruit_ssd1306.SSD1306_I2C(self.width, self.height, i2c, addr=address)
-            self.device.fill(0)
-            self.device.show()
-            self.initialized = True
-            logger.info(f"OLED display initialized at 0x{address:02X}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to initialize OLED at 0x{address:02X}: {e}")
+            return result_queue.get_nowait()
+        except:
+            logger.debug(f"OLED at 0x{address:02X} timeout after {timeout}s")
             return False
     
     def clear(self):
@@ -123,65 +146,144 @@ class OLEDDisplay:
 
 class OLEDManager:
     """
-    Manages 4 OLED displays through TCA9548A multiplexer
+    Manages 9 OLED displays (0.91 inch 128x64) through 2x TCA9548A multiplexers
+    
+    TCA9548A #1 (0x70):
+      - Channel 1: OLED #1 (Pressurizer)
+      - Channel 2: OLED #2 (Pump Primary)
+      - Channel 3: OLED #3 (Pump Secondary)
+      - Channel 4: OLED #4 (Pump Tertiary)
+      - Channel 5: OLED #5 (Safety Rod)
+      - Channel 6: OLED #6 (Shim Rod)
+      - Channel 7: OLED #7 (Regulating Rod)
+    
+    TCA9548A #2 (0x71):
+      - Channel 1: OLED #8 (Thermal Power)
+      - Channel 2: OLED #9 (System Status)
     """
     
     def __init__(self, mux_manager, width: int = 128, height: int = 32):
         """
-        Initialize OLED manager
+        Initialize OLED manager for 9 displays
         
         Args:
             mux_manager: TCA9548A multiplexer manager
-            width: Display width
-            height: Display height
+            width: Display width (128 for 0.91 inch)
+            height: Display height (32 for 0.91 inch)
         """
         self.mux = mux_manager
         self.width = width
         self.height = height
         
-        # Create 4 display objects
+        # Create 9 display objects
         self.oled_pressurizer = OLEDDisplay(width, height)
         self.oled_pump_primary = OLEDDisplay(width, height)
         self.oled_pump_secondary = OLEDDisplay(width, height)
         self.oled_pump_tertiary = OLEDDisplay(width, height)
+        self.oled_safety_rod = OLEDDisplay(width, height)
+        self.oled_shim_rod = OLEDDisplay(width, height)
+        self.oled_regulating_rod = OLEDDisplay(width, height)
+        self.oled_thermal_power = OLEDDisplay(width, height)
+        self.oled_system_status = OLEDDisplay(width, height)
         
         self.blink_state = False
         self.last_blink_time = time.time()
         
-        logger.info("OLED Manager initialized")
+        # Data tracking for optimization (only update if changed)
+        self.last_data = {
+            'pressurizer': None,
+            'pump_primary': None,
+            'pump_secondary': None,
+            'pump_tertiary': None,
+            'safety_rod': None,
+            'shim_rod': None,
+            'regulating_rod': None,
+            'thermal_power': None,
+            'system_status': None
+        }
+        
+        logger.info("OLED Manager initialized for 9 displays (128x32)")
     
     def init_all_displays(self):
-        """Initialize all OLED displays"""
-        displays = [
-            (0, self.oled_pressurizer, "Pressurizer"),
-            (1, self.oled_pump_primary, "Pump Primary"),
-            (2, self.oled_pump_secondary, "Pump Secondary"),
-            (3, self.oled_pump_tertiary, "Pump Tertiary")
+        """Initialize all 9 OLED displays through 2x TCA9548A with graceful degradation"""
+        # TCA9548A #1 (0x70) - 7 displays
+        displays_mux1 = [
+            (1, self.oled_pressurizer, "Pressurizer"),
+            (2, self.oled_pump_primary, "Pompa Primer"),
+            (3, self.oled_pump_secondary, "Pompa Sekunder"),
+            (4, self.oled_pump_tertiary, "Pompa Tersier"),
+            (5, self.oled_safety_rod, "Safety Rod"),
+            (6, self.oled_shim_rod, "Shim Rod"),
+            (7, self.oled_regulating_rod, "Reg Rod")
+        ]
+        
+        # TCA9548A #2 (0x71) - 2 displays
+        displays_mux2 = [
+            (1, self.oled_thermal_power, "Daya"),
+            (2, self.oled_system_status, "Status")
         ]
         
         if not ADAFRUIT_AVAILABLE:
             logger.warning("Running without hardware displays (simulation mode)")
             return
         
+        success_count = 0
+        
         try:
             i2c = board.I2C()
             
-            for channel, display, name in displays:
-                self.mux.select_display_channel(channel)
-                time.sleep(0.1)
-                display.init_hardware(i2c, 0x3C)
-                
-                # Show startup message
-                display.clear()
-                display.draw_text_centered(name, 8, display.font)
-                display.draw_text_centered("Initializing...", 20, display.font)
-                display.show()
-                time.sleep(0.5)
+            # Initialize displays on TCA9548A #1 (0x70)
+            logger.info("Initializing OLEDs on TCA9548A #1 (0x70)...")
+            for channel, display, name in displays_mux1:
+                try:
+                    self.mux.select_display_channel(channel)
+                    time.sleep(0.05)  # Minimal delay
+                    
+                    # Try to initialize with 0.5s timeout per display
+                    if display.init_hardware(i2c, 0x3C, timeout=0.5):
+                        # Show startup message (2 lines, larger font)
+                        display.clear()
+                        display.draw_text_centered(name, 4, display.font)
+                        display.draw_text_centered("Siap", 18, display.font_large)
+                        display.show()
+                        logger.info(f"  ✓ OLED #{channel}: {name}")
+                        success_count += 1
+                    else:
+                        logger.warning(f"  ✗ OLED #{channel}: {name} - skipped")
+                    
+                except Exception as e:
+                    logger.warning(f"  ✗ OLED #{channel}: {name} - error: {e}")
+                    continue  # Skip to next display
             
-            logger.info("All OLED displays initialized")
+            # Initialize displays on TCA9548A #2 (0x71)
+            logger.info("Initializing OLEDs on TCA9548A #2 (0x71)...")
+            for channel, display, name in displays_mux2:
+                try:
+                    # Use esp_channel to access second multiplexer (0x71)
+                    self.mux.select_esp_channel(channel)
+                    time.sleep(0.05)  # Minimal delay
+                    
+                    # Try to initialize with 0.5s timeout per display
+                    if display.init_hardware(i2c, 0x3C, timeout=0.5):
+                        # Show startup message (2 lines, larger font)
+                        display.clear()
+                        display.draw_text_centered(name, 4, display.font)
+                        display.draw_text_centered("Siap", 18, display.font_large)
+                        display.show()
+                        logger.info(f"  ✓ OLED #{channel + 7}: {name}")
+                        success_count += 1
+                    else:
+                        logger.warning(f"  ✗ OLED #{channel + 7}: {name} - skipped")
+                    
+                except Exception as e:
+                    logger.warning(f"  ✗ OLED #{channel + 7}: {name} - error: {e}")
+                    continue  # Skip to next display
+            
+            logger.info(f"OLED initialization complete: {success_count}/9 displays ready")
             
         except Exception as e:
             logger.error(f"Failed to initialize displays: {e}")
+            logger.warning("Continuing without OLED displays...")
     
     def update_blink_state(self, interval: float = 0.25):
         """Update blink state for warning indicators"""
@@ -200,29 +302,21 @@ class OLEDManager:
             warning: Warning flag (pressure high)
             critical: Critical flag (pressure critical)
         """
-        self.mux.select_display_channel(0)
+        # Select channel
+        self.mux.select_display_channel(1)  # Pressurizer on channel 1
+        
+        # Round to 1 decimal
+        pressure_rounded = round(pressure, 1)
         
         display = self.oled_pressurizer
         display.clear()
         
-        # Title
-        display.draw_text_centered("PRESSURIZER", 0, display.font)
-        
-        # Pressure value (large)
-        pressure_text = f"{pressure:.1f} bar"
-        display.draw_text_centered(pressure_text, 12, display.font_large)
-        
-        # Status indicator
-        if critical:
-            if self.blink_state:
-                display.draw_text_centered("!! CRITICAL !!", 28, display.font)
-        elif warning:
-            if self.blink_state:
-                display.draw_text_centered("! WARNING !", 28, display.font)
-        else:
-            display.draw_text_centered("NORMAL", 28, display.font)
+        # Show only value with large font (panel already has label)
+        pressure_text = f"{pressure_rounded:.1f} bar"
+        display.draw_text_centered(pressure_text, 8, display.font_xlarge)
         
         display.show()
+        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
     
     def update_pump_display(self, pump_name: str, channel: int, display_obj: OLEDDisplay,
                            status: int, pwm: int):
@@ -236,67 +330,260 @@ class OLEDManager:
             status: Pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
             pwm: PWM percentage (0-100)
         """
+        # Select channel
         self.mux.select_display_channel(channel)
         
         display_obj.clear()
         
-        # Title
-        display_obj.draw_text_centered(f"PUMP {pump_name}", 0, display_obj.font)
-        
-        # Status text
-        status_text = ["OFF", "STARTING", "ON", "SHUTTING DOWN"][status]
-        display_obj.draw_text_centered(status_text, 12, display_obj.font_large)
-        
-        # PWM bar
-        display_obj.draw_text("PWM:", 2, 25, display_obj.font)
-        display_obj.draw_progress_bar(30, 25, 95, 6, pwm, 100)
+        # Show only status in Indonesian with large font (panel already has label)
+        status_text = ["MATI", "MULAI", "HIDUP", "BERHENTI"][status]
+        display_obj.draw_text_centered(status_text, 8, display_obj.font_xlarge)
         
         display_obj.show()
+        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
     
     def update_pump_primary(self, status: int, pwm: int):
         """Update primary pump display"""
-        self.update_pump_display("PRIMARY", 1, self.oled_pump_primary, status, pwm)
+        self.update_pump_display("PRIMARY", 2, self.oled_pump_primary, status, pwm)  # Channel 2
     
     def update_pump_secondary(self, status: int, pwm: int):
         """Update secondary pump display"""
-        self.update_pump_display("SECONDARY", 2, self.oled_pump_secondary, status, pwm)
+        self.update_pump_display("SECONDARY", 3, self.oled_pump_secondary, status, pwm)  # Channel 3
     
     def update_pump_tertiary(self, status: int, pwm: int):
         """Update tertiary pump display"""
-        self.update_pump_display("TERTIARY", 3, self.oled_pump_tertiary, status, pwm)
+        self.update_pump_display("TERTIARY", 4, self.oled_pump_tertiary, status, pwm)  # Channel 4
+    
+    def update_rod_display(self, rod_name: str, channel: int, display_obj: OLEDDisplay, position: int):
+        """
+        Update control rod display
+        
+        Args:
+            rod_name: Name of rod (e.g., "SAFETY", "SHIM", "REGULATING")
+            channel: TCA9548A channel
+            display_obj: OLED display object
+            position: Rod position (0-100%)
+        """
+        # Select channel
+        self.mux.select_display_channel(channel)
+        
+        display_obj.clear()
+        
+        # Show only percentage value with large font (panel already has label)
+        position_text = f"{position}%"
+        display_obj.draw_text_centered(position_text, 8, display_obj.font_xlarge)
+        
+        display_obj.show()
+        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
+    
+    def update_safety_rod(self, position: int):
+        """Update safety rod display"""
+        self.update_rod_display("SAFETY", 5, self.oled_safety_rod, position)
+    
+    def update_shim_rod(self, position: int):
+        """Update shim rod display"""
+        self.update_rod_display("SHIM", 6, self.oled_shim_rod, position)
+    
+    def update_regulating_rod(self, position: int):
+        """Update regulating rod display"""
+        self.update_rod_display("REGULATING", 7, self.oled_regulating_rod, position)
+        # Extra delay: This is the LAST channel on MUX #1 (channel 7)
+        # Give OLED time to fully process before switching to MUX #2
+        time.sleep(0.010)  # 10ms post-update delay
+    
+    def update_thermal_power(self, power_kw: float):
+        """
+        Update thermal power display
+        
+        Args:
+            power_kw: Electrical power in kW (0-300,000 kW = 0-300 MWe)
+        """
+        # Select channel
+        self.mux.select_esp_channel(1)  # Use ESP channel for TCA9548A #2, Channel 1
+        
+        # Round to 1 decimal
+        power_kw_rounded = round(power_kw, 1)
+        
+        display = self.oled_thermal_power
+        display.clear()
+        
+        # Show only power value with large font (panel already has label)
+        power_mwe = power_kw_rounded / 1000.0
+        power_text = f"{power_mwe:.1f} MWe"
+        display.draw_text_centered(power_text, 8, display.font_xlarge)
+        
+        display.show()
+        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
+    
+    def update_system_status(self, auto_sim_running: bool, auto_sim_phase: str,
+                            pressure: float, pump_primary: int, pump_secondary: int, 
+                            pump_tertiary: int, interlock: bool, thermal_kw: float, 
+                            turbine_speed: float):
+        """
+        Update system status display with mode and progress
+        
+        Args:
+            auto_sim_running: Auto simulation running flag
+            auto_sim_phase: Current auto simulation phase name
+            pressure: Current pressure
+            pump_primary: Primary pump status
+            pump_secondary: Secondary pump status  
+            pump_tertiary: Tertiary pump status
+            interlock: Interlock satisfied flag
+            thermal_kw: Thermal power in kW
+            turbine_speed: Turbine speed percentage
+        """
+        # Select channel
+        self.mux.select_esp_channel(2)  # Use ESP channel for TCA9548A #2, Channel 2
+        
+        display = self.oled_system_status
+        display.clear()
+        
+        # Show mode and status in Indonesian
+        if auto_sim_running:
+            mode_text = "AUTO"
+            display.draw_text_centered(mode_text, 2, display.font_large)
+            display.draw_text_centered("Berjalan...", 18, display.font)
+        else:
+            mode_text = "MANUAL"
+            display.draw_text_centered(mode_text, 2, display.font_large)
+            
+            # Show simple status in Indonesian
+            if pressure < 40.0:
+                status_text = f"{pressure:.0f} bar"
+                display.draw_text_centered(status_text, 18, display.font)
+            elif pump_primary != 2 or pump_secondary != 2 or pump_tertiary != 2:
+                status_text = "Pompa Siap"
+                display.draw_text_centered(status_text, 18, display.font)
+            elif thermal_kw >= 50000:
+                power_mwe = thermal_kw / 1000.0
+                status_text = f"{power_mwe:.0f} MW"
+                display.draw_text_centered(status_text, 18, display.font)
+            else:
+                status_text = "Siap"
+                display.draw_text_centered(status_text, 18, display.font)
+        
+        display.show()
+        
+        # Extra delay: This is the LAST channel on MUX #2 (channel 2)
+        # Give OLED time to fully process before next update cycle
+        time.sleep(0.010)  # 10ms post-update delay
+    
+    def update_all(self, state):
+        """
+        Update all displays from panel state
+        
+        Args:
+            state: PanelState object with all current values
+        """
+        self.update_blink_state()
+        
+        # ============================================
+        # MUX #1 (0x70) - Channels 1-7
+        # ============================================
+        
+        # Update all displays on MUX #1
+        self.update_pressurizer_display(state.pressure, 
+                                       warning=(state.pressure > 180),
+                                       critical=(state.pressure > 195))
+        
+        self.update_pump_primary(state.pump_primary_status, 50)  # PWM placeholder
+        self.update_pump_secondary(state.pump_secondary_status, 50)
+        self.update_pump_tertiary(state.pump_tertiary_status, 50)
+        
+        self.update_safety_rod(state.safety_rod)
+        self.update_shim_rod(state.shim_rod)
+        self.update_regulating_rod(state.regulating_rod)
+        
+        # ============================================
+        # MUX #2 (0x71) - Channels 1-2
+        # ============================================
+        # Auto-delay handled by TCA9548AManager when switching between MUX
+        
+        self.update_thermal_power(state.thermal_kw)
+        
+        self.update_system_status(
+            auto_sim_running=state.auto_sim_running,
+            auto_sim_phase=state.auto_sim_phase,
+            pressure=state.pressure,
+            pump_primary=state.pump_primary_status,
+            pump_secondary=state.pump_secondary_status,
+            pump_tertiary=state.pump_tertiary_status,
+            interlock=state.interlock_satisfied,
+            thermal_kw=state.thermal_kw,
+            turbine_speed=state.turbine_speed
+        )
     
     def show_startup_screen(self):
-        """Show startup screen on all displays"""
-        screens = [
-            (0, self.oled_pressurizer),
-            (1, self.oled_pump_primary),
-            (2, self.oled_pump_secondary),
-            (3, self.oled_pump_tertiary)
+        """Show startup screen on all 9 displays (128x32 layout)"""
+        screens_mux1 = [
+            (1, self.oled_pressurizer, "Pressurizer"),
+            (2, self.oled_pump_primary, "Pompa Primer"),
+            (3, self.oled_pump_secondary, "Pompa Sekunder"),
+            (4, self.oled_pump_tertiary, "Pompa Tersier"),
+            (5, self.oled_safety_rod, "Safety Rod"),
+            (6, self.oled_shim_rod, "Shim Rod"),
+            (7, self.oled_regulating_rod, "Reg Rod")
         ]
         
-        for channel, display in screens:
+        screens_mux2 = [
+            (1, self.oled_thermal_power, "Daya"),
+            (2, self.oled_system_status, "Status")
+        ]
+        
+        # Show on TCA9548A #1
+        for channel, display, name in screens_mux1:
             self.mux.select_display_channel(channel)
             display.clear()
-            display.draw_text_centered("PLTN Simulator", 8, display.font)
-            display.draw_text_centered("v2.0 - I2C", 20, display.font)
+            # Simple 2-line layout with larger font
+            display.draw_text_centered(name, 4, display.font)
+            display.draw_text_centered("Siap", 18, display.font_large)
+            display.show()
+        
+        # Show on TCA9548A #2
+        for channel, display, name in screens_mux2:
+            self.mux.select_esp_channel(channel)
+            display.clear()
+            # Simple 2-line layout with larger font
+            display.draw_text_centered(name, 4, display.font)
+            display.draw_text_centered("Siap", 18, display.font_large)
             display.show()
         
         time.sleep(2)
     
     def show_error_screen(self, message: str):
-        """Show error message on all displays"""
-        screens = [
-            (0, self.oled_pressurizer),
-            (1, self.oled_pump_primary),
-            (2, self.oled_pump_secondary),
-            (3, self.oled_pump_tertiary)
+        """Show error message on all 9 displays (128x32 layout)"""
+        screens_mux1 = [
+            (1, self.oled_pressurizer),
+            (2, self.oled_pump_primary),
+            (3, self.oled_pump_secondary),
+            (4, self.oled_pump_tertiary),
+            (5, self.oled_safety_rod),
+            (6, self.oled_shim_rod),
+            (7, self.oled_regulating_rod)
         ]
         
-        for channel, display in screens:
+        screens_mux2 = [
+            (1, self.oled_thermal_power),
+            (2, self.oled_system_status)
+        ]
+        
+        # Show on TCA9548A #1
+        for channel, display in screens_mux1:
             self.mux.select_display_channel(channel)
             display.clear()
-            display.draw_text_centered("ERROR", 8, display.font_large)
-            display.draw_text_centered(message, 24, display.font)
+            # 2 lines layout with larger font
+            display.draw_text_centered("ERROR", 4, display.font_large)
+            display.draw_text_centered("Sistem", 18, display.font)
+            display.show()
+        
+        # Show on TCA9548A #2
+        for channel, display in screens_mux2:
+            self.mux.select_esp_channel(channel)
+            display.clear()
+            # 2 lines layout with larger font
+            display.draw_text_centered("ERROR", 4, display.font_large)
+            display.draw_text_centered("Sistem", 18, display.font)
             display.show()
 
 
@@ -310,10 +597,10 @@ if __name__ == "__main__":
     # Create dummy display
     display = OLEDDisplay()
     
-    # Test drawing
+    # Test drawing (128x32 layout)
     display.clear()
-    display.draw_text_centered("PRESSURIZER", 0)
-    display.draw_text_centered("150.5 bar", 12)
-    display.draw_progress_bar(10, 25, 108, 6, 75, 100)
+    display.draw_text_centered("PRESSURIZER", 1, display.font_small)
+    display.draw_text_centered("150.5 bar", 12, display.font)
+    display.draw_text_centered("Normal", 22, display.font_small)
     
     print("Display test completed (image not shown in simulation)")
