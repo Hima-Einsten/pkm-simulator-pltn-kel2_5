@@ -897,10 +897,13 @@ class PLTNPanelController:
                             # Small delay before ESP-E to ensure previous command completed
                             time.sleep(0.010)  # 10ms delay (reduced from 50ms)
                             
-                            # Send to ESP-E (Power Indicator Only - Simplified)
-                            logger.debug(f"Sending to ESP-E: Thermal={self.state.thermal_kw:.1f}kW")
+                            # Send to ESP-E (Power Indicator + Water Flow Visualization)
+                            logger.debug(f"Sending to ESP-E: Thermal={self.state.thermal_kw:.1f}kW, Pumps: P={self.state.pump_primary_status} S={self.state.pump_secondary_status} T={self.state.pump_tertiary_status}")
                             self.uart_master.update_esp_e(
-                                thermal_power_kw=self.state.thermal_kw
+                                thermal_power_kw=self.state.thermal_kw,
+                                pump_primary_status=self.state.pump_primary_status,
+                                pump_secondary_status=self.state.pump_secondary_status,
+                                pump_tertiary_status=self.state.pump_tertiary_status
                             )
                             logger.debug("✓ ESP-E update success")
                             last_esp_e_update = current_time

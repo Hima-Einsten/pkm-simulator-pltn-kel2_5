@@ -34,9 +34,9 @@
 
 // Message lengths
 #define PING_CMD_LEN 5    // [STX][CMD][LEN=0][CRC][ETX]
-#define UPDATE_CMD_LEN 9  // [STX][CMD][LEN=4][thermal_kw (4 bytes)][CRC][ETX]
+#define UPDATE_CMD_LEN 12 // [STX][CMD][LEN=7][thermal_kw (4)][pump_prim][pump_sec][pump_ter][CRC][ETX]
 #define PING_RESP_LEN 5   // [STX][ACK][LEN=0][CRC][ETX]
-#define UPDATE_RESP_LEN 10 // [STX][ACK][LEN=5][power_mwe (4)][pwm][CRC][ETX]
+#define UPDATE_RESP_LEN 13 // [STX][ACK][LEN=8][power_mwe (4)][pwm][pump_prim][pump_sec][pump_ter][CRC][ETX]
 
 // ============================================
 // CRC8 Checksum (CRC-8/MAXIM)
@@ -86,16 +86,109 @@ const int NUM_LEDS = 4;
 const int POWER_LEDS[NUM_LEDS] = {23, 25, 33, 27};  // 4 GPIO pins for LEDs (26→33: avoid DAC2/ADC2 conflict)
 
 // ============================================
+// SHIFT REGISTER PINS - 74HC595 + UDN2981 for water flow visualization
+// ============================================
+// Shared CLOCK for all 3 ICs
+#define CLOCK_PIN 14
+
+// Separate DATA pins (one per IC/pump)
+#define DATA_PIN_PRIMARY 12    // IC #1 - Primary pump flow
+#define DATA_PIN_SECONDARY 13  // IC #2 - Secondary pump flow
+#define DATA_PIN_TERTIARY 15   // IC #3 - Tertiary pump flow
+
+// Separate LATCH pins (one per IC/pump)
+#define LATCH_PIN_PRIMARY 18   // IC #1 - Primary pump flow
+#define LATCH_PIN_SECONDARY 19 // IC #2 - Secondary pump flow
+#define LATCH_PIN_TERTIARY 21  // IC #3 - Tertiary pump flow
+
+// Flow animation configuration
+#define FLOW_ANIM_DELAY 120    // Animation delay in ms (120ms per frame)
+byte flowPattern_Primary = B00011000;    // Initial flow pattern for primary
+byte flowPattern_Secondary = B00011000;  // Initial flow pattern for secondary
+byte flowPattern_Tertiary = B00011000;   // Initial flow pattern for tertiary
+unsigned long lastFlowAnim = 0;          // Last animation update time
+
+// ============================================
 // DATA
 // ============================================
 float thermal_kw = 0.0;      // Thermal power dalam kW (0-300000)
 float power_mwe = 0.0;       // Electrical power dalam MWe (0-300)
 int current_pwm = 0;         // Current PWM value (0-255)
 
+// Pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
+uint8_t pump_primary_status = 0;
+uint8_t pump_secondary_status = 0;
+uint8_t pump_tertiary_status = 0;
+
 // LED Mode Control (PWM vs HIGH mode)
 #define PWM_THRESHOLD_HIGH 250    // Switch to HIGH mode when PWM >= 250
 #define PWM_THRESHOLD_LOW 240     // Switch back to PWM mode when PWM < 240 (hysteresis)
 bool led_mode_high = false;       // true = HIGH mode (full 3.3V), false = PWM mode
+
+// ============================================
+// Shift Register Control Functions
+// ============================================
+
+/**
+ * Write data to a single shift register IC
+ * @param data - 8-bit pattern to write
+ * @param dataPin - DATA pin for this IC
+ * @param latchPin - LATCH pin for this IC
+ */
+void writeShiftRegisterIC(byte data, int dataPin, int latchPin) {
+  digitalWrite(latchPin, LOW);
+  shiftOut(dataPin, CLOCK_PIN, LSBFIRST, data);
+  digitalWrite(latchPin, HIGH);
+}
+
+/**
+ * Rotate byte left (for flow animation)
+ * @param value - byte to rotate
+ * @return rotated byte
+ */
+byte rotateLeft(byte value) {
+  return (value << 1) | (value >> 7);
+}
+
+/**
+ * Update water flow animations for all 3 pumps
+ * Only animates when pump status == 2 (PUMP_ON)
+ */
+void updateFlowAnimation() {
+  unsigned long currentTime = millis();
+  
+  // Check if it's time to update animation
+  if (currentTime - lastFlowAnim < FLOW_ANIM_DELAY) {
+    return;
+  }
+  
+  lastFlowAnim = currentTime;
+  
+  // Primary pump flow (IC #1)
+  if (pump_primary_status == 2) {  // PUMP_ON
+    flowPattern_Primary = rotateLeft(flowPattern_Primary);
+    writeShiftRegisterIC(flowPattern_Primary, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+  } else {
+    // Turn off flow when pump is not ON
+    writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+  }
+  
+  // Secondary pump flow (IC #2)
+  if (pump_secondary_status == 2) {  // PUMP_ON
+    flowPattern_Secondary = rotateLeft(flowPattern_Secondary);
+    writeShiftRegisterIC(flowPattern_Secondary, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+  } else {
+    writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+  }
+  
+  // Tertiary pump flow (IC #3)
+  if (pump_tertiary_status == 2) {  // PUMP_ON
+    flowPattern_Tertiary = rotateLeft(flowPattern_Tertiary);
+    writeShiftRegisterIC(flowPattern_Tertiary, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+  } else {
+    writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+  }
+}
 
 // ============================================
 // Binary Protocol Functions
@@ -138,13 +231,13 @@ void sendPongResponse() {
 }
 
 void sendUpdateResponse() {
-  // Send update response: [STX][ACK][LEN=5][power_mwe (4)][pwm][CRC][ETX]
-  uint8_t response[10];
+  // Send update response: [STX][ACK][LEN=8][power_mwe (4)][pwm][pump_prim][pump_sec][pump_ter][CRC][ETX]
+  uint8_t response[13];
   response[0] = STX;
   response[1] = ACK;
-  response[2] = 5;  // LEN = 5 bytes payload
+  response[2] = 8;  // LEN = 8 bytes payload
   
-  // Pack data (5 bytes total)
+  // Pack data (8 bytes total)
   uint8_t* data = &response[3];
   
   // Power MWe (4 bytes, float32, little-endian)
@@ -153,11 +246,16 @@ void sendUpdateResponse() {
   // PWM (1 byte)
   data[4] = (uint8_t)current_pwm;
   
-  // Calculate CRC over CMD + LEN + data (7 bytes total)
-  response[8] = crc8_maxim(&response[1], 7);
-  response[9] = ETX;
+  // Pump status (3 bytes)
+  data[5] = pump_primary_status;
+  data[6] = pump_secondary_status;
+  data[7] = pump_tertiary_status;
   
-  UartComm.write(response, 10);
+  // Calculate CRC over CMD + LEN + data (10 bytes total)
+  response[11] = crc8_maxim(&response[1], 10);
+  response[12] = ETX;
+  
+  UartComm.write(response, 13);
   UartComm.flush();
   
   Serial.println("TX: Update ACK with data");
@@ -209,20 +307,24 @@ void processBinaryMessage(uint8_t* msg, uint8_t len) {
     sendPongResponse();
   }
   else if (cmd == CMD_UPDATE) {
-    if (payload_len != 4) {
-      Serial.printf("Invalid update payload length: %d (expected 4)\n", payload_len);
+    if (payload_len != 7) {
+      Serial.printf("Invalid update payload length: %d (expected 7)\n", payload_len);
       sendNACK();
       return;
     }
     
-    // Parse update data - thermal_kw (4 bytes, float32, little-endian)
+    // Parse update data - thermal_kw (4 bytes) + 3 pump status bytes
     // Payload starts at index 3
     memcpy(&thermal_kw, &msg[3], 4);
+    pump_primary_status = msg[7];
+    pump_secondary_status = msg[8];
+    pump_tertiary_status = msg[9];
     
     // Convert kW to MWe
     power_mwe = thermal_kw / 1000.0;
     
-    Serial.printf("RX: Update - Thermal=%.1f kW → Power=%.1f MWe\n", thermal_kw, power_mwe);
+    Serial.printf("RX: Update - Thermal=%.1f kW → Power=%.1f MWe | Pumps: P=%d S=%d T=%d\n", 
+                  thermal_kw, power_mwe, pump_primary_status, pump_secondary_status, pump_tertiary_status);
     
     sendUpdateResponse();
   }
@@ -242,13 +344,31 @@ void setup() {
   Serial.println("\n\n===========================================");
   Serial.println("ESP-E Power Indicator - BINARY PROTOCOL");
   Serial.println("===========================================");
-  Serial.println("Fungsi: Visualisasi daya reaktor");
-  Serial.println("LED: 1x Power Indicator (GPIO 23)");
+  Serial.println("Fungsi: Visualisasi daya reaktor + aliran air");
+  Serial.println("LED: 4x Power Indicator (GPIO 23,25,33,27)");
+  Serial.println("Flow: 3x Shift Register 74HC595 + UDN2981");
   Serial.println("Protocol: BINARY with ACK/NACK");
   Serial.println("===========================================");
   
   UartComm.begin(UART_BAUD, SERIAL_8N1, 16, 17);
   delay(500);
+
+  // Initialize shift register pins
+  Serial.println("Initializing shift register pins...");
+  pinMode(CLOCK_PIN, OUTPUT);
+  pinMode(DATA_PIN_PRIMARY, OUTPUT);
+  pinMode(DATA_PIN_SECONDARY, OUTPUT);
+  pinMode(DATA_PIN_TERTIARY, OUTPUT);
+  pinMode(LATCH_PIN_PRIMARY, OUTPUT);
+  pinMode(LATCH_PIN_SECONDARY, OUTPUT);
+  pinMode(LATCH_PIN_TERTIARY, OUTPUT);
+  
+  // Clear all shift registers
+  writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
+  writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
+  writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+  Serial.println("Shift registers initialized and cleared");
+
 
   // Initialize all 4 power LEDs
   Serial.println("Initializing 4 power LEDs...");
@@ -335,6 +455,9 @@ void loop() {
 
   // Update power LED
   updatePowerLED();
+  
+  // Update water flow animations
+  updateFlowAnimation();
   
   yield();
   delay(10);

@@ -113,9 +113,12 @@ class ESP_BC_Data:
 
 @dataclass
 class ESP_E_Data:
-    """Data structure for ESP-E (Power Indicator Only - Simplified)"""
+    """Data structure for ESP-E (Power Indicator + Water Flow Visualization)"""
     # To ESP-E
     thermal_power_kw: float = 0.0
+    pump_primary_status: int = 0
+    pump_secondary_status: int = 0
+    pump_tertiary_status: int = 0
     
     # From ESP-E
     power_mwe: float = 0.0
@@ -183,22 +186,33 @@ def encode_esp_bc_update(rods: list, pumps: list, humid: list) -> bytes:
     return bytes([STX, cmd, length]) + payload + bytes([crc, ETX])
 
 
-def encode_esp_e_update(thermal_kw: float) -> bytes:
+def encode_esp_e_update(thermal_kw: float, pump_primary: int, pump_secondary: int, pump_tertiary: int) -> bytes:
     """
     Encode ESP-E update command
     
-    Format: [STX][CMD_UPDATE][LEN=4][thermal_kw (float32)][CRC8][ETX]
-    Total: 9 bytes
+    Format: [STX][CMD_UPDATE][LEN=7][thermal_kw (float32)][pump_prim][pump_sec][pump_ter][CRC8][ETX]
+    Total: 12 bytes
     
     Args:
         thermal_kw: Thermal power in kW (float)
+        pump_primary: Primary pump status (0-3)
+        pump_secondary: Secondary pump status (0-3)
+        pump_tertiary: Tertiary pump status (0-3)
         
     Returns:
         Binary message bytes
     """
     cmd = CMD_UPDATE
+    
+    # Pack thermal_kw (4 bytes) + 3 pump status bytes (1 byte each)
     payload = struct.pack('<f', thermal_kw)  # 4 bytes
-    length = len(payload)  # 4
+    payload += bytes([
+        max(0, min(3, int(pump_primary))),
+        max(0, min(3, int(pump_secondary))),
+        max(0, min(3, int(pump_tertiary)))
+    ])  # 3 bytes
+    
+    length = len(payload)  # 7
     
     # CRC over CMD + LEN + PAYLOAD
     crc_data = bytes([cmd, length]) + payload
@@ -311,8 +325,8 @@ def decode_esp_e_response(payload: bytes) -> Optional[Dict]:
     """
     Decode ESP-E response payload
     
-    Format: [power_mwe (4)][pwm]
-    Total payload: 5 bytes
+    Format: [power_mwe (4)][pwm][pump_prim][pump_sec][pump_ter]
+    Total payload: 8 bytes
     
     Args:
         payload: Response payload bytes
@@ -320,17 +334,23 @@ def decode_esp_e_response(payload: bytes) -> Optional[Dict]:
     Returns:
         Dictionary with decoded data or None if invalid
     """
-    if len(payload) < 5:
-        logger.error(f"ESP-E payload too short: {len(payload)} bytes (expected 5)")
+    if len(payload) < 8:
+        logger.error(f"ESP-E payload too short: {len(payload)} bytes (expected 8)")
         return None
     
     try:
         power_mwe = struct.unpack('<f', payload[0:4])[0]
         pwm = payload[4]
+        pump_primary = payload[5]
+        pump_secondary = payload[6]
+        pump_tertiary = payload[7]
         
         return {
             'power_mwe': power_mwe,
-            'pwm': pwm
+            'pwm': pwm,
+            'pump_primary': pump_primary,
+            'pump_secondary': pump_secondary,
+            'pump_tertiary': pump_tertiary
         }
     except Exception as e:
         logger.error(f"Error decoding ESP-E response: {e}")
@@ -1036,12 +1056,18 @@ class UARTMaster:
                 logger.warning("ESP-BC: No valid JSON response")
                 return False
     
-    def update_esp_e(self, thermal_power_kw: float = 0.0) -> bool:
+    def update_esp_e(self, thermal_power_kw: float = 0.0, 
+                     pump_primary_status: int = 0,
+                     pump_secondary_status: int = 0,
+                     pump_tertiary_status: int = 0) -> bool:
         """
-        Send update to ESP-E using binary protocol (Power Indicator Only - Simplified)
+        Send update to ESP-E using binary protocol (Power Indicator + Water Flow Visualization)
         
         Args:
             thermal_power_kw: Thermal power for LED indicator (0-300000 kW)
+            pump_primary_status: Primary pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
+            pump_secondary_status: Secondary pump status (0-3)
+            pump_tertiary_status: Tertiary pump status (0-3)
             
         Returns:
             True if successful, False otherwise
@@ -1051,16 +1077,22 @@ class UARTMaster:
         
         # Update internal state
         self.esp_e_data.thermal_power_kw = thermal_power_kw
+        self.esp_e_data.pump_primary_status = pump_primary_status
+        self.esp_e_data.pump_secondary_status = pump_secondary_status
+        self.esp_e_data.pump_tertiary_status = pump_tertiary_status
         
         if USE_BINARY_PROTOCOL:
             # === BINARY PROTOCOL ===
-            # Encode binary command
+            # Encode binary command with pump status
             command_bytes = encode_esp_e_update(
-                thermal_kw=thermal_power_kw
+                thermal_kw=thermal_power_kw,
+                pump_primary=pump_primary_status,
+                pump_secondary=pump_secondary_status,
+                pump_tertiary=pump_tertiary_status
             )
             
-            # Expected response: [STX][ACK][LEN=5][5 bytes payload][CRC][ETX] = 10 bytes
-            expected_len = 10
+            # Expected response: [STX][ACK][LEN=8][8 bytes payload][CRC][ETX] = 13 bytes
+            expected_len = 13
             
             # Send and receive with retry
             result = self.esp_e.send_receive_binary(command_bytes, expected_len, timeout=1.0)
@@ -1078,12 +1110,13 @@ class UARTMaster:
                 logger.debug("ESP-E: Failed to decode binary response")
                 return False
             
-            # Update internal state from response
+            # Update internal state from response (echo verification)
             self.esp_e_data.power_mwe = response_data['power_mwe']
             self.esp_e_data.pwm = response_data['pwm']
             
             logger.debug(f"ESP-E: Power={self.esp_e_data.power_mwe:.1f} MWe, "
-                        f"PWM={self.esp_e_data.pwm}/255")
+                        f"PWM={self.esp_e_data.pwm}/255, "
+                        f"Pumps: P={response_data['pump_primary']} S={response_data['pump_secondary']} T={response_data['pump_tertiary']}")
             return True
         
         else:
