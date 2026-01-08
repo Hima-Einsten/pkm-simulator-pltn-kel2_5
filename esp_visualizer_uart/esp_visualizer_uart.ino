@@ -53,12 +53,10 @@
 
 // ============================================
 // PUMP STRUCT
-// ============================================
+// ============================================// Pump structure - simplified for OE-based control
 struct Pump {
   uint8_t status;           // 0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN
-  int latchPin;             // LATCH pin for this IC
-  unsigned long lastUpdate; // Last animation update time
-  int pos;                  // Current animation position (0-7)
+  int oePin;                // Output Enable pin (LOW=enabled, HIGH=disabled)
   uint8_t lastStatus;       // For detecting status changes
 };
 
@@ -78,22 +76,24 @@ struct Pump {
 const int NUM_LEDS = 4;
 const int POWER_LEDS[NUM_LEDS] = {25, 26, 27, 32};  // GPIO aman, tidak konflik
 
-// SHIFT REGISTER - Menggunakan HARDWARE SPI (HSPI)
-#define SPI_CLOCK_PIN 14       // SCK - HSPI default
-#define SPI_MOSI_PIN 13        // MOSI - HSPI default
-// MISO (12) dan SS (15) tidak digunakan
+// SHIFT REGISTER - Menggunakan HARDWARE LEDC PWM untuk clock
+#define SPI_CLOCK_PIN 14       // SCK - LEDC PWM (continuous 10kHz)
+#define SPI_MOSI_PIN 13        // MOSI - Manual bit-banging
 
-// LATCH Pins (separate per IC) - GPIO yang AMAN (FIXED!)
-#define LATCH_PIN_PRIMARY 4    // IC #1 - Primary pump flow (SAFE)
-#define LATCH_PIN_SECONDARY 18 // IC #2 - Secondary (FIXED: 5→18, avoid strapping pin)
-#define LATCH_PIN_TERTIARY 19  // IC #3 - Tertiary (FIXED: 12→19, avoid SPI MISO conflict)
+// LATCH Pin (RCLK) - GLOBAL untuk semua IC (shared)
+#define LATCH_PIN_GLOBAL 4     // Shared RCLK for all 74HC595 ICs
+
+// OUTPUT ENABLE Pins - Separate per IC untuk kontrol ON/OFF
+#define OE_PIN_PRIMARY 18      // OE IC#1 - Primary pump (LOW=enabled, HIGH=disabled)
+#define OE_PIN_SECONDARY 19    // OE IC#2 - Secondary pump
+#define OE_PIN_TERTIARY 21     // OE IC#3 - Tertiary pump
 
 // ============================================
 // BIT-BANGING MODE - LEDC PWM Clock Only
 // ============================================
 // NO SPI hardware used - all manual control
 #define CLOCK_FREQ_HZ 10000  // 10 kHz clock via LEDC PWM
-#define BIT_DELAY_US 50      // 50us = half period of 10kHz
+#define BIT_DELAY_US 10      // 10us = half period of 10kHz
 
 // Animation state
 byte currentPattern = 0x00;
@@ -116,8 +116,7 @@ int animationPos = 0;
 // ============================================
 // SPI selalu aktif mengirim pattern ke semua IC
 // LATCH pin mengontrol apakah output IC aktif atau tidak
-// Jika pompa OFF: LATCH = LOW (output disabled)
-// Jika pompa ON: LATCH = HIGH (output enabled, LED menyala sesuai pattern)
+
 
 // ============================================
 // CRC8 Checksum (CRC-8/MAXIM)
@@ -164,10 +163,12 @@ float thermal_kw = 0.0;
 float power_mwe = 0.0;
 int current_pwm = 0;
 
-// Pump instances
-Pump pump_primary = {0, LATCH_PIN_PRIMARY, 0, 0, 255};
-Pump pump_secondary = {0, LATCH_PIN_SECONDARY, 0, 0, 255};
-Pump pump_tertiary = {0, LATCH_PIN_TERTIARY, 0, 0, 255};
+// Pump instances with OE pins
+Pump pump_primary = {0, OE_PIN_PRIMARY, 0};
+Pump pump_secondary = {0, OE_PIN_SECONDARY, 0};
+Pump pump_tertiary = {0, OE_PIN_TERTIARY, 0};
+
+
 
 // LED Mode Control
 #define PWM_THRESHOLD_HIGH 250
@@ -191,88 +192,75 @@ const byte FLOW_PATTERN[8] = {
 // ============================================
 // BIT-BANGING SHIFT REGISTER FUNCTIONS
 // ============================================
-
-/**
- * Send 8 bits to shift register using bit-banging
- * Clock is provided by LEDC PWM (hardware)
- * Data is sent manually with digitalWrite
- */
 void shiftOutManual(byte data) {
-  // Send 8 bits, MSB first
   for (int i = 7; i >= 0; i--) {
-    // Set data bit
-    digitalWrite(SPI_MOSI_PIN, (data >> i) & 1);
-    
-    // Wait for clock edge (synchronized with LEDC PWM)
+    digitalWrite(SPI_MOSI_PIN, (data >> i) & 0x01);
     delayMicroseconds(BIT_DELAY_US);
   }
 }
-
 /**
- * Send pattern to ONE shift register using bit-banging
- * LATCH is used ONLY for data transfer (RCLK), not output enable
+ * Send pattern to ALL shift registers using global LATCH
+ * All ICs share one RCLK line, receive same pattern
  */
-void sendPatternToIC(byte pattern, int latchPin) {
-  // LATCH LOW - prepare to receive data
-  digitalWrite(latchPin, LOW);
+void sendPattern(byte pattern) {
+  // Global LATCH LOW - prepare all ICs to receive data
+  digitalWrite(LATCH_PIN_GLOBAL, LOW);
   delayMicroseconds(1);
   
-  // Send 8 bits manually
-  shiftOutManual(pattern);
+  // Send 8 bits to all 3 ICs sequentially (they share MOSI)
+  shiftOutManual(pattern);  // IC #1
+  shiftOutManual(pattern);  // IC #2
+  shiftOutManual(pattern);  // IC #3
   
-  // Small delay before latch
   delayMicroseconds(1);
   
-  // LATCH HIGH - transfer shift register to output register
-  digitalWrite(latchPin, HIGH);
+  // Global LATCH HIGH - transfer to output registers
+  digitalWrite(LATCH_PIN_GLOBAL, HIGH);
   delayMicroseconds(1);
   
   #if DEBUG_SHIFT_REGISTER
-    Serial.printf("[BIT-BANG] Latch=%d Pattern=0x%02X\n", latchPin, pattern);
+    Serial.printf("[SEND] Pattern=0x%02X to all ICs\n", pattern);
   #endif
 }
 
 /**
- * Update ALL shift registers based on pump status
- * This is the SINGLE SOURCE of truth for LED control
+ * Update OE pins based on pump status
+ * OE LOW = output enabled (LEDs visible)
+ * OE HIGH = output disabled (LEDs off)
  */
-void updateAllShiftRegisters() {
-  byte pattern_primary = 0x00;
-  byte pattern_secondary = 0x00;
-  byte pattern_tertiary = 0x00;
-  
-  // Determine pattern for each pump based on status
-  // OFF (0) or STARTING (1) → 0x00 (LEDs off)
-  // ON (2) or SHUTTING_DOWN (3) → animation pattern
-  
+void updatePumpOutputs() {
+  // Primary pump
   if (pump_primary.status == 2 || pump_primary.status == 3) {
-    pattern_primary = currentPattern;
+    digitalWrite(pump_primary.oePin, LOW);  // Enable output
+  } else {
+    digitalWrite(pump_primary.oePin, HIGH); // Disable output
   }
   
+  // Secondary pump
   if (pump_secondary.status == 2 || pump_secondary.status == 3) {
-    pattern_secondary = currentPattern;
+    digitalWrite(pump_secondary.oePin, LOW);
+  } else {
+    digitalWrite(pump_secondary.oePin, HIGH);
   }
   
+  // Tertiary pump
   if (pump_tertiary.status == 2 || pump_tertiary.status == 3) {
-    pattern_tertiary = currentPattern;
+    digitalWrite(pump_tertiary.oePin, LOW);
+  } else {
+    digitalWrite(pump_tertiary.oePin, HIGH);
   }
-  
-  // Send patterns to each IC
-  sendPatternToIC(pattern_primary, LATCH_PIN_PRIMARY);
-  sendPatternToIC(pattern_secondary, LATCH_PIN_SECONDARY);
-  sendPatternToIC(pattern_tertiary, LATCH_PIN_TERTIARY);
   
   #if DEBUG_TIMING
-    Serial.printf("[UPDATE] P1=0x%02X P2=0x%02X P3=0x%02X\n", 
-                  pattern_primary, pattern_secondary, pattern_tertiary);
+    Serial.printf("[OE] P1=%s P2=%s P3=%s\n",
+                  pump_primary.status >= 2 ? "ON" : "OFF",
+                  pump_secondary.status >= 2 ? "ON" : "OFF",
+                  pump_tertiary.status >= 2 ? "ON" : "OFF");
   #endif
 }
 
 void clearAllShiftRegisters() {
-  // Send 0x00 to all ICs using standard update function
-  sendPatternToIC(0x00, LATCH_PIN_PRIMARY);
-  sendPatternToIC(0x00, LATCH_PIN_SECONDARY);
-  sendPatternToIC(0x00, LATCH_PIN_TERTIARY);
+  // Send 0x00 using global LATCH
+  sendPattern(0x00);
 }
 
 // ============================================
@@ -317,19 +305,6 @@ void stopContinuousMode() {
   ledcDetach(SPI_CLOCK_PIN);  // Stop PWM
   digitalWrite(SPI_MOSI_PIN, LOW);
   Serial.println("Bit-banging mode stopped");
-}
-
-// ============================================
-// ANIMATION FUNCTIONS (SIMPLIFIED)
-// ============================================
-
-/**
- * Update flow animation - SINGLE SOURCE control
- * Called from main loop at fixed interval
- */
-void updateFlowAnimation() {
-  // This function is now just a placeholder
-  // All actual updates happen in main loop via updateAllShiftRegisters()
 }
 
 // ============================================
@@ -586,47 +561,7 @@ void updatePowerLED() {
   #endif
 }
 
-// ============================================
-// HARDWARE TEST
-// ============================================
 
-void testShiftRegisterHardware() {
-  Serial.println("\n========================================");
-  Serial.println("SHIFT REGISTER HARDWARE TEST (CONTINUOUS MODE)");
-  Serial.println("========================================");
-  Serial.println("Testing continuous SPI with LATCH control...");
-  Serial.println();
-  
-  byte testPatterns[] = {0xAA, 0x55, 0xFF, 0x00, 0x81, 0x18};
-  const char* patternNames[] = {
-    "0xAA (alternating)", "0x55 (inverted)", "0xFF (all ON)",
-    "0x00 (all OFF)", "0x81 (edges)", "0x18 (center)"
-  };
-  
-  for (int test = 0; test < 6; test++) {
-    Serial.printf("\nTest %d/%d: %s\n", test+1, 6, patternNames[test]);
-    
-    // Send pattern via SPI
-    sendPatternToAllICs(testPatterns[test]);
-    
-    // Pulse all latches to update output
-    digitalWrite(LATCH_PIN_PRIMARY, LOW);
-    digitalWrite(LATCH_PIN_SECONDARY, LOW);
-    digitalWrite(LATCH_PIN_TERTIARY, LOW);
-    delayMicroseconds(1);
-    digitalWrite(LATCH_PIN_PRIMARY, HIGH);
-    digitalWrite(LATCH_PIN_SECONDARY, HIGH);
-    digitalWrite(LATCH_PIN_TERTIARY, HIGH);
-    delayMicroseconds(1);
-    
-    Serial.println("✓ Pattern sent - verify LEDs");
-    delay(2000);
-  }
-  
-  Serial.println("\nClearing all...");
-  clearAllShiftRegisters();
-  Serial.println("✓ Test complete\n");
-}
 
 // ============================================
 // SETUP
@@ -663,14 +598,19 @@ void setup() {
   
   delay(10);
   
-  // Initialize LATCH pins
-  pinMode(LATCH_PIN_PRIMARY, OUTPUT);
-  pinMode(LATCH_PIN_SECONDARY, OUTPUT);
-  pinMode(LATCH_PIN_TERTIARY, OUTPUT);
-  digitalWrite(LATCH_PIN_PRIMARY, LOW);
-  digitalWrite(LATCH_PIN_SECONDARY, LOW);
-  digitalWrite(LATCH_PIN_TERTIARY, LOW);
-  Serial.println("✓ LATCH pins initialized");
+  // Initialize GLOBAL LATCH pin
+  pinMode(LATCH_PIN_GLOBAL, OUTPUT);
+  digitalWrite(LATCH_PIN_GLOBAL, LOW);
+  Serial.println("✓ Global LATCH pin initialized (GPIO 4)");
+  
+  // Initialize OE pins (FAIL-SAFE: HIGH = disabled)
+  pinMode(OE_PIN_PRIMARY, OUTPUT);
+  pinMode(OE_PIN_SECONDARY, OUTPUT);
+  pinMode(OE_PIN_TERTIARY, OUTPUT);
+  digitalWrite(OE_PIN_PRIMARY, HIGH);    // Disabled at boot
+  digitalWrite(OE_PIN_SECONDARY, HIGH);  // Disabled at boot
+  digitalWrite(OE_PIN_TERTIARY, HIGH);   // Disabled at boot
+  Serial.println("✓ OE pins initialized (GPIO 18, 19, 25) - FAIL-SAFE OFF");
   
   // Start continuous clock and data transmission
   startContinuousMode();
@@ -703,9 +643,7 @@ void setup() {
   Serial.println("ESP32 Power Indicator READY");
   Serial.println("===========================================\n");
   
-  // UNCOMMENT untuk test hardware saat startup
-  Serial.println("\n*** RUNNING HARDWARE TEST ***");
-  testShiftRegisterHardware();  // ✅ ENABLED untuk verify hardware
+
   
   // Quick LED test
   Serial.println("Testing power LEDs (quick flash)...");
@@ -730,7 +668,6 @@ void loop() {
   static unsigned long last_anim_time = 0;
   static unsigned long last_led_time = 0;
   static unsigned long last_uart_time = 0;
-  static uint8_t test_pattern_index = 0;
   
   unsigned long current_time = millis();
   
@@ -748,9 +685,11 @@ void loop() {
     animationPos = (animationPos + 1) % 8;
     currentPattern = FLOW_PATTERN[animationPos];
     
-    // SINGLE SOURCE: Update all shift registers based on pump status
-    // This handles both animation and OFF states (0x00)
-    updateAllShiftRegisters();
+    // Send pattern to ALL ICs using global LATCH
+    sendPattern(currentPattern);
+    
+    // Control visibility via OE pins
+    updatePumpOutputs();
     
     last_anim_time = current_time;
     
@@ -769,6 +708,10 @@ void loop() {
     last_uart_time = current_time;
   }
   
+  if (pump_primary.status == 0 &&
+    pump_secondary.status == 0 &&
+    pump_tertiary.status == 0) {
+  sendPattern(0x00);
   // Yield untuk menjaga stabilitas sistem
   yield();
 }
