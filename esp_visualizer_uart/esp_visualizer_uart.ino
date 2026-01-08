@@ -40,6 +40,17 @@
 #define UPDATE_RESP_LEN 13 // [STX][ACK][LEN=8][power_mwe (4)][pwm][pump_prim][pump_sec][pump_ter][CRC][ETX]
 
 // ============================================
+// PUMP STRUCT - Must be declared before use
+// ============================================
+struct Pump {
+  uint8_t status;           // 0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN
+  int latchPin;             // LATCH pin for this IC
+  unsigned long lastUpdate; // Last animation update time
+  int pos;                  // Current animation position (0-7)
+  uint8_t lastStatus;       // For detecting status changes
+};
+
+// ============================================
 // CRC8 Checksum (CRC-8/MAXIM)
 // ============================================
 uint8_t crc8_maxim(const uint8_t* data, size_t len) {
@@ -110,17 +121,6 @@ SPIClass * hspi = NULL;  // Hardware SPI instance
 // Animation only active when pump status = 2 (ON) or 3 (SHUTTING_DOWN)
 
 // ============================================
-// PUMP STRUCT - Consolidate pump state
-// ============================================
-struct Pump {
-  uint8_t status;           // 0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN
-  int latchPin;             // LATCH pin for this IC
-  unsigned long lastUpdate; // Last animation update time
-  int pos;                  // Current animation position (0-7)
-  uint8_t lastStatus;       // For detecting status changes
-};
-
-// ============================================
 // DATA
 // ============================================
 float thermal_kw = 0.0;      // Thermal power dalam kW (0-300000)
@@ -167,6 +167,16 @@ void writeShiftRegisterIC(byte data, int latchPin) {
   digitalWrite(latchPin, HIGH);
 }
 
+/**
+ * Clear all shift registers - turn off all LEDs
+ * Call this during initialization and when all pumps are OFF
+ */
+void clearAllShiftRegisters() {
+  writeShiftRegisterIC(0x00, LATCH_PIN_PRIMARY);
+  writeShiftRegisterIC(0x00, LATCH_PIN_SECONDARY);
+  writeShiftRegisterIC(0x00, LATCH_PIN_TERTIARY);
+}
+
 // ============================================
 // FLOW ANIMATION PATTERNS
 // ============================================
@@ -200,32 +210,37 @@ const byte FLOW_PATTERN[8] = {
  * REFACTORED: Uses predefined pattern array for clearer animation control
  * Uses struct-based approach for cleaner, more maintainable code
  */
-void updatePumpFlow(Pump &p, unsigned long now) {
+void updatePumpFlow(Pump *p, unsigned long now) {
   // Detect status change
-  if (p.status != p.lastStatus) {
-    Serial.printf("Pump (latch=%d) status changed: %d → %d\n", p.latchPin, p.lastStatus, p.status);
-    p.lastStatus = p.status;
-    p.pos = 0;  // Reset position on status change
+  if (p->status != p->lastStatus) {
+    Serial.printf("Pump (latch=%d) status changed: %d -> %d\n", p->latchPin, p->lastStatus, p->status);
+    p->lastStatus = p->status;
+    p->pos = 0;  // Reset position on status change
   }
   
   // Determine animation delay based on status
   unsigned long delay_ms = 0;
   
-  switch (p.status) {
-    case 0:  // OFF - clear LEDs
-      writeShiftRegisterIC(0x00, p.latchPin);
+  switch (p->status) {
+    case 0:  // OFF - FORCE clear LEDs (ensure all outputs are LOW)
+      if (p->pos != 0 || p->lastUpdate == 0) {
+        writeShiftRegisterIC(0x00, p->latchPin);
+        p->pos = 0;
+        p->lastUpdate = now;
+      }
       return;
       
-    case 1:  // STARTING - no flow yet
-      writeShiftRegisterIC(0x00, p.latchPin);
+    case 1:  // STARTING - no flow yet, keep LEDs clear
+      writeShiftRegisterIC(0x00, p->latchPin);
+      p->pos = 0;
       return;
       
     case 2:  // ON - normal flow
-      delay_ms = 1000;  // 1 second per step
+      delay_ms = 500;  // 500ms per step (4 seconds per full cycle)
       break;
       
     case 3:  // SHUTTING_DOWN - slow flow
-      delay_ms = 2000;  // 2 seconds per step
+      delay_ms = 1000;  // 1 second per step (8 seconds per full cycle)
       break;
       
     default:
@@ -233,18 +248,18 @@ void updatePumpFlow(Pump &p, unsigned long now) {
   }
   
   // Animate if enough time has passed
-  if (now - p.lastUpdate >= delay_ms) {
-    p.lastUpdate = now;
+  if (now - p->lastUpdate >= delay_ms) {
+    p->lastUpdate = now;
     
     // Get pattern from array (much clearer than bit shifting!)
-    byte pattern = FLOW_PATTERN[p.pos];
+    byte pattern = FLOW_PATTERN[p->pos];
     
     // Write pattern to shift register
-    writeShiftRegisterIC(pattern, p.latchPin);
+    writeShiftRegisterIC(pattern, p->latchPin);
     
     // Advance to next position (0-7, then wrap to 0)
-    p.pos++;
-    if (p.pos >= 8) p.pos = 0;
+    p->pos++;
+    if (p->pos >= 8) p->pos = 0;
   }
 }
 
@@ -258,9 +273,9 @@ void updateFlowAnimation() {
   unsigned long currentTime = millis();
   
   // Update all 3 pumps with single function
-  updatePumpFlow(pump_primary, currentTime);
-  updatePumpFlow(pump_secondary, currentTime);
-  updatePumpFlow(pump_tertiary, currentTime);
+  updatePumpFlow(&pump_primary, currentTime);
+  updatePumpFlow(&pump_secondary, currentTime);
+  updatePumpFlow(&pump_tertiary, currentTime);
 }
 
 // ============================================
@@ -491,10 +506,8 @@ void setup() {
   
   delay(10);  // Let pins stabilize
   
-  // Clear all shift registers
-  writeShiftRegisterIC(0x00, LATCH_PIN_PRIMARY);
-  writeShiftRegisterIC(0x00, LATCH_PIN_SECONDARY);
-  writeShiftRegisterIC(0x00, LATCH_PIN_TERTIARY);
+  // Clear all shift registers - ensure all LEDs are OFF
+  clearAllShiftRegisters();
   Serial.println("✓ SPI initialized at 8 MHz - shift registers cleared");
   
   // OPTIONAL: Hardware test mode - uncomment to test all Q0-Q7 pins
