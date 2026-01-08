@@ -67,7 +67,8 @@ struct Pump {
 // ============================================
 #define DEBUG_SHIFT_REGISTER true   // Set to true untuk debug LED animation
 #define DEBUG_UART false            // Debug UART communication
-#define DEBUG_TIMING true          // Debug timing performance
+#define DEBUG_TIMING true           // Debug timing performance
+#define HARDWARE_TEST_MODE false    // Set TRUE untuk test kontinyu (bypass pump status)
 
 // ============================================
 // HARDWARE PIN ASSIGNMENT (NO CONFLICT)
@@ -102,6 +103,14 @@ SPIClass * hspi = NULL;
 // Animation speeds (milliseconds per step)
 #define ANIM_SPEED_ON 500         // 500ms per step saat ON
 #define ANIM_SPEED_SHUTDOWN 1000  // 1000ms per step saat SHUTTING_DOWN
+
+// ============================================
+// CONTINUOUS SPI MODE (NEW APPROACH)
+// ============================================
+// SPI selalu aktif mengirim pattern ke semua IC
+// LATCH pin mengontrol apakah output IC aktif atau tidak
+// Jika pompa OFF: LATCH = LOW (output disabled)
+// Jika pompa ON: LATCH = HIGH (output enabled, LED menyala sesuai pattern)
 
 // ============================================
 // CRC8 Checksum (CRC-8/MAXIM)
@@ -173,117 +182,146 @@ const byte FLOW_PATTERN[8] = {
 };
 
 // ============================================
-// SHIFT REGISTER FUNCTIONS (OPTIMIZED)
+// SHIFT REGISTER FUNCTIONS (CONTINUOUS MODE)
 // ============================================
 
-void writeShiftRegisterIC(byte data, int latchPin) {
-  // CRITICAL: Timing delays are REQUIRED for 74HC595 to work!
-  // Without delays, IC cannot capture data reliably
-  
-  // Step 1: LATCH LOW - prepare to receive data
-  digitalWrite(latchPin, LOW);
-  delayMicroseconds(1);  // Setup time - REQUIRED!
-  
-  // Step 2: Begin SPI transaction and transfer data
+/**
+ * Send pattern to ALL shift registers via SPI
+ * SPI selalu aktif, tidak peduli status pompa
+ * Pattern dikirim ke semua IC sekaligus (shared MOSI/SCK)
+ */
+void sendPatternToAllICs(byte pattern) {
+  // Begin SPI transaction
   hspi->beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0));
-  hspi->transfer(data);
+  
+  // Send same pattern 3 times (one for each IC)
+  // Karena MOSI shared, semua IC terima data yang sama
+  hspi->transfer(pattern);
+  hspi->transfer(pattern);
+  hspi->transfer(pattern);
+  
   hspi->endTransaction();
   
-  // Step 3: Hold time - ensure all bits are shifted
-  delayMicroseconds(1);  // Hold time - REQUIRED!
-  
-  // Step 4: LATCH HIGH - transfer to output register
-  digitalWrite(latchPin, HIGH);
-  delayMicroseconds(1);  // Pulse width - REQUIRED!
-  
-  // LATCH stays HIGH - output register is level-triggered
-  
   #if DEBUG_SHIFT_REGISTER
-    Serial.print("[SPI] Latch=");
-    Serial.print(latchPin);
-    Serial.print(" Data=0x");
-    Serial.print(data, HEX);
-    Serial.print(" Binary=");
-    for (int i = 7; i >= 0; i--) {
-      Serial.print((data >> i) & 1);
-    }
-    Serial.print(" LEDs:");
-    for (int i = 7; i >= 0; i--) {
-      if ((data >> i) & 1) {
-        Serial.print(" ");
-        Serial.print(8-i);
-      }
-    }
-    Serial.println();
+    Serial.printf("[SPI] Pattern=0x%02X sent to all ICs\n", pattern);
   #endif
 }
 
+/**
+ * Update LATCH pins based on pump status
+ * LATCH HIGH = output enabled (LED menyala)
+ * LATCH LOW = output disabled (LED mati)
+ */
+void updateLatchPins() {
+  // Primary pump
+  if (pump_primary.status == 2 || pump_primary.status == 3) {
+    digitalWrite(LATCH_PIN_PRIMARY, HIGH);  // Enable output
+  } else {
+    digitalWrite(LATCH_PIN_PRIMARY, LOW);   // Disable output
+  }
+  
+  // Secondary pump
+  if (pump_secondary.status == 2 || pump_secondary.status == 3) {
+    digitalWrite(LATCH_PIN_SECONDARY, HIGH);
+  } else {
+    digitalWrite(LATCH_PIN_SECONDARY, LOW);
+  }
+  
+  // Tertiary pump
+  if (pump_tertiary.status == 2 || pump_tertiary.status == 3) {
+    digitalWrite(LATCH_PIN_TERTIARY, HIGH);
+  } else {
+    digitalWrite(LATCH_PIN_TERTIARY, LOW);
+  }
+}
+
+/**
+ * Pulse LATCH to transfer shift register to output register
+ * Dipanggil setelah SPI transfer untuk update LED
+ */
+void pulseLatchPins() {
+  // Pulse semua LATCH pins untuk transfer data
+  // Hanya IC dengan LATCH=HIGH yang akan update output
+  
+  // Set all LOW first
+  digitalWrite(LATCH_PIN_PRIMARY, LOW);
+  digitalWrite(LATCH_PIN_SECONDARY, LOW);
+  digitalWrite(LATCH_PIN_TERTIARY, LOW);
+  delayMicroseconds(1);
+  
+  // Pulse HIGH based on pump status
+  if (pump_primary.status == 2 || pump_primary.status == 3) {
+    digitalWrite(LATCH_PIN_PRIMARY, HIGH);
+  }
+  if (pump_secondary.status == 2 || pump_secondary.status == 3) {
+    digitalWrite(LATCH_PIN_SECONDARY, HIGH);
+  }
+  if (pump_tertiary.status == 2 || pump_tertiary.status == 3) {
+    digitalWrite(LATCH_PIN_TERTIARY, HIGH);
+  }
+  delayMicroseconds(1);
+}
+
 void clearAllShiftRegisters() {
-  writeShiftRegisterIC(0x00, LATCH_PIN_PRIMARY);
-  writeShiftRegisterIC(0x00, LATCH_PIN_SECONDARY);
-  writeShiftRegisterIC(0x00, LATCH_PIN_TERTIARY);
-}
-
-// ============================================
-// ANIMATION FUNCTIONS (OPTIMIZED)
-// ============================================
-
-void updatePumpFlow(Pump *p, unsigned long now) {
-  // Deteksi perubahan status
-  if (p->status != p->lastStatus) {
-    #if DEBUG_TIMING
-      Serial.printf("[PUMP] Latch=%d Status: %d->%d\n", 
-                    p->latchPin, p->lastStatus, p->status);
-    #endif
-    p->lastStatus = p->status;
-    p->pos = 0;
-    p->lastUpdate = now;  // Reset timing
-    
-    // Jika status OFF, matikan LED segera
-    if (p->status == 0) {
-      writeShiftRegisterIC(0x00, p->latchPin);
-    }
-  }
+  // Send 0x00 pattern
+  hspi->beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0));
+  hspi->transfer(0x00);
+  hspi->transfer(0x00);
+  hspi->transfer(0x00);
+  hspi->endTransaction();
   
-  // Handle berdasarkan status
-  switch (p->status) {
-    case 0:  // OFF
-      // Sudah dimatikan di atas, tidak perlu update berulang
-      return;
-      
-    case 1:  // STARTING
-      // Tidak ada animasi, LED mati
-      if (p->pos != 0) {
-        writeShiftRegisterIC(0x00, p->latchPin);
-        p->pos = 0;
-      }
-      return;
-      
-    case 2:  // ON - normal flow
-      if (now - p->lastUpdate >= ANIM_SPEED_ON) {
-        p->lastUpdate = now;
-        writeShiftRegisterIC(FLOW_PATTERN[p->pos], p->latchPin);
-        p->pos = (p->pos + 1) % 8;
-      }
-      break;
-      
-    case 3:  // SHUTTING_DOWN - slow flow
-      if (now - p->lastUpdate >= ANIM_SPEED_SHUTDOWN) {
-        p->lastUpdate = now;
-        writeShiftRegisterIC(FLOW_PATTERN[p->pos], p->latchPin);
-        p->pos = (p->pos + 1) % 8;
-      }
-      break;
-  }
+  // Pulse all latches
+  digitalWrite(LATCH_PIN_PRIMARY, LOW);
+  digitalWrite(LATCH_PIN_SECONDARY, LOW);
+  digitalWrite(LATCH_PIN_TERTIARY, LOW);
+  delayMicroseconds(1);
+  digitalWrite(LATCH_PIN_PRIMARY, HIGH);
+  digitalWrite(LATCH_PIN_SECONDARY, HIGH);
+  digitalWrite(LATCH_PIN_TERTIARY, HIGH);
+  delayMicroseconds(1);
 }
 
+// ============================================
+// ANIMATION FUNCTIONS (CONTINUOUS MODE)
+// ============================================
+
+/**
+ * Update flow animation - CONTINUOUS MODE
+ * SPI selalu kirim pattern, LATCH mengontrol output
+ */
 void updateFlowAnimation() {
-  unsigned long currentTime = millis();
+  static unsigned long lastUpdate = 0;
+  static int currentPos = 0;
+  unsigned long now = millis();
   
-  // Update semua pump dengan interval yang konsisten
-  updatePumpFlow(&pump_primary, currentTime);
-  updatePumpFlow(&pump_secondary, currentTime);
-  updatePumpFlow(&pump_tertiary, currentTime);
+  // Determine animation speed based on any active pump
+  unsigned long delay_ms = ANIM_SPEED_ON;
+  
+  // If any pump is shutting down, use slower speed
+  if (pump_primary.status == 3 || pump_secondary.status == 3 || pump_tertiary.status == 3) {
+    delay_ms = ANIM_SPEED_SHUTDOWN;
+  }
+  
+  // Update animation at fixed interval
+  if (now - lastUpdate >= delay_ms) {
+    lastUpdate = now;
+    
+    // Get current pattern from array
+    byte pattern = FLOW_PATTERN[currentPos];
+    
+    #if DEBUG_SHIFT_REGISTER
+      Serial.printf("[ANIM] Pos=%d Pattern=0x%02X\n", currentPos, pattern);
+    #endif
+    
+    // Send pattern to ALL ICs via SPI (MOSI/SCK always active)
+    sendPatternToAllICs(pattern);
+    
+    // Pulse LATCH pins based on pump status
+    pulseLatchPins();
+    
+    // Advance to next position
+    currentPos = (currentPos + 1) % 8;
+  }
 }
 
 // ============================================
@@ -545,25 +583,41 @@ void updatePowerLED() {
 // ============================================
 
 void testShiftRegisterHardware() {
-  Serial.println("\n=== SHIFT REGISTER HARDWARE TEST ===");
+  Serial.println("\n========================================");
+  Serial.println("SHIFT REGISTER HARDWARE TEST (CONTINUOUS MODE)");
+  Serial.println("========================================");
+  Serial.println("Testing continuous SPI with LATCH control...");
+  Serial.println();
   
-  // Test pattern untuk verifikasi hardware
-  byte testPatterns[] = {0x81, 0x42, 0x24, 0x18, 0xFF, 0x00};
+  byte testPatterns[] = {0xAA, 0x55, 0xFF, 0x00, 0x81, 0x18};
+  const char* patternNames[] = {
+    "0xAA (alternating)", "0x55 (inverted)", "0xFF (all ON)",
+    "0x00 (all OFF)", "0x81 (edges)", "0x18 (center)"
+  };
   
   for (int test = 0; test < 6; test++) {
-    Serial.printf("\nPattern %d: 0x%02X\n", test+1, testPatterns[test]);
+    Serial.printf("\nTest %d/%d: %s\n", test+1, 6, patternNames[test]);
     
-    // Test semua IC dengan pattern yang sama
-    writeShiftRegisterIC(testPatterns[test], LATCH_PIN_PRIMARY);
-    writeShiftRegisterIC(testPatterns[test], LATCH_PIN_SECONDARY);
-    writeShiftRegisterIC(testPatterns[test], LATCH_PIN_TERTIARY);
+    // Send pattern via SPI
+    sendPatternToAllICs(testPatterns[test]);
     
-    delay(1000);
+    // Pulse all latches to update output
+    digitalWrite(LATCH_PIN_PRIMARY, LOW);
+    digitalWrite(LATCH_PIN_SECONDARY, LOW);
+    digitalWrite(LATCH_PIN_TERTIARY, LOW);
+    delayMicroseconds(1);
+    digitalWrite(LATCH_PIN_PRIMARY, HIGH);
+    digitalWrite(LATCH_PIN_SECONDARY, HIGH);
+    digitalWrite(LATCH_PIN_TERTIARY, HIGH);
+    delayMicroseconds(1);
+    
+    Serial.println("✓ Pattern sent - verify LEDs");
+    delay(2000);
   }
   
-  // Clear all
+  Serial.println("\nClearing all...");
   clearAllShiftRegisters();
-  Serial.println("\n✅ Hardware test complete\n");
+  Serial.println("✓ Test complete\n");
 }
 
 // ============================================
@@ -662,7 +716,8 @@ void setup() {
   Serial.println("===========================================\n");
   
   // UNCOMMENT untuk test hardware saat startup
-  // testShiftRegisterHardware();
+  Serial.println("\n*** RUNNING HARDWARE TEST ***");
+  testShiftRegisterHardware();  // ✅ ENABLED untuk verify hardware
   
   // Quick LED test
   Serial.println("Testing power LEDs (quick flash)...");
@@ -687,9 +742,30 @@ void loop() {
   static unsigned long last_anim_time = 0;
   static unsigned long last_led_time = 0;
   static unsigned long last_uart_time = 0;
+  static uint8_t test_pattern_index = 0;
   
   unsigned long current_time = millis();
   
+  // HARDWARE TEST MODE - bypass normal operation
+  #if HARDWARE_TEST_MODE
+    // Continuous test pattern untuk verify SPI
+    if (current_time - last_anim_time >= 500) {
+      byte test_patterns[] = {0xAA, 0x55, 0xFF, 0x00, 0x81, 0x18};
+      byte pattern = test_patterns[test_pattern_index];
+      
+      Serial.printf("[TEST MODE] Sending pattern 0x%02X to all ICs\n", pattern);
+      writeShiftRegisterIC(pattern, LATCH_PIN_PRIMARY);
+      writeShiftRegisterIC(pattern, LATCH_PIN_SECONDARY);
+      writeShiftRegisterIC(pattern, LATCH_PIN_TERTIARY);
+      
+      test_pattern_index = (test_pattern_index + 1) % 6;
+      last_anim_time = current_time;
+    }
+    yield();
+    return;  // Skip normal operation
+  #endif
+  
+  // NORMAL OPERATION
   // 1. Update animasi dengan interval KONSISTEN
   if (current_time - last_anim_time >= ANIMATION_INTERVAL) {
     updateFlowAnimation();
