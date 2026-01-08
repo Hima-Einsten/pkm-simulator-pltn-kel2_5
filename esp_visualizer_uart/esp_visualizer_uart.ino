@@ -184,8 +184,10 @@ void writeShiftRegisterIC(byte data, int latchPin) {
   digitalWrite(latchPin, LOW);
   delayMicroseconds(1);  // Setup time - REQUIRED!
   
-  // Step 2: Shift 8 bits via hardware SPI
+  // Step 2: Begin SPI transaction and transfer data
+  hspi->beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0));
   hspi->transfer(data);
+  hspi->endTransaction();
   
   // Step 3: Hold time - ensure all bits are shifted
   delayMicroseconds(1);  // Hold time - REQUIRED!
@@ -588,8 +590,13 @@ void setup() {
   // Initialize HARDWARE SPI
   Serial.println("Initializing HARDWARE SPI (HSPI)...");
   hspi = new SPIClass(HSPI);
-  hspi->begin(SPI_CLOCK_PIN, -1, SPI_MOSI_PIN, -1);
-  hspi->beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0));
+  hspi->begin(SPI_CLOCK_PIN, -1, SPI_MOSI_PIN, -1);  // SCK=14, MISO=unused, MOSI=13, SS=unused
+  
+  // DON'T call beginTransaction here - it will be called per transfer
+  Serial.println("✓ SPI bus initialized");
+  Serial.printf("  SCK (Clock): GPIO %d\n", SPI_CLOCK_PIN);
+  Serial.printf("  MOSI (Data): GPIO %d\n", SPI_MOSI_PIN);
+  Serial.printf("  Frequency: %d MHz\n", SPI_FREQUENCY / 1000000);
   
   // Initialize LATCH pins
   pinMode(LATCH_PIN_PRIMARY, OUTPUT);
@@ -601,9 +608,22 @@ void setup() {
   
   delay(10);
   
+  // Test SPI bus - verify MOSI/SCK are working
+  Serial.println("\nTesting SPI bus...");
+  Serial.println("Sending test pattern 0xAA to verify MOSI signal...");
+  
+  // Send test pattern to all ICs
+  writeShiftRegisterIC(0xAA, LATCH_PIN_PRIMARY);
+  delay(100);
+  writeShiftRegisterIC(0x55, LATCH_PIN_SECONDARY);
+  delay(100);
+  writeShiftRegisterIC(0xFF, LATCH_PIN_TERTIARY);
+  delay(100);
+  
   // Clear all shift registers
+  Serial.println("Clearing all shift registers...");
   clearAllShiftRegisters();
-  Serial.println("✓ SPI initialized - shift registers cleared");
+  Serial.println("✓ SPI test complete - shift registers cleared");
   
   // Initialize all power LEDs
   Serial.println("Initializing 4 power LEDs...");
@@ -622,11 +642,11 @@ void setup() {
   Serial.println("ESP32 Power Indicator READY");
   Serial.println("===========================================\n");
   
-  // Uncomment untuk test hardware saat startup
+  // UNCOMMENT untuk test hardware saat startup
   // testShiftRegisterHardware();
   
-  // Test LED flash
-  Serial.println("Testing LEDs...");
+  // Quick LED test
+  Serial.println("Testing power LEDs (quick flash)...");
   for (int i = 0; i < 2; i++) {
     for (int j = 0; j < NUM_LEDS; j++) {
       ledcWrite(POWER_LEDS[j], 255);
