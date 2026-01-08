@@ -51,6 +51,18 @@ struct Pump {
 };
 
 // ============================================
+// DEBUG Configuration
+// ============================================
+#define DEBUG_SHIFT_REGISTER true  // Set to false to disable debug output
+
+// Helper function to print binary representation
+void printBinary(byte value) {
+  for (int i = 7; i >= 0; i--) {
+    Serial.print((value >> i) & 1);
+  }
+}
+
+// ============================================
 // CRC8 Checksum (CRC-8/MAXIM)
 // ============================================
 uint8_t crc8_maxim(const uint8_t* data, size_t len) {
@@ -165,6 +177,25 @@ void writeShiftRegisterIC(byte data, int latchPin) {
   
   // Step 3: LATCH HIGH - transfer to output register
   digitalWrite(latchPin, HIGH);
+  
+  // DEBUG: Print what was sent
+  if (DEBUG_SHIFT_REGISTER) {
+    Serial.print("[SPI TX] Latch=");
+    Serial.print(latchPin);
+    Serial.print(" | Data=0x");
+    Serial.print(data, HEX);
+    Serial.print(" | Binary=");
+    printBinary(data);
+    Serial.print(" | LEDs: ");
+    // Show which LEDs should be ON (bit 7=LED8, bit 0=LED1)
+    for (int i = 7; i >= 0; i--) {
+      if ((data >> i) & 1) {
+        Serial.print(8-i);
+        Serial.print(" ");
+      }
+    }
+    Serial.println();
+  }
 }
 
 /**
@@ -213,9 +244,20 @@ const byte FLOW_PATTERN[8] = {
 void updatePumpFlow(Pump *p, unsigned long now) {
   // Detect status change
   if (p->status != p->lastStatus) {
-    Serial.printf("Pump (latch=%d) status changed: %d -> %d\n", p->latchPin, p->lastStatus, p->status);
+    Serial.printf("\n=== PUMP STATUS CHANGE (Latch=%d) ===\n", p->latchPin);
+    Serial.printf("Status: %d -> %d | ", p->lastStatus, p->status);
+    
+    // Print status name
+    const char* statusNames[] = {"OFF", "STARTING", "ON", "SHUTTING_DOWN"};
+    if (p->status <= 3) {
+      Serial.printf("(%s)\n", statusNames[p->status]);
+    } else {
+      Serial.println("(UNKNOWN)");
+    }
+    
     p->lastStatus = p->status;
     p->pos = 0;  // Reset position on status change
+    Serial.println("Position reset to 0\n");
   }
   
   // Determine animation delay based on status
@@ -254,12 +296,25 @@ void updatePumpFlow(Pump *p, unsigned long now) {
     // Get pattern from array (much clearer than bit shifting!)
     byte pattern = FLOW_PATTERN[p->pos];
     
+    // DEBUG: Print animation step
+    if (DEBUG_SHIFT_REGISTER && p->status >= 2) {
+      Serial.printf("[ANIM] Latch=%d | Pos=%d/7 | Pattern=0x%02X | ", 
+                    p->latchPin, p->pos, pattern);
+      printBinary(pattern);
+      Serial.printf(" | Delay=%lums\n", delay_ms);
+    }
+    
     // Write pattern to shift register
     writeShiftRegisterIC(pattern, p->latchPin);
     
     // Advance to next position (0-7, then wrap to 0)
     p->pos++;
-    if (p->pos >= 8) p->pos = 0;
+    if (p->pos >= 8) {
+      p->pos = 0;
+      if (DEBUG_SHIFT_REGISTER && p->status >= 2) {
+        Serial.println("[ANIM] Cycle complete - wrapping to position 0\n");
+      }
+    }
   }
 }
 
