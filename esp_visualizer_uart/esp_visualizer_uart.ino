@@ -589,6 +589,15 @@ void setup() {
   
   // Initialize HARDWARE SPI
   Serial.println("Initializing HARDWARE SPI (HSPI)...");
+  
+  // CRITICAL: Set pin modes BEFORE SPI.begin() to ensure pins are outputs
+  pinMode(SPI_CLOCK_PIN, OUTPUT);
+  pinMode(SPI_MOSI_PIN, OUTPUT);
+  digitalWrite(SPI_CLOCK_PIN, LOW);
+  digitalWrite(SPI_MOSI_PIN, LOW);
+  Serial.println("Pin modes set for SCK and MOSI");
+  
+  // Create HSPI instance and initialize
   hspi = new SPIClass(HSPI);
   hspi->begin(SPI_CLOCK_PIN, -1, SPI_MOSI_PIN, -1);  // SCK=14, MISO=unused, MOSI=13, SS=unused
   
@@ -597,6 +606,16 @@ void setup() {
   Serial.printf("  SCK (Clock): GPIO %d\n", SPI_CLOCK_PIN);
   Serial.printf("  MOSI (Data): GPIO %d\n", SPI_MOSI_PIN);
   Serial.printf("  Frequency: %d MHz\n", SPI_FREQUENCY / 1000000);
+  
+  // Test SCK pin manually to verify hardware
+  Serial.println("\nTesting SCK pin manually (5 pulses)...");
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(SPI_CLOCK_PIN, HIGH);
+    delayMicroseconds(100);
+    digitalWrite(SPI_CLOCK_PIN, LOW);
+    delayMicroseconds(100);
+  }
+  Serial.println("✓ SCK manual test done - check GPIO 14 with multimeter");
   
   // Initialize LATCH pins
   pinMode(LATCH_PIN_PRIMARY, OUTPUT);
