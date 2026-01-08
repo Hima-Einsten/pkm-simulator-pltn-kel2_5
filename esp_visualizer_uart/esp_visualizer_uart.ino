@@ -98,11 +98,15 @@ const int POWER_LEDS[NUM_LEDS] = {25, 26, 27, 32};  // GPIO aman, tidak konflik
 // Animation state
 byte currentPattern = 0x00;
 int animationPos = 0;
+// Independent animation phase for each pump (WATER FLOW MODEL)
+int animPosPrimary = 0;
+int animPosSecondary = 0;
+int animPosTertiary = 0;
 
 // ============================================
 // TIMING CONFIGURATION (CRITICAL FOR SMOOTH ANIMATION)
 // ============================================
-#define ANIMATION_INTERVAL 150    // Update animasi setiap 150ms (konsisten!)
+#define ANIMATION_INTERVAL 400    // Update animasi setiap 150ms (konsisten!)
 #define LED_UPDATE_INTERVAL 100   // Update LED power setiap 100ms
 #define UART_PROCESS_INTERVAL 10  // Proses UART setiap 10ms
 #define DEBUG_INTERVAL 2000       // Debug output setiap 2 detik
@@ -431,6 +435,10 @@ void processBinaryMessage(uint8_t* msg, uint8_t len) {
                     thermal_kw, power_mwe);
     #endif
     
+    // Save last status for transition detection
+    pump_primary.lastStatus = pump_primary.status;
+    pump_secondary.lastStatus = pump_secondary.status;
+    pump_tertiary.lastStatus = pump_tertiary.status;
     sendUpdateResponse();
   }
   else {
@@ -678,23 +686,48 @@ void loop() {
     // Fall through to normal operation
   #endif
   
-  // NORMAL OPERATION
-  // 1. Update animasi dengan interval KONSISTEN (SINGLE SOURCE!)
   if (current_time - last_anim_time >= ANIMATION_INTERVAL) {
-    // Update pattern position
-    animationPos = (animationPos + 1) % 8;
-    currentPattern = FLOW_PATTERN[animationPos];
-    
-    // Send pattern to ALL ICs using global LATCH
-    sendPattern(currentPattern);
-    
-    // Control visibility via OE pins
-    updatePumpOutputs();
-    
-    last_anim_time = current_time;
-    
-    yield();  // Prevent watchdog timeout
+  
+  // Reset animation phase when pump transitions OFF -> ON
+  if (pump_primary.lastStatus < 2 && pump_primary.status >= 2) {
+    animPosPrimary = 0;
   }
+
+  if (pump_secondary.lastStatus < 2 && pump_secondary.status >= 2) {
+    animPosSecondary = 0;
+  }
+
+  if (pump_tertiary.lastStatus < 2 && pump_tertiary.status >= 2) {
+    animPosTertiary = 0;
+  }
+
+  byte combinedPattern = 0x00;
+
+  // PRIMARY FLOW
+  if (pump_primary.status >= 2) {
+    animPosPrimary = (animPosPrimary + 1) % 8;
+    combinedPattern |= FLOW_PATTERN[animPosPrimary];
+  }
+
+  // SECONDARY FLOW
+  if (pump_secondary.status >= 2) {
+    animPosSecondary = (animPosSecondary + 1) % 8;
+    combinedPattern |= FLOW_PATTERN[animPosSecondary];
+  }
+
+  // TERTIARY FLOW
+  if (pump_tertiary.status >= 2) {
+    animPosTertiary = (animPosTertiary + 1) % 8;
+    combinedPattern |= FLOW_PATTERN[animPosTertiary];
+  }
+
+  sendPattern(combinedPattern);
+  updatePumpOutputs();
+
+  last_anim_time = current_time;
+  yield();
+}
+
   
   // 2. Update LED power dengan interval terpisah
   if (current_time - last_led_time >= LED_UPDATE_INTERVAL) {
@@ -708,10 +741,6 @@ void loop() {
     last_uart_time = current_time;
   }
   
-  if (pump_primary.status == 0 &&
-    pump_secondary.status == 0 &&
-    pump_tertiary.status == 0) {
-  sendPattern(0x00);
   // Yield untuk menjaga stabilitas sistem
   yield();
 }
