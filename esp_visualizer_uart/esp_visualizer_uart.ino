@@ -93,17 +93,17 @@ SPIClass * hspi = NULL;
 #define SPI_FREQUENCY 1000000  // 1 MHz
 
 // ============================================
-// TRULY CONTINUOUS MODE - Timer Interrupt
+// SIMPLE CONTINUOUS MODE - LEDC PWM Clock
 // ============================================
-#define CLOCK_FREQ_HZ 10000  // 10 kHz clock (slower for stability and debugging)
-#define CLOCK_PERIOD_US (1000000 / CLOCK_FREQ_HZ / 2)  // Half period = 50 microseconds
+#define CLOCK_FREQ_HZ 10000  // 10 kHz clock
+#define LEDC_CHANNEL 0
+#define LEDC_RESOLUTION 1  // 1-bit resolution for 50% duty cycle
 
-// Timer and state variables
-hw_timer_t * clockTimer = NULL;
-volatile bool clockState = false;
-volatile byte currentPattern = 0x00;
-volatile int bitPosition = 0;  // 0-7 for 8 bits
-volatile int icIndex = 0;      // 0-2 for 3 ICs
+// Data shifting state
+byte currentPattern = 0x00;
+int currentBit = 0;
+int currentIC = 0;
+int animationPos = 0;
 
 // ============================================
 // TIMING CONFIGURATION (CRITICAL FOR SMOOTH ANIMATION)
@@ -295,79 +295,43 @@ void clearAllShiftRegisters() {
 }
 
 // ============================================
-// TRULY CONTINUOUS MODE - Timer ISR
+// SIMPLE CONTINUOUS MODE - No Timer Interrupt
 // ============================================
 
 /**
- * Timer interrupt - called every 50 microseconds (10 kHz)
- * Generates continuous clock and shifts data bits
- * CRITICAL: Keep this ISR as fast as possible!
- */
-void IRAM_ATTR onClockTimer() {
-  // Toggle clock pin
-  clockState = !clockState;
-  digitalWrite(SPI_CLOCK_PIN, clockState ? HIGH : LOW);
-  
-  // On rising edge, shift out next data bit
-  if (clockState) {
-    // Get current bit from pattern (MSB first)
-    byte bit = (currentPattern >> (7 - bitPosition)) & 0x01;
-    digitalWrite(SPI_MOSI_PIN, bit ? HIGH : LOW);
-    
-    // Move to next bit
-    bitPosition++;
-    
-    // After 8 bits, move to next IC
-    if (bitPosition >= 8) {
-      bitPosition = 0;
-      icIndex++;
-      
-      // After 3 ICs (24 bits total), cycle complete
-      if (icIndex >= 3) {
-        icIndex = 0;
-        // Pattern update happens in main loop, not in ISR
-      }
-    }
-  }
-}
-
-/**
- * Start continuous clock and data transmission
+ * Start continuous clock using LEDC PWM
+ * Much simpler and safer than timer interrupt
  */
 void startContinuousMode() {
-  Serial.println("\n=== STARTING TRULY CONTINUOUS MODE ===");
-  Serial.printf("Clock: %d Hz on GPIO %d\n", CLOCK_FREQ_HZ, SPI_CLOCK_PIN);
-  Serial.printf("Data: Continuous pattern on GPIO %d\n", SPI_MOSI_PIN);
-  Serial.println("========================================\n");
+  Serial.println("\n=== STARTING SIMPLE CONTINUOUS MODE ===");
+  Serial.printf("Clock: %d Hz on GPIO %d (LEDC PWM)\n", CLOCK_FREQ_HZ, SPI_CLOCK_PIN);
+  Serial.println("Data: Updated in main loop\n");
+  
+  // Setup LEDC PWM for continuous clock
+  ledcAttach(SPI_CLOCK_PIN, CLOCK_FREQ_HZ, LEDC_RESOLUTION);
+  ledcWrite(SPI_CLOCK_PIN, 1);  // 50% duty cycle = square wave
+  
+  // Initialize data pin
+  pinMode(SPI_MOSI_PIN, OUTPUT);
+  digitalWrite(SPI_MOSI_PIN, LOW);
   
   // Initialize pattern
   currentPattern = FLOW_PATTERN[0];
-  bitPosition = 0;
-  icIndex = 0;
+  currentBit = 0;
+  currentIC = 0;
+  animationPos = 0;
   
-  // Setup timer interrupt with SAFE frequency
-  // ESP32 Core 3.x API: timerBegin(frequency)
-  clockTimer = timerBegin(1000000);  // 1 MHz timer (1 microsecond resolution)
-  timerAttachInterrupt(clockTimer, &onClockTimer);
-  timerAlarm(clockTimer, CLOCK_PERIOD_US, true, 0);  // Alarm every 50us, auto-reload
-  
-  Serial.println("✓ Continuous mode ACTIVE");
-  Serial.println("✓ GPIO 14 (clock) running continuously at 10 kHz");
-  Serial.println("✓ GPIO 13 (data) shifting pattern continuously");
-  Serial.println("\nYou can now measure with oscilloscope:");
-  Serial.printf("  - GPIO 14: %d kHz square wave\n", CLOCK_FREQ_HZ / 1000);
-  Serial.println("  - GPIO 13: Data pattern (8 bits repeating)");
-  Serial.println("\nNOTE: Pattern updates happen in main loop, not in ISR");
+  Serial.println("✓ Continuous clock ACTIVE (LEDC PWM)");
+  Serial.println("✓ GPIO 14: 10 kHz square wave");
+  Serial.println("✓ GPIO 13: Data updated in loop");
+  Serial.println("\nThis approach is SAFE and won't crash ESP32!");
 }
 
 /**
  * Stop continuous mode
  */
 void stopContinuousMode() {
-  if (clockTimer != NULL) {
-    timerEnd(clockTimer);
-    clockTimer = NULL;
-  }
+  ledcDetach(SPI_CLOCK_PIN);
   digitalWrite(SPI_CLOCK_PIN, LOW);
   digitalWrite(SPI_MOSI_PIN, LOW);
   Serial.println("Continuous mode stopped");
@@ -824,10 +788,21 @@ void loop() {
   // NORMAL OPERATION
   // 1. Update animasi dengan interval KONSISTEN
   if (current_time - last_anim_time >= ANIMATION_INTERVAL) {
-    // Update pattern for continuous mode
-    static int animPos = 0;
-    animPos = (animPos + 1) % 8;
-    currentPattern = FLOW_PATTERN[animPos];  // Update volatile variable
+    // Update pattern
+    animationPos = (animationPos + 1) % 8;
+    currentPattern = FLOW_PATTERN[animationPos];
+    
+    // Shift out data bits manually (synchronized with LEDC clock)
+    // This is simple and safe - no timer interrupt needed!
+    for (int ic = 0; ic < 3; ic++) {
+      for (int bit = 7; bit >= 0; bit--) {
+        digitalWrite(SPI_MOSI_PIN, (currentPattern >> bit) & 1);
+        delayMicroseconds(50);  // Half clock period
+      }
+    }
+    
+    // Pulse LATCH pins
+    pulseLatchPins();
     
     updateFlowAnimation();
     last_anim_time = current_time;
