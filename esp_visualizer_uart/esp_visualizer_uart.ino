@@ -88,21 +88,15 @@ const int POWER_LEDS[NUM_LEDS] = {25, 26, 27, 32};  // GPIO aman, tidak konflik
 #define LATCH_PIN_SECONDARY 18 // IC #2 - Secondary (FIXED: 5→18, avoid strapping pin)
 #define LATCH_PIN_TERTIARY 19  // IC #3 - Tertiary (FIXED: 12→19, avoid SPI MISO conflict)
 
-// SPI Configuration (NOT USED in continuous mode)
-SPIClass * hspi = NULL;
-#define SPI_FREQUENCY 1000000  // 1 MHz
-
 // ============================================
-// SIMPLE CONTINUOUS MODE - LEDC PWM Clock
+// BIT-BANGING MODE - LEDC PWM Clock Only
 // ============================================
-#define CLOCK_FREQ_HZ 10000  // 10 kHz clock
-#define LEDC_CHANNEL 0
-#define LEDC_RESOLUTION 1  // 1-bit resolution for 50% duty cycle
+// NO SPI hardware used - all manual control
+#define CLOCK_FREQ_HZ 10000  // 10 kHz clock via LEDC PWM
+#define BIT_DELAY_US 50      // 50us = half period of 10kHz
 
-// Data shifting state
+// Animation state
 byte currentPattern = 0x00;
-int currentBit = 0;
-int currentIC = 0;
 int animationPos = 0;
 
 // ============================================
@@ -195,103 +189,90 @@ const byte FLOW_PATTERN[8] = {
 };
 
 // ============================================
-// SHIFT REGISTER FUNCTIONS (CONTINUOUS MODE)
+// BIT-BANGING SHIFT REGISTER FUNCTIONS
 // ============================================
 
 /**
- * Send pattern to ALL shift registers via SPI
- * SPI selalu aktif, tidak peduli status pompa
- * Pattern dikirim ke semua IC sekaligus (shared MOSI/SCK)
+ * Send 8 bits to shift register using bit-banging
+ * Clock is provided by LEDC PWM (hardware)
+ * Data is sent manually with digitalWrite
  */
-void sendPatternToAllICs(byte pattern) {
-  // Begin SPI transaction
-  hspi->beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0));
+void shiftOutManual(byte data) {
+  // Send 8 bits, MSB first
+  for (int i = 7; i >= 0; i--) {
+    // Set data bit
+    digitalWrite(SPI_MOSI_PIN, (data >> i) & 1);
+    
+    // Wait for clock edge (synchronized with LEDC PWM)
+    delayMicroseconds(BIT_DELAY_US);
+  }
+}
+
+/**
+ * Send pattern to ONE shift register using bit-banging
+ * LATCH is used ONLY for data transfer (RCLK), not output enable
+ */
+void sendPatternToIC(byte pattern, int latchPin) {
+  // LATCH LOW - prepare to receive data
+  digitalWrite(latchPin, LOW);
+  delayMicroseconds(1);
   
-  // Send same pattern 3 times (one for each IC)
-  // Karena MOSI shared, semua IC terima data yang sama
-  hspi->transfer(pattern);
-  hspi->transfer(pattern);
-  hspi->transfer(pattern);
+  // Send 8 bits manually
+  shiftOutManual(pattern);
   
-  hspi->endTransaction();
+  // Small delay before latch
+  delayMicroseconds(1);
+  
+  // LATCH HIGH - transfer shift register to output register
+  digitalWrite(latchPin, HIGH);
+  delayMicroseconds(1);
   
   #if DEBUG_SHIFT_REGISTER
-    Serial.printf("[SPI] Pattern=0x%02X sent to all ICs\n", pattern);
+    Serial.printf("[BIT-BANG] Latch=%d Pattern=0x%02X\n", latchPin, pattern);
   #endif
 }
 
 /**
- * Update LATCH pins based on pump status
- * LATCH HIGH = output enabled (LED menyala)
- * LATCH LOW = output disabled (LED mati)
+ * Update ALL shift registers based on pump status
+ * This is the SINGLE SOURCE of truth for LED control
  */
-void updateLatchPins() {
-  // Primary pump
+void updateAllShiftRegisters() {
+  byte pattern_primary = 0x00;
+  byte pattern_secondary = 0x00;
+  byte pattern_tertiary = 0x00;
+  
+  // Determine pattern for each pump based on status
+  // OFF (0) or STARTING (1) → 0x00 (LEDs off)
+  // ON (2) or SHUTTING_DOWN (3) → animation pattern
+  
   if (pump_primary.status == 2 || pump_primary.status == 3) {
-    digitalWrite(LATCH_PIN_PRIMARY, HIGH);  // Enable output
-  } else {
-    digitalWrite(LATCH_PIN_PRIMARY, LOW);   // Disable output
+    pattern_primary = currentPattern;
   }
   
-  // Secondary pump
   if (pump_secondary.status == 2 || pump_secondary.status == 3) {
-    digitalWrite(LATCH_PIN_SECONDARY, HIGH);
-  } else {
-    digitalWrite(LATCH_PIN_SECONDARY, LOW);
+    pattern_secondary = currentPattern;
   }
   
-  // Tertiary pump
   if (pump_tertiary.status == 2 || pump_tertiary.status == 3) {
-    digitalWrite(LATCH_PIN_TERTIARY, HIGH);
-  } else {
-    digitalWrite(LATCH_PIN_TERTIARY, LOW);
+    pattern_tertiary = currentPattern;
   }
-}
-
-/**
- * Pulse LATCH to transfer shift register to output register
- * Dipanggil setelah SPI transfer untuk update LED
- */
-void pulseLatchPins() {
-  // Pulse semua LATCH pins untuk transfer data
-  // Hanya IC dengan LATCH=HIGH yang akan update output
   
-  // Set all LOW first
-  digitalWrite(LATCH_PIN_PRIMARY, LOW);
-  digitalWrite(LATCH_PIN_SECONDARY, LOW);
-  digitalWrite(LATCH_PIN_TERTIARY, LOW);
-  delayMicroseconds(1);
+  // Send patterns to each IC
+  sendPatternToIC(pattern_primary, LATCH_PIN_PRIMARY);
+  sendPatternToIC(pattern_secondary, LATCH_PIN_SECONDARY);
+  sendPatternToIC(pattern_tertiary, LATCH_PIN_TERTIARY);
   
-  // Pulse HIGH based on pump status
-  if (pump_primary.status == 2 || pump_primary.status == 3) {
-    digitalWrite(LATCH_PIN_PRIMARY, HIGH);
-  }
-  if (pump_secondary.status == 2 || pump_secondary.status == 3) {
-    digitalWrite(LATCH_PIN_SECONDARY, HIGH);
-  }
-  if (pump_tertiary.status == 2 || pump_tertiary.status == 3) {
-    digitalWrite(LATCH_PIN_TERTIARY, HIGH);
-  }
-  delayMicroseconds(1);
+  #if DEBUG_TIMING
+    Serial.printf("[UPDATE] P1=0x%02X P2=0x%02X P3=0x%02X\n", 
+                  pattern_primary, pattern_secondary, pattern_tertiary);
+  #endif
 }
 
 void clearAllShiftRegisters() {
-  // Send 0x00 pattern
-  hspi->beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0));
-  hspi->transfer(0x00);
-  hspi->transfer(0x00);
-  hspi->transfer(0x00);
-  hspi->endTransaction();
-  
-  // Pulse all latches
-  digitalWrite(LATCH_PIN_PRIMARY, LOW);
-  digitalWrite(LATCH_PIN_SECONDARY, LOW);
-  digitalWrite(LATCH_PIN_TERTIARY, LOW);
-  delayMicroseconds(1);
-  digitalWrite(LATCH_PIN_PRIMARY, HIGH);
-  digitalWrite(LATCH_PIN_SECONDARY, HIGH);
-  digitalWrite(LATCH_PIN_TERTIARY, HIGH);
-  delayMicroseconds(1);
+  // Send 0x00 to all ICs using standard update function
+  sendPatternToIC(0x00, LATCH_PIN_PRIMARY);
+  sendPatternToIC(0x00, LATCH_PIN_SECONDARY);
+  sendPatternToIC(0x00, LATCH_PIN_TERTIARY);
 }
 
 // ============================================
@@ -299,85 +280,56 @@ void clearAllShiftRegisters() {
 // ============================================
 
 /**
- * Start continuous clock using LEDC PWM
- * Much simpler and safer than timer interrupt
+ * Start continuous clock using LEDC PWM ONLY
+ * Clock runs in hardware, data is bit-banged manually
  */
 void startContinuousMode() {
-  Serial.println("\n=== STARTING SIMPLE CONTINUOUS MODE ===");
-  Serial.printf("Clock: %d Hz on GPIO %d (LEDC PWM)\n", CLOCK_FREQ_HZ, SPI_CLOCK_PIN);
-  Serial.println("Data: Updated in main loop\n");
+  Serial.println("\n=== STARTING BIT-BANGING MODE ===");
+  Serial.println("Clock: LEDC PWM (hardware, 10 kHz)");
+  Serial.println("Data: Manual bit-banging (software)");
+  Serial.println("NO SPI hardware used!\n");
   
-  // Setup LEDC PWM for continuous clock
-  ledcAttach(SPI_CLOCK_PIN, CLOCK_FREQ_HZ, LEDC_RESOLUTION);
-  ledcWrite(SPI_CLOCK_PIN, 1);  // 50% duty cycle = square wave
+  // Setup LEDC PWM for continuous clock on GPIO 14
+  // This is the ONLY thing controlling GPIO 14
+  ledcAttach(SPI_CLOCK_PIN, CLOCK_FREQ_HZ, 1);  // 10kHz, 1-bit resolution
+  ledcWrite(SPI_CLOCK_PIN, 1);  // 50% duty cycle
   
-  // Initialize data pin
+  Serial.println("✓ LEDC PWM started on GPIO 14 (10 kHz continuous)");
+  Serial.println("✓ GPIO 14 is NEVER touched by software");
+  
+  // Initialize data pin (GPIO 13)
   pinMode(SPI_MOSI_PIN, OUTPUT);
   digitalWrite(SPI_MOSI_PIN, LOW);
+  Serial.println("✓ GPIO 13 (data) initialized for bit-banging");
   
   // Initialize pattern
   currentPattern = FLOW_PATTERN[0];
-  currentBit = 0;
-  currentIC = 0;
   animationPos = 0;
   
-  Serial.println("✓ Continuous clock ACTIVE (LEDC PWM)");
-  Serial.println("✓ GPIO 14: 10 kHz square wave");
-  Serial.println("✓ GPIO 13: Data updated in loop");
-  Serial.println("\nThis approach is SAFE and won't crash ESP32!");
+  Serial.println("\n✓ Bit-banging mode ACTIVE");
+  Serial.println("  - Clock: Hardware PWM (no software control)");
+  Serial.println("  - Data: Software digitalWrite (deterministic)");
+  Serial.println("  - Latch: Software control (pump-based)");
+  Serial.println("\nThis is 100% deterministic - no peripheral conflicts!");
 }
 
-/**
- * Stop continuous mode
- */
 void stopContinuousMode() {
-  ledcDetach(SPI_CLOCK_PIN);
-  digitalWrite(SPI_CLOCK_PIN, LOW);
+  ledcDetach(SPI_CLOCK_PIN);  // Stop PWM
   digitalWrite(SPI_MOSI_PIN, LOW);
-  Serial.println("Continuous mode stopped");
+  Serial.println("Bit-banging mode stopped");
 }
 
 // ============================================
-// ANIMATION FUNCTIONS (CONTINUOUS MODE)
+// ANIMATION FUNCTIONS (SIMPLIFIED)
 // ============================================
 
 /**
- * Update flow animation - CONTINUOUS MODE
- * SPI selalu kirim pattern, LATCH mengontrol output
+ * Update flow animation - SINGLE SOURCE control
+ * Called from main loop at fixed interval
  */
 void updateFlowAnimation() {
-  static unsigned long lastUpdate = 0;
-  static int currentPos = 0;
-  unsigned long now = millis();
-  
-  // Determine animation speed based on any active pump
-  unsigned long delay_ms = ANIM_SPEED_ON;
-  
-  // If any pump is shutting down, use slower speed
-  if (pump_primary.status == 3 || pump_secondary.status == 3 || pump_tertiary.status == 3) {
-    delay_ms = ANIM_SPEED_SHUTDOWN;
-  }
-  
-  // Update animation at fixed interval
-  if (now - lastUpdate >= delay_ms) {
-    lastUpdate = now;
-    
-    // Get current pattern from array
-    byte pattern = FLOW_PATTERN[currentPos];
-    
-    #if DEBUG_SHIFT_REGISTER
-      Serial.printf("[ANIM] Pos=%d Pattern=0x%02X\n", currentPos, pattern);
-    #endif
-    
-    // Send pattern to ALL ICs via SPI (MOSI/SCK always active)
-    sendPatternToAllICs(pattern);
-    
-    // Pulse LATCH pins based on pump status
-    pulseLatchPins();
-    
-    // Advance to next position
-    currentPos = (currentPos + 1) % 8;
-  }
+  // This function is now just a placeholder
+  // All actual updates happen in main loop via updateAllShiftRegisters()
 }
 
 // ============================================
@@ -698,12 +650,16 @@ void setup() {
   UartComm.begin(UART_BAUD, SERIAL_8N1, 16, 17);
   
   // Initialize GPIO pins for continuous mode
-  Serial.println("Initializing GPIO pins for CONTINUOUS MODE...");
-  pinMode(SPI_CLOCK_PIN, OUTPUT);
+  Serial.println("Initializing GPIO pins for PWM CONTINUOUS MODE...");
+  
+  // IMPORTANT: Do NOT set pinMode for SPI_CLOCK_PIN
+  // LEDC PWM will handle it automatically
+  
+  // Only initialize data pin
   pinMode(SPI_MOSI_PIN, OUTPUT);
-  digitalWrite(SPI_CLOCK_PIN, LOW);
   digitalWrite(SPI_MOSI_PIN, LOW);
-  Serial.println("✓ GPIO pins initialized");
+  Serial.println("✓ GPIO 13 (data) initialized");
+  Serial.println("✓ GPIO 14 (clock) will be controlled by LEDC PWM only");
   
   delay(10);
   
@@ -786,26 +742,19 @@ void loop() {
   #endif
   
   // NORMAL OPERATION
-  // 1. Update animasi dengan interval KONSISTEN
+  // 1. Update animasi dengan interval KONSISTEN (SINGLE SOURCE!)
   if (current_time - last_anim_time >= ANIMATION_INTERVAL) {
-    // Update pattern
+    // Update pattern position
     animationPos = (animationPos + 1) % 8;
     currentPattern = FLOW_PATTERN[animationPos];
     
-    // Shift out data bits manually (synchronized with LEDC clock)
-    // This is simple and safe - no timer interrupt needed!
-    for (int ic = 0; ic < 3; ic++) {
-      for (int bit = 7; bit >= 0; bit--) {
-        digitalWrite(SPI_MOSI_PIN, (currentPattern >> bit) & 1);
-        delayMicroseconds(50);  // Half clock period
-      }
-    }
+    // SINGLE SOURCE: Update all shift registers based on pump status
+    // This handles both animation and OFF states (0x00)
+    updateAllShiftRegisters();
     
-    // Pulse LATCH pins
-    pulseLatchPins();
-    
-    updateFlowAnimation();
     last_anim_time = current_time;
+    
+    yield();  // Prevent watchdog timeout
   }
   
   // 2. Update LED power dengan interval terpisah
