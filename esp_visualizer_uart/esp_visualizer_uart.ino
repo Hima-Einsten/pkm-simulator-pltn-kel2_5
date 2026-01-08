@@ -95,8 +95,8 @@ SPIClass * hspi = NULL;
 // ============================================
 // TRULY CONTINUOUS MODE - Timer Interrupt
 // ============================================
-#define CLOCK_FREQ_HZ 100000  // 100 kHz clock (slower for stability)
-#define CLOCK_PERIOD_US (1000000 / CLOCK_FREQ_HZ / 2)  // Half period in microseconds
+#define CLOCK_FREQ_HZ 10000  // 10 kHz clock (slower for stability and debugging)
+#define CLOCK_PERIOD_US (1000000 / CLOCK_FREQ_HZ / 2)  // Half period = 50 microseconds
 
 // Timer and state variables
 hw_timer_t * clockTimer = NULL;
@@ -104,10 +104,6 @@ volatile bool clockState = false;
 volatile byte currentPattern = 0x00;
 volatile int bitPosition = 0;  // 0-7 for 8 bits
 volatile int icIndex = 0;      // 0-2 for 3 ICs
-
-// Animation state
-volatile int animationPosition = 0;  // 0-7 for pattern array
-volatile unsigned long lastAnimUpdate = 0;
 
 // ============================================
 // TIMING CONFIGURATION (CRITICAL FOR SMOOTH ANIMATION)
@@ -303,8 +299,9 @@ void clearAllShiftRegisters() {
 // ============================================
 
 /**
- * Timer interrupt - called every CLOCK_PERIOD_US microseconds
+ * Timer interrupt - called every 50 microseconds (10 kHz)
  * Generates continuous clock and shifts data bits
+ * CRITICAL: Keep this ISR as fast as possible!
  */
 void IRAM_ATTR onClockTimer() {
   // Toggle clock pin
@@ -328,14 +325,7 @@ void IRAM_ATTR onClockTimer() {
       // After 3 ICs (24 bits total), cycle complete
       if (icIndex >= 3) {
         icIndex = 0;
-        
-        // Update animation pattern if needed
-        unsigned long now = millis();
-        if (now - lastAnimUpdate >= ANIMATION_INTERVAL) {
-          lastAnimUpdate = now;
-          animationPosition = (animationPosition + 1) % 8;
-          currentPattern = FLOW_PATTERN[animationPosition];
-        }
+        // Pattern update happens in main loop, not in ISR
       }
     }
   }
@@ -354,21 +344,20 @@ void startContinuousMode() {
   currentPattern = FLOW_PATTERN[0];
   bitPosition = 0;
   icIndex = 0;
-  animationPosition = 0;
-  lastAnimUpdate = millis();
   
-  // Setup timer interrupt
+  // Setup timer interrupt with SAFE frequency
   // ESP32 Core 3.x API: timerBegin(frequency)
   clockTimer = timerBegin(1000000);  // 1 MHz timer (1 microsecond resolution)
   timerAttachInterrupt(clockTimer, &onClockTimer);
-  timerAlarm(clockTimer, CLOCK_PERIOD_US, true, 0);  // Alarm every CLOCK_PERIOD_US, auto-reload
+  timerAlarm(clockTimer, CLOCK_PERIOD_US, true, 0);  // Alarm every 50us, auto-reload
   
   Serial.println("✓ Continuous mode ACTIVE");
-  Serial.println("✓ GPIO 14 (clock) running continuously");
+  Serial.println("✓ GPIO 14 (clock) running continuously at 10 kHz");
   Serial.println("✓ GPIO 13 (data) shifting pattern continuously");
   Serial.println("\nYou can now measure with oscilloscope:");
   Serial.printf("  - GPIO 14: %d kHz square wave\n", CLOCK_FREQ_HZ / 1000);
   Serial.println("  - GPIO 13: Data pattern (8 bits repeating)");
+  Serial.println("\nNOTE: Pattern updates happen in main loop, not in ISR");
 }
 
 /**
@@ -835,6 +824,11 @@ void loop() {
   // NORMAL OPERATION
   // 1. Update animasi dengan interval KONSISTEN
   if (current_time - last_anim_time >= ANIMATION_INTERVAL) {
+    // Update pattern for continuous mode
+    static int animPos = 0;
+    animPos = (animPos + 1) % 8;
+    currentPattern = FLOW_PATTERN[animPos];  // Update volatile variable
+    
     updateFlowAnimation();
     last_anim_time = current_time;
   }
