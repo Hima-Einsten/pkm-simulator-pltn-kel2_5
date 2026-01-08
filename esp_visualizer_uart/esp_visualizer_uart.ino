@@ -281,6 +281,23 @@ void clearAllShiftRegisters() {
   delayMicroseconds(1);
 }
 
+/**
+ * Helper function for backward compatibility
+ * Writes pattern to a single IC (used by test functions)
+ */
+void writeShiftRegisterIC(byte data, int latchPin) {
+  // Send pattern via SPI
+  hspi->beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0));
+  hspi->transfer(data);
+  hspi->endTransaction();
+  
+  // Pulse the specified latch
+  digitalWrite(latchPin, LOW);
+  delayMicroseconds(1);
+  digitalWrite(latchPin, HIGH);
+  delayMicroseconds(1);
+}
+
 // ============================================
 // ANIMATION FUNCTIONS (CONTINUOUS MODE)
 // ============================================
