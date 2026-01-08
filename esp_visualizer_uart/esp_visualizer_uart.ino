@@ -15,7 +15,6 @@
  * Pin Configuration (NO CONFLICT):
  * - LED Power: GPIO 25, 26, 27, 32 (safe pins, no SPI conflict)
  * - SPI HSPI: SCK=14, MOSI=13 (default, no conflict with LEDs)
- * - LATCH Pins: 4, 18, 19 (FIXED - safe pins, no UART/SPI conflict)
  * 
  * Protocol: BINARY Protocol with ACK/NACK (115200 baud, 8N1)
  * - Command: 9 bytes (vs 42 bytes JSON) - 79% reduction
@@ -33,7 +32,6 @@
  */
 
 #include <Arduino.h>
-#include <SPI.h>
 
 // ============================================
 // Binary Protocol Constants
@@ -63,9 +61,9 @@ struct Pump {
 // ============================================
 // DEBUG Configuration
 // ============================================
-#define DEBUG_SHIFT_REGISTER true   // Set to true untuk debug LED animation
+#define DEBUG_SHIFT_REGISTER false   // Set to true untuk debug LED animation
 #define DEBUG_UART false            // Debug UART communication
-#define DEBUG_TIMING true           // Debug timing performance
+#define DEBUG_TIMING false           // Debug timing performance
 #define HARDWARE_TEST_MODE false    // Set TRUE untuk test kontinyu (bypass pump status)
 
 // ============================================
@@ -76,7 +74,6 @@ struct Pump {
 const int NUM_LEDS = 4;
 const int POWER_LEDS[NUM_LEDS] = {25, 26, 27, 32};  // GPIO aman, tidak konflik
 
-// SHIFT REGISTER - Menggunakan HARDWARE LEDC PWM untuk clock
 #define SPI_CLOCK_PIN 14       // SCK - LEDC PWM (continuous 10kHz)
 #define SPI_MOSI_PIN 13        // MOSI - Manual bit-banging
 
@@ -91,8 +88,6 @@ const int POWER_LEDS[NUM_LEDS] = {25, 26, 27, 32};  // GPIO aman, tidak konflik
 // ============================================
 // BIT-BANGING MODE - LEDC PWM Clock Only
 // ============================================
-// NO SPI hardware used - all manual control
-#define CLOCK_FREQ_HZ 10000  // 10 kHz clock via LEDC PWM
 #define BIT_DELAY_US 10      // 10us = half period of 10kHz
 
 // Animation state
@@ -199,10 +194,14 @@ const byte FLOW_PATTERN[8] = {
 // ============================================
 void shiftOutManual(byte data) {
   for (int i = 7; i >= 0; i--) {
-    digitalWrite(SPI_MOSI_PIN, (data >> i) & 0x01);
+    digitalWrite(SPI_MOSI_PIN, (data >> i) & 1);
+    digitalWrite(SPI_CLOCK_PIN, HIGH);
+    delayMicroseconds(BIT_DELAY_US);
+    digitalWrite(SPI_CLOCK_PIN, LOW);
     delayMicroseconds(BIT_DELAY_US);
   }
 }
+
 /**
  * Send pattern to ALL shift registers using global LATCH
  * All ICs share one RCLK line, receive same pattern
@@ -268,49 +267,7 @@ void clearAllShiftRegisters() {
   sendPattern(0x00);
 }
 
-// ============================================
-// SIMPLE CONTINUOUS MODE - No Timer Interrupt
-// ============================================
 
-/**
- * Start continuous clock using LEDC PWM ONLY
- * Clock runs in hardware, data is bit-banged manually
- */
-void startContinuousMode() {
-  Serial.println("\n=== STARTING BIT-BANGING MODE ===");
-  Serial.println("Clock: LEDC PWM (hardware, 10 kHz)");
-  Serial.println("Data: Manual bit-banging (software)");
-  Serial.println("NO SPI hardware used!\n");
-  
-  // Setup LEDC PWM for continuous clock on GPIO 14
-  // This is the ONLY thing controlling GPIO 14
-  ledcAttach(SPI_CLOCK_PIN, CLOCK_FREQ_HZ, 1);  // 10kHz, 1-bit resolution
-  ledcWrite(SPI_CLOCK_PIN, 1);  // 50% duty cycle
-  
-  Serial.println("✓ LEDC PWM started on GPIO 14 (10 kHz continuous)");
-  Serial.println("✓ GPIO 14 is NEVER touched by software");
-  
-  // Initialize data pin (GPIO 13)
-  pinMode(SPI_MOSI_PIN, OUTPUT);
-  digitalWrite(SPI_MOSI_PIN, LOW);
-  Serial.println("✓ GPIO 13 (data) initialized for bit-banging");
-  
-  // Initialize pattern
-  currentPattern = FLOW_PATTERN[0];
-  animationPos = 0;
-  
-  Serial.println("\n✓ Bit-banging mode ACTIVE");
-  Serial.println("  - Clock: Hardware PWM (no software control)");
-  Serial.println("  - Data: Software digitalWrite (deterministic)");
-  Serial.println("  - Latch: Software control (pump-based)");
-  Serial.println("\nThis is 100% deterministic - no peripheral conflicts!");
-}
-
-void stopContinuousMode() {
-  ledcDetach(SPI_CLOCK_PIN);  // Stop PWM
-  digitalWrite(SPI_MOSI_PIN, LOW);
-  Serial.println("Bit-banging mode stopped");
-}
 
 // ============================================
 // BINARY PROTOCOL FUNCTIONS
@@ -422,6 +379,9 @@ void processBinaryMessage(uint8_t* msg, uint8_t len) {
       return;
     }
     
+    pump_primary.lastStatus = pump_primary.status;
+    pump_secondary.lastStatus = pump_secondary.status;
+    pump_tertiary.lastStatus = pump_tertiary.status;
     // Parse data
     memcpy(&thermal_kw, &msg[3], 4);
     pump_primary.status = msg[7];
@@ -436,10 +396,6 @@ void processBinaryMessage(uint8_t* msg, uint8_t len) {
                     thermal_kw, power_mwe);
     #endif
     
-    // Save last status for transition detection
-    pump_primary.lastStatus = pump_primary.status;
-    pump_secondary.lastStatus = pump_secondary.status;
-    pump_tertiary.lastStatus = pump_tertiary.status;
     sendUpdateResponse();
   }
   else {
@@ -586,7 +542,6 @@ void setup() {
   Serial.println("Pin Configuration (No Conflict - FIXED):");
   Serial.println("  Power LEDs: GPIO 25, 26, 27, 32");
   Serial.println("  SPI HSPI: SCK=14, MOSI=13");
-  Serial.println("  LATCH Pins: 4, 18, 19 (FIXED)");
   Serial.println("  UART: RX=16, TX=17");
   Serial.println("===========================================");
   
@@ -619,11 +574,10 @@ void setup() {
   digitalWrite(OE_PIN_PRIMARY, HIGH);    // Disabled at boot
   digitalWrite(OE_PIN_SECONDARY, HIGH);  // Disabled at boot
   digitalWrite(OE_PIN_TERTIARY, HIGH);   // Disabled at boot
-  Serial.println("✓ OE pins initialized (GPIO 18, 19, 25) - FAIL-SAFE OFF");
-  
-  // Start continuous clock and data transmission
-  startContinuousMode();
-  
+
+  pinMode(SPI_CLOCK_PIN, OUTPUT);
+  digitalWrite(SPI_CLOCK_PIN, LOW);
+
   
   delay(10);
   
@@ -646,7 +600,7 @@ void setup() {
   
   Serial.println("UART ready at 115200 baud");
   Serial.println("Timing Configuration:");
-  Serial.printf("  Animation: %d ms interval\n", ANIMATION_INTERVAL);
+  Serial.printf("  Animation Step: %d ms\n", ANIM_STEP_DELAY);
   Serial.printf("  LED Update: %d ms interval\n", LED_UPDATE_INTERVAL);
   Serial.println("===========================================");
   Serial.println("ESP32 Power Indicator READY");
@@ -744,7 +698,11 @@ void loop() {
     processUART();
     last_uart_time = current_time;
   }
-  
+
+  pump_primary.lastStatus   = pump_primary.status;
+  pump_secondary.lastStatus = pump_secondary.status;
+  pump_tertiary.lastStatus  = pump_tertiary.status;
+
   // Yield untuk menjaga stabilitas sistem
   yield();
 }
