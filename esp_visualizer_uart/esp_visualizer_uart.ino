@@ -167,16 +167,26 @@ bool led_mode_high = false;       // true = HIGH mode (full 3.3V), false = PWM m
  * PERFORMANCE: SPI hardware is ~3x faster than software shiftOut()
  * CRITICAL: Uses MSBFIRST to match physical LED wiring
  * Bit 7 (MSB) = Q7 (LED 8), Bit 0 (LSB) = Q0 (LED 1)
+ * 
+ * TIMING FIX: Added delays to prevent glitches and ensure stable operation
  */
 void writeShiftRegisterIC(byte data, int latchPin) {
   // Step 1: LATCH LOW - disable output update
   digitalWrite(latchPin, LOW);
+  delayMicroseconds(1);  // Setup time - ensure LATCH is stable LOW
   
   // Step 2: Shift 8 bits via hardware SPI (FAST!)
   hspi->transfer(data);  // SPI handles MSBFIRST by default
   
-  // Step 3: LATCH HIGH - transfer to output register
+  // CRITICAL: Wait for SPI transfer to complete
+  delayMicroseconds(2);  // Hold time - ensure all 8 bits are fully shifted
+  
+  // Step 3: LATCH HIGH - transfer shift register to output register
   digitalWrite(latchPin, HIGH);
+  delayMicroseconds(2);  // Pulse width - ensure latch captures data
+  
+  // Keep LATCH HIGH - 74HC595 output register is level-triggered
+  // Data will remain stable on outputs as long as LATCH is HIGH;
   
   // DEBUG: Print what was sent
   if (DEBUG_SHIFT_REGISTER) {
