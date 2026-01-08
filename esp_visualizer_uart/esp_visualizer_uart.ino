@@ -358,10 +358,10 @@ void startContinuousMode() {
   lastAnimUpdate = millis();
   
   // Setup timer interrupt
-  clockTimer = timerBegin(0, 80, true);  // Timer 0, prescaler 80 (1 MHz)
-  timerAttachInterrupt(clockTimer, &onClockTimer, true);
-  timerAlarmWrite(clockTimer, CLOCK_PERIOD_US, true);  // Alarm every CLOCK_PERIOD_US
-  timerAlarmEnable(clockTimer);
+  // ESP32 Core 3.x API: timerBegin(frequency)
+  clockTimer = timerBegin(1000000);  // 1 MHz timer (1 microsecond resolution)
+  timerAttachInterrupt(clockTimer, &onClockTimer);
+  timerAlarm(clockTimer, CLOCK_PERIOD_US, true, 0);  // Alarm every CLOCK_PERIOD_US, auto-reload
   
   Serial.println("✓ Continuous mode ACTIVE");
   Serial.println("✓ GPIO 14 (clock) running continuously");
@@ -376,8 +376,6 @@ void startContinuousMode() {
  */
 void stopContinuousMode() {
   if (clockTimer != NULL) {
-    timerAlarmDisable(clockTimer);
-    timerDetachInterrupt(clockTimer);
     timerEnd(clockTimer);
     clockTimer = NULL;
   }
@@ -768,19 +766,11 @@ void setup() {
   // Start continuous clock and data transmission
   startContinuousMode();
   
+  
   delay(10);
   
-  // Test SPI bus - verify MOSI/SCK are working
-  Serial.println("\nTesting SPI bus...");
-  Serial.println("Sending test pattern 0xAA to verify MOSI signal...");
-  
-  // Send test pattern to all ICs
-  writeShiftRegisterIC(0xAA, LATCH_PIN_PRIMARY);
-  delay(100);
-  writeShiftRegisterIC(0x55, LATCH_PIN_SECONDARY);
-  delay(100);
-  writeShiftRegisterIC(0xFF, LATCH_PIN_TERTIARY);
-  delay(100);
+  // Continuous mode will start automatically - no test needed
+  Serial.println("\nSkipping SPI test - continuous mode will verify signals");
   
   // Clear all shift registers
   Serial.println("Clearing all shift registers...");
@@ -835,23 +825,11 @@ void loop() {
   
   unsigned long current_time = millis();
   
-  // HARDWARE TEST MODE - bypass normal operation
+  // HARDWARE TEST MODE - Not needed in continuous mode
   #if HARDWARE_TEST_MODE
-    // Continuous test pattern untuk verify SPI
-    if (current_time - last_anim_time >= 500) {
-      byte test_patterns[] = {0xAA, 0x55, 0xFF, 0x00, 0x81, 0x18};
-      byte pattern = test_patterns[test_pattern_index];
-      
-      Serial.printf("[TEST MODE] Sending pattern 0x%02X to all ICs\n", pattern);
-      writeShiftRegisterIC(pattern, LATCH_PIN_PRIMARY);
-      writeShiftRegisterIC(pattern, LATCH_PIN_SECONDARY);
-      writeShiftRegisterIC(pattern, LATCH_PIN_TERTIARY);
-      
-      test_pattern_index = (test_pattern_index + 1) % 6;
-      last_anim_time = current_time;
-    }
-    yield();
-    return;  // Skip normal operation
+    Serial.println("[INFO] HARDWARE_TEST_MODE enabled but not used in continuous mode");
+    Serial.println("       Clock and data are already running continuously");
+    // Fall through to normal operation
   #endif
   
   // NORMAL OPERATION
