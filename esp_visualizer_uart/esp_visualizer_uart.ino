@@ -15,7 +15,7 @@
  * Pin Configuration (NO CONFLICT):
  * - LED Power: GPIO 25, 26, 27, 32 (safe pins, no SPI conflict)
  * - SPI HSPI: SCK=14, MOSI=13 (default, no conflict with LEDs)
- * - LATCH Pins: 4, 16, 17 (safe pins, no SPI conflict)
+ * - LATCH Pins: 4, 18, 19 (FIXED - safe pins, no UART/SPI conflict)
  * 
  * Protocol: BINARY Protocol with ACK/NACK (115200 baud, 8N1)
  * - Command: 9 bytes (vs 42 bytes JSON) - 79% reduction
@@ -82,10 +82,10 @@ const int POWER_LEDS[NUM_LEDS] = {25, 26, 27, 32};  // GPIO aman, tidak konflik
 #define SPI_MOSI_PIN 13        // MOSI - HSPI default
 // MISO (12) dan SS (15) tidak digunakan
 
-// LATCH Pins (separate per IC) - GPIO yang AMAN
-#define LATCH_PIN_PRIMARY 4    // IC #1 - Primary pump flow
-#define LATCH_PIN_SECONDARY 5 // IC #2 - Secondary pump flow
-#define LATCH_PIN_TERTIARY 12  // IC #3 - Tertiary pump flow
+// LATCH Pins (separate per IC) - GPIO yang AMAN (FIXED!)
+#define LATCH_PIN_PRIMARY 4    // IC #1 - Primary pump flow (SAFE)
+#define LATCH_PIN_SECONDARY 18 // IC #2 - Secondary (FIXED: 5→18, avoid strapping pin)
+#define LATCH_PIN_TERTIARY 19  // IC #3 - Tertiary (FIXED: 12→19, avoid SPI MISO conflict)
 
 // SPI Configuration
 SPIClass * hspi = NULL;
@@ -544,10 +544,11 @@ void setup() {
   Serial.println("\n\n===========================================");
   Serial.println("ESP32 Power Indicator - OPTIMIZED VERSION");
   Serial.println("===========================================");
-  Serial.println("Pin Configuration (No Conflict):");
+  Serial.println("Pin Configuration (No Conflict - FIXED):");
   Serial.println("  Power LEDs: GPIO 25, 26, 27, 32");
   Serial.println("  SPI HSPI: SCK=14, MOSI=13");
-  Serial.println("  LATCH Pins: 4, 16, 17");
+  Serial.println("  LATCH Pins: 4, 18, 19 (FIXED)");
+  Serial.println("  UART: RX=16, TX=17");
   Serial.println("===========================================");
   
   // Initialize UART
