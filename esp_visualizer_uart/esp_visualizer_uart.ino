@@ -65,9 +65,9 @@ struct Pump {
 // ============================================
 // DEBUG Configuration
 // ============================================
-#define DEBUG_SHIFT_REGISTER false  // Set to false untuk mengurangi Serial output
+#define DEBUG_SHIFT_REGISTER true   // Set to true untuk debug LED animation
 #define DEBUG_UART false            // Debug UART communication
-#define DEBUG_TIMING false          // Debug timing performance
+#define DEBUG_TIMING true          // Debug timing performance
 
 // ============================================
 // HARDWARE PIN ASSIGNMENT (NO CONFLICT)
@@ -177,18 +177,42 @@ const byte FLOW_PATTERN[8] = {
 // ============================================
 
 void writeShiftRegisterIC(byte data, int latchPin) {
-  // OPTIMIZED: Minimal delays for stability
+  // CRITICAL: Timing delays are REQUIRED for 74HC595 to work!
+  // Without delays, IC cannot capture data reliably
+  
+  // Step 1: LATCH LOW - prepare to receive data
   digitalWrite(latchPin, LOW);
-  // No delay needed - SPI is hardware synchronized
+  delayMicroseconds(1);  // Setup time - REQUIRED!
+  
+  // Step 2: Shift 8 bits via hardware SPI
   hspi->transfer(data);
+  
+  // Step 3: Hold time - ensure all bits are shifted
+  delayMicroseconds(1);  // Hold time - REQUIRED!
+  
+  // Step 4: LATCH HIGH - transfer to output register
   digitalWrite(latchPin, HIGH);
-  // No delay needed - latch is edge triggered
+  delayMicroseconds(1);  // Pulse width - REQUIRED!
+  
+  // LATCH stays HIGH - output register is level-triggered
   
   #if DEBUG_SHIFT_REGISTER
     Serial.print("[SPI] Latch=");
     Serial.print(latchPin);
     Serial.print(" Data=0x");
-    Serial.println(data, HEX);
+    Serial.print(data, HEX);
+    Serial.print(" Binary=");
+    for (int i = 7; i >= 0; i--) {
+      Serial.print((data >> i) & 1);
+    }
+    Serial.print(" LEDs:");
+    for (int i = 7; i >= 0; i--) {
+      if ((data >> i) & 1) {
+        Serial.print(" ");
+        Serial.print(8-i);
+      }
+    }
+    Serial.println();
   #endif
 }
 
