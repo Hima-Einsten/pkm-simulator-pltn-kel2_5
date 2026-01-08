@@ -88,9 +88,26 @@ const int POWER_LEDS[NUM_LEDS] = {25, 26, 27, 32};  // GPIO aman, tidak konflik
 #define LATCH_PIN_SECONDARY 18 // IC #2 - Secondary (FIXED: 5→18, avoid strapping pin)
 #define LATCH_PIN_TERTIARY 19  // IC #3 - Tertiary (FIXED: 12→19, avoid SPI MISO conflict)
 
-// SPI Configuration
+// SPI Configuration (NOT USED in continuous mode)
 SPIClass * hspi = NULL;
-#define SPI_FREQUENCY 8000000  // 8 MHz
+#define SPI_FREQUENCY 1000000  // 1 MHz
+
+// ============================================
+// TRULY CONTINUOUS MODE - Timer Interrupt
+// ============================================
+#define CLOCK_FREQ_HZ 100000  // 100 kHz clock (slower for stability)
+#define CLOCK_PERIOD_US (1000000 / CLOCK_FREQ_HZ / 2)  // Half period in microseconds
+
+// Timer and state variables
+hw_timer_t * clockTimer = NULL;
+volatile bool clockState = false;
+volatile byte currentPattern = 0x00;
+volatile int bitPosition = 0;  // 0-7 for 8 bits
+volatile int icIndex = 0;      // 0-2 for 3 ICs
+
+// Animation state
+volatile int animationPosition = 0;  // 0-7 for pattern array
+volatile unsigned long lastAnimUpdate = 0;
 
 // ============================================
 // TIMING CONFIGURATION (CRITICAL FOR SMOOTH ANIMATION)
@@ -281,21 +298,92 @@ void clearAllShiftRegisters() {
   delayMicroseconds(1);
 }
 
+// ============================================
+// TRULY CONTINUOUS MODE - Timer ISR
+// ============================================
+
 /**
- * Helper function for backward compatibility
- * Writes pattern to a single IC (used by test functions)
+ * Timer interrupt - called every CLOCK_PERIOD_US microseconds
+ * Generates continuous clock and shifts data bits
  */
-void writeShiftRegisterIC(byte data, int latchPin) {
-  // Send pattern via SPI
-  hspi->beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0));
-  hspi->transfer(data);
-  hspi->endTransaction();
+void IRAM_ATTR onClockTimer() {
+  // Toggle clock pin
+  clockState = !clockState;
+  digitalWrite(SPI_CLOCK_PIN, clockState ? HIGH : LOW);
   
-  // Pulse the specified latch
-  digitalWrite(latchPin, LOW);
-  delayMicroseconds(1);
-  digitalWrite(latchPin, HIGH);
-  delayMicroseconds(1);
+  // On rising edge, shift out next data bit
+  if (clockState) {
+    // Get current bit from pattern (MSB first)
+    byte bit = (currentPattern >> (7 - bitPosition)) & 0x01;
+    digitalWrite(SPI_MOSI_PIN, bit ? HIGH : LOW);
+    
+    // Move to next bit
+    bitPosition++;
+    
+    // After 8 bits, move to next IC
+    if (bitPosition >= 8) {
+      bitPosition = 0;
+      icIndex++;
+      
+      // After 3 ICs (24 bits total), cycle complete
+      if (icIndex >= 3) {
+        icIndex = 0;
+        
+        // Update animation pattern if needed
+        unsigned long now = millis();
+        if (now - lastAnimUpdate >= ANIMATION_INTERVAL) {
+          lastAnimUpdate = now;
+          animationPosition = (animationPosition + 1) % 8;
+          currentPattern = FLOW_PATTERN[animationPosition];
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Start continuous clock and data transmission
+ */
+void startContinuousMode() {
+  Serial.println("\n=== STARTING TRULY CONTINUOUS MODE ===");
+  Serial.printf("Clock: %d Hz on GPIO %d\n", CLOCK_FREQ_HZ, SPI_CLOCK_PIN);
+  Serial.printf("Data: Continuous pattern on GPIO %d\n", SPI_MOSI_PIN);
+  Serial.println("========================================\n");
+  
+  // Initialize pattern
+  currentPattern = FLOW_PATTERN[0];
+  bitPosition = 0;
+  icIndex = 0;
+  animationPosition = 0;
+  lastAnimUpdate = millis();
+  
+  // Setup timer interrupt
+  clockTimer = timerBegin(0, 80, true);  // Timer 0, prescaler 80 (1 MHz)
+  timerAttachInterrupt(clockTimer, &onClockTimer, true);
+  timerAlarmWrite(clockTimer, CLOCK_PERIOD_US, true);  // Alarm every CLOCK_PERIOD_US
+  timerAlarmEnable(clockTimer);
+  
+  Serial.println("✓ Continuous mode ACTIVE");
+  Serial.println("✓ GPIO 14 (clock) running continuously");
+  Serial.println("✓ GPIO 13 (data) shifting pattern continuously");
+  Serial.println("\nYou can now measure with oscilloscope:");
+  Serial.printf("  - GPIO 14: %d kHz square wave\n", CLOCK_FREQ_HZ / 1000);
+  Serial.println("  - GPIO 13: Data pattern (8 bits repeating)");
+}
+
+/**
+ * Stop continuous mode
+ */
+void stopContinuousMode() {
+  if (clockTimer != NULL) {
+    timerAlarmDisable(clockTimer);
+    timerDetachInterrupt(clockTimer);
+    timerEnd(clockTimer);
+    clockTimer = NULL;
+  }
+  digitalWrite(SPI_CLOCK_PIN, LOW);
+  digitalWrite(SPI_MOSI_PIN, LOW);
+  Serial.println("Continuous mode stopped");
 }
 
 // ============================================
@@ -658,35 +746,15 @@ void setup() {
   // Initialize UART
   UartComm.begin(UART_BAUD, SERIAL_8N1, 16, 17);
   
-  // Initialize HARDWARE SPI
-  Serial.println("Initializing HARDWARE SPI (HSPI)...");
-  
-  // CRITICAL: Set pin modes BEFORE SPI.begin() to ensure pins are outputs
+  // Initialize GPIO pins for continuous mode
+  Serial.println("Initializing GPIO pins for CONTINUOUS MODE...");
   pinMode(SPI_CLOCK_PIN, OUTPUT);
   pinMode(SPI_MOSI_PIN, OUTPUT);
   digitalWrite(SPI_CLOCK_PIN, LOW);
   digitalWrite(SPI_MOSI_PIN, LOW);
-  Serial.println("Pin modes set for SCK and MOSI");
+  Serial.println("✓ GPIO pins initialized");
   
-  // Create HSPI instance and initialize
-  hspi = new SPIClass(HSPI);
-  hspi->begin(SPI_CLOCK_PIN, -1, SPI_MOSI_PIN, -1);  // SCK=14, MISO=unused, MOSI=13, SS=unused
-  
-  // DON'T call beginTransaction here - it will be called per transfer
-  Serial.println("✓ SPI bus initialized");
-  Serial.printf("  SCK (Clock): GPIO %d\n", SPI_CLOCK_PIN);
-  Serial.printf("  MOSI (Data): GPIO %d\n", SPI_MOSI_PIN);
-  Serial.printf("  Frequency: %d MHz\n", SPI_FREQUENCY / 1000000);
-  
-  // Test SCK pin manually to verify hardware
-  Serial.println("\nTesting SCK pin manually (5 pulses)...");
-  for (int i = 0; i < 5; i++) {
-    digitalWrite(SPI_CLOCK_PIN, HIGH);
-    delayMicroseconds(100);
-    digitalWrite(SPI_CLOCK_PIN, LOW);
-    delayMicroseconds(100);
-  }
-  Serial.println("✓ SCK manual test done - check GPIO 14 with multimeter");
+  delay(10);
   
   // Initialize LATCH pins
   pinMode(LATCH_PIN_PRIMARY, OUTPUT);
@@ -695,6 +763,10 @@ void setup() {
   digitalWrite(LATCH_PIN_PRIMARY, LOW);
   digitalWrite(LATCH_PIN_SECONDARY, LOW);
   digitalWrite(LATCH_PIN_TERTIARY, LOW);
+  Serial.println("✓ LATCH pins initialized");
+  
+  // Start continuous clock and data transmission
+  startContinuousMode();
   
   delay(10);
   
