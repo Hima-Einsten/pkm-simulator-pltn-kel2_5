@@ -106,14 +106,15 @@ int animPosTertiary = 0;
 // ============================================
 // TIMING CONFIGURATION (CRITICAL FOR SMOOTH ANIMATION)
 // ============================================
-#define ANIMATION_INTERVAL 400    // Update animasi setiap 150ms (konsisten!)
+#define ANIM_STEP_DELAY 1000      // 1 detik per step animasi (realistic water flow)
 #define LED_UPDATE_INTERVAL 100   // Update LED power setiap 100ms
 #define UART_PROCESS_INTERVAL 10  // Proses UART setiap 10ms
 #define DEBUG_INTERVAL 2000       // Debug output setiap 2 detik
 
-// Animation speeds (milliseconds per step)
-#define ANIM_SPEED_ON 500         // 500ms per step saat ON
-#define ANIM_SPEED_SHUTDOWN 1000  // 1000ms per step saat SHUTTING_DOWN
+// Independent animation timers per pump
+unsigned long lastAnimPrimary = 0;
+unsigned long lastAnimSecondary = 0;
+unsigned long lastAnimTertiary = 0;
 
 // ============================================
 // CONTINUOUS SPI MODE (NEW APPROACH)
@@ -673,60 +674,63 @@ void setup() {
 // ============================================
 
 void loop() {
-  static unsigned long last_anim_time = 0;
   static unsigned long last_led_time = 0;
   static unsigned long last_uart_time = 0;
   
   unsigned long current_time = millis();
   
-  // HARDWARE TEST MODE - Not needed in continuous mode
-  #if HARDWARE_TEST_MODE
-    Serial.println("[INFO] HARDWARE_TEST_MODE enabled but not used in continuous mode");
-    Serial.println("       Clock and data are already running continuously");
-    // Fall through to normal operation
-  #endif
-  
-  if (current_time - last_anim_time >= ANIMATION_INTERVAL) {
+  // NORMAL OPERATION - Independent animation per pump
   
   // Reset animation phase when pump transitions OFF -> ON
   if (pump_primary.lastStatus < 2 && pump_primary.status >= 2) {
     animPosPrimary = 0;
+    lastAnimPrimary = current_time;  // Reset timer
   }
 
   if (pump_secondary.lastStatus < 2 && pump_secondary.status >= 2) {
     animPosSecondary = 0;
+    lastAnimSecondary = current_time;  // Reset timer
   }
 
   if (pump_tertiary.lastStatus < 2 && pump_tertiary.status >= 2) {
     animPosTertiary = 0;
+    lastAnimTertiary = current_time;  // Reset timer
   }
 
   byte combinedPattern = 0x00;
 
-  // PRIMARY FLOW
+  /* ================= PRIMARY ================= */
   if (pump_primary.status >= 2) {
-    animPosPrimary = (animPosPrimary + 1) % 8;
+    if (current_time - lastAnimPrimary >= ANIM_STEP_DELAY) {
+      animPosPrimary = (animPosPrimary + 1) % 8;
+      lastAnimPrimary = current_time;
+    }
     combinedPattern |= FLOW_PATTERN[animPosPrimary];
   }
 
-  // SECONDARY FLOW
+  /* ================= SECONDARY ================= */
   if (pump_secondary.status >= 2) {
-    animPosSecondary = (animPosSecondary + 1) % 8;
+    if (current_time - lastAnimSecondary >= ANIM_STEP_DELAY) {
+      animPosSecondary = (animPosSecondary + 1) % 8;
+      lastAnimSecondary = current_time;
+    }
     combinedPattern |= FLOW_PATTERN[animPosSecondary];
   }
 
-  // TERTIARY FLOW
+  /* ================= TERTIARY ================= */
   if (pump_tertiary.status >= 2) {
-    animPosTertiary = (animPosTertiary + 1) % 8;
+    if (current_time - lastAnimTertiary >= ANIM_STEP_DELAY) {
+      animPosTertiary = (animPosTertiary + 1) % 8;
+      lastAnimTertiary = current_time;
+    }
     combinedPattern |= FLOW_PATTERN[animPosTertiary];
   }
 
+  // Kirim ke shift register & update OE
   sendPattern(combinedPattern);
   updatePumpOutputs();
-
-  last_anim_time = current_time;
-  yield();
-}
+  
+  yield();  // Prevent watchdog timeout
 
   
   // 2. Update LED power dengan interval terpisah
