@@ -275,6 +275,7 @@ void sendNACK() {
   response[4] = ETX;
   
   UartComm.write(response, 5);
+  UartComm.flush();  // CRITICAL: Ensure data is sent before continuing
   
   #if DEBUG_UART
     Serial.println("TX: NACK");
@@ -292,6 +293,7 @@ void sendPongResponse() {
   response[4] = ETX;
   
   UartComm.write(response, 5);
+  UartComm.flush();  // CRITICAL: Ensure data is sent before continuing
   
   #if DEBUG_UART
     Serial.println("TX: Pong ACK");
@@ -315,6 +317,7 @@ void sendUpdateResponse() {
   response[12] = ETX;
   
   UartComm.write(response, 13);
+  UartComm.flush();  // CRITICAL: Ensure data is sent before continuing
   
   #if DEBUG_UART
     Serial.println("TX: Update ACK with data");
@@ -393,10 +396,12 @@ void processBinaryMessage(uint8_t* msg, uint8_t len) {
 // ============================================
 
 void processUART() {
-  // Batasi jumlah byte yang diproses per panggilan
+  // Batasi jumlah byte yang diproses per panggilan untuk non-blocking
+  // INCREASED: 10 -> 20 bytes untuk handle UPDATE command (12 bytes)
   uint8_t bytes_processed = 0;
+  const uint8_t MAX_BYTES_PER_CALL = 20;  // Cukup untuk 1 pesan lengkap
   
-  while (UartComm.available() && bytes_processed < 10) {
+  while (UartComm.available() && bytes_processed < MAX_BYTES_PER_CALL) {
     uint8_t byte = UartComm.read();
     bytes_processed++;
     
@@ -434,6 +439,8 @@ void processUART() {
         rx_index = 0;
       }
     }
+    
+    yield();  // Feed watchdog during UART processing
   }
 }
 
