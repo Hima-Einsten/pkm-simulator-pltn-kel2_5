@@ -21,6 +21,7 @@
  */
 
 #include <Arduino.h>
+#include <SPI.h>
 
 // ============================================
 // Binary Protocol Constants
@@ -88,24 +89,36 @@ const int POWER_LEDS[NUM_LEDS] = {23, 25, 33, 27};  // 4 GPIO pins for LEDs (26�
 // ============================================
 // SHIFT REGISTER PINS - 74HC595 + UDN2981 for water flow visualization
 // ============================================
-// Shared CLOCK for all 3 ICs
-#define CLOCK_PIN 14
+// Using HARDWARE SPI for faster communication (vs software shiftOut)
+// ESP32 VSPI pins: MOSI=23, MISO=19, SCK=18, SS=5
+// We use HSPI instead: MOSI=13, MISO=12, SCK=14, SS=15
 
-// Separate DATA pins (one per IC/pump)
-#define DATA_PIN_PRIMARY 12    // IC #1 - Primary pump flow
-#define DATA_PIN_SECONDARY 13  // IC #2 - Secondary pump flow
-#define DATA_PIN_TERTIARY 15   // IC #3 - Tertiary pump flow
+#define SPI_CLOCK_PIN 14       // SCK - Shared clock for all 3 ICs (SRCLK)
+#define SPI_MOSI_PIN 13        // MOSI - Shared data line for all 3 ICs
 
-// Separate LATCH pins (one per IC/pump)
-#define LATCH_PIN_PRIMARY 18   // IC #1 - Primary pump flow
-#define LATCH_PIN_SECONDARY 19 // IC #2 - Secondary pump flow
-#define LATCH_PIN_TERTIARY 21  // IC #3 - Tertiary pump flow
+// Separate LATCH pins (one per IC/pump) - act as chip select
+#define LATCH_PIN_PRIMARY 18   // IC #1 - Primary pump flow (RCLK)
+#define LATCH_PIN_SECONDARY 19 // IC #2 - Secondary pump flow (RCLK)
+#define LATCH_PIN_TERTIARY 21  // IC #3 - Tertiary pump flow (RCLK)
+
+// SPI Configuration
+SPIClass * hspi = NULL;  // Hardware SPI instance
+#define SPI_FREQUENCY 8000000  // 8 MHz (74HC595 max ~25 MHz, safe value)
 
 // Flow animation configuration
-// Animation delays are now dynamic per pump (see updateFlowAnimation)
-// Each pump has independent timer - no global timer needed
 // Pattern: 2 LEDs (main + tail) shifting for smooth flow effect
 // Animation only active when pump status = 2 (ON) or 3 (SHUTTING_DOWN)
+
+// ============================================
+// PUMP STRUCT - Consolidate pump state
+// ============================================
+struct Pump {
+  uint8_t status;           // 0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN
+  int latchPin;             // LATCH pin for this IC
+  unsigned long lastUpdate; // Last animation update time
+  int pos;                  // Current animation position (0-7)
+  uint8_t lastStatus;       // For detecting status changes
+};
 
 // ============================================
 // DATA
@@ -114,10 +127,10 @@ float thermal_kw = 0.0;      // Thermal power dalam kW (0-300000)
 float power_mwe = 0.0;       // Electrical power dalam MWe (0-300)
 int current_pwm = 0;         // Current PWM value (0-255)
 
-// Pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
-uint8_t pump_primary_status = 0;
-uint8_t pump_secondary_status = 0;
-uint8_t pump_tertiary_status = 0;
+// Pump instances - consolidated state
+Pump pump_primary = {0, LATCH_PIN_PRIMARY, 0, 0, 255};
+Pump pump_secondary = {0, LATCH_PIN_SECONDARY, 0, 0, 255};
+Pump pump_tertiary = {0, LATCH_PIN_TERTIARY, 0, 0, 255};
 
 // LED Mode Control (PWM vs HIGH mode)
 #define PWM_THRESHOLD_HIGH 250    // Switch to HIGH mode when PWM >= 250
@@ -129,264 +142,125 @@ bool led_mode_high = false;       // true = HIGH mode (full 3.3V), false = PWM m
 // ============================================
 
 /**
- * Write data to a single shift register IC
+ * Write data to a single shift register IC using HARDWARE SPI
  * @param data - 8-bit pattern to write
- * @param dataPin - DATA pin for this IC
  * @param latchPin - LATCH pin for this IC
  * 
- * 74HC595 Protocol:
+ * 74HC595 Protocol with SPI:
  * 1. LATCH (RCLK) LOW - prepare to receive data
- * 2. Shift 8 bits via DATA + CLOCK (SRCLK) - shiftOut() handles this
+ * 2. SPI.transfer() - shifts 8 bits via MOSI + SCK (much faster than shiftOut)
  * 3. LATCH (RCLK) HIGH - transfer shift register to output register
  * 4. Data appears on Q0-Q7, UDN2981 sources current to LEDs
  * 
+ * PERFORMANCE: SPI hardware is ~3x faster than software shiftOut()
  * CRITICAL: Uses MSBFIRST to match physical LED wiring
  * Bit 7 (MSB) = Q7 (LED 8), Bit 0 (LSB) = Q0 (LED 1)
  */
-void writeShiftRegisterIC(byte data, int dataPin, int latchPin) {
+void writeShiftRegisterIC(byte data, int latchPin) {
   // Step 1: LATCH LOW - disable output update
   digitalWrite(latchPin, LOW);
-  delayMicroseconds(1);  // Setup time
   
-  // Step 2: Shift 8 bits (shiftOut generates clock pulses automatically)
-  shiftOut(dataPin, CLOCK_PIN, MSBFIRST, data);
+  // Step 2: Shift 8 bits via hardware SPI (FAST!)
+  hspi->transfer(data);  // SPI handles MSBFIRST by default
   
   // Step 3: LATCH HIGH - transfer to output register
-  delayMicroseconds(1);  // Hold time
   digitalWrite(latchPin, HIGH);
-  delayMicroseconds(1);  // Propagation delay
+}
+
+// ============================================
+// FLOW ANIMATION PATTERNS
+// ============================================
+/**
+ * Flow animation pattern array - 8 steps showing water flow
+ * Each byte represents LED states on 74HC595 outputs Q0-Q7
+ * 
+ * Pattern: 2 adjacent LEDs moving through the pipe
+ * Bit 7 (MSB) = Q7 (LED 8), Bit 0 (LSB) = Q0 (LED 1)
+ * 
+ * Customize this array to change animation style:
+ * - Current: 2 LEDs (main + tail) for smooth flow effect
+ * - Alternative: Single LED, 3 LEDs, or custom patterns
+ */
+const byte FLOW_PATTERN[8] = {
+  0b11000000,  // Step 0: LEDs 8-7
+  0b01100000,  // Step 1: LEDs 7-6
+  0b00110000,  // Step 2: LEDs 6-5
+  0b00011000,  // Step 3: LEDs 5-4
+  0b00001100,  // Step 4: LEDs 4-3
+  0b00000110,  // Step 5: LEDs 3-2
+  0b00000011,  // Step 6: LEDs 2-1
+  0b10000001   // Step 7: LEDs 8-1 (wrap around)
+};
+
+/**
+ * Update single pump flow animation
+ * @param p - Reference to Pump struct
+ * @param now - Current time from millis()
+ * 
+ * REFACTORED: Uses predefined pattern array for clearer animation control
+ * Uses struct-based approach for cleaner, more maintainable code
+ */
+void updatePumpFlow(Pump &p, unsigned long now) {
+  // Detect status change
+  if (p.status != p.lastStatus) {
+    Serial.printf("Pump (latch=%d) status changed: %d → %d\n", p.latchPin, p.lastStatus, p.status);
+    p.lastStatus = p.status;
+    p.pos = 0;  // Reset position on status change
+  }
+  
+  // Determine animation delay based on status
+  unsigned long delay_ms = 0;
+  
+  switch (p.status) {
+    case 0:  // OFF - clear LEDs
+      writeShiftRegisterIC(0x00, p.latchPin);
+      return;
+      
+    case 1:  // STARTING - no flow yet
+      writeShiftRegisterIC(0x00, p.latchPin);
+      return;
+      
+    case 2:  // ON - normal flow
+      delay_ms = 1000;  // 1 second per step
+      break;
+      
+    case 3:  // SHUTTING_DOWN - slow flow
+      delay_ms = 2000;  // 2 seconds per step
+      break;
+      
+    default:
+      return;
+  }
+  
+  // Animate if enough time has passed
+  if (now - p.lastUpdate >= delay_ms) {
+    p.lastUpdate = now;
+    
+    // Get pattern from array (much clearer than bit shifting!)
+    byte pattern = FLOW_PATTERN[p.pos];
+    
+    // Write pattern to shift register
+    writeShiftRegisterIC(pattern, p.latchPin);
+    
+    // Advance to next position (0-7, then wrap to 0)
+    p.pos++;
+    if (p.pos >= 8) p.pos = 0;
+  }
 }
 
 /**
  * Update water flow animations for all 3 pumps
  * 
- * CRITICAL IMPROVEMENTS:
- * 1. Independent timer per pump (no global timer blocking)
- * 2. Continuous LED refresh (not just on status change)
- * 3. Non-blocking design (animation runs on millis(), not UART events)
- * 4. Explicit LED clear when pump is OFF
- * 
- * Based on reference implementation adapted for shift register
+ * REFACTORED: Uses struct-based approach to eliminate code duplication
+ * Each pump is now updated with a single reusable function
  */
 void updateFlowAnimation() {
   unsigned long currentTime = millis();
   
-  // ========================================
-  // PRIMARY PUMP - Independent timer and position
-  // ========================================
-  static unsigned long lastUpdate_Primary = 0;
-  static int pos_Primary = 0;
-  static unsigned long delay_Primary = 200;
-  static uint8_t lastStatus_Primary = 255;
-  
-  // Detect status change for primary pump
-  if (pump_primary_status != lastStatus_Primary) {
-    Serial.printf("Primary pump status changed: %d → %d\n", lastStatus_Primary, pump_primary_status);
-    lastStatus_Primary = pump_primary_status;
-    pos_Primary = 0;  // Reset position on status change
-  }
-  
-  // Update delay based on current status
-  switch (pump_primary_status) {
-    case 0:  // OFF
-      // Explicitly clear LEDs when OFF
-      writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
-      break;
-      
-    case 1:  // STARTING - no flow animation yet
-      writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
-      break;
-      
-    case 2:  // ON - show flow animation
-      delay_Primary = 1000;  // 1 second per step for clear visibility
-      
-      // Animate if enough time has passed
-      if (currentTime - lastUpdate_Primary >= delay_Primary) {
-        lastUpdate_Primary = currentTime;
-        
-        // Generate 2 ADJACENT LEDs pattern that shifts right
-        // Pattern: 11000000 → 01100000 → 00110000 → ... → 10000001 → 11000000
-        byte pattern = 0;
-        
-        // Set 2 adjacent bits based on position
-        pattern |= (1 << (7 - pos_Primary));      // First LED (MSB side)
-        pattern |= (1 << (7 - pos_Primary - 1));  // Second LED (adjacent)
-        
-        // Special case: when pos=7, wrap around (10000001)
-        if (pos_Primary == 7) {
-          pattern = 0b10000001;  // bit 7 and bit 0
-        }
-        
-        // Write complete pattern (only 2 bits set)
-        writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
-        
-        // Advance position
-        pos_Primary++;
-        if (pos_Primary >= 8) pos_Primary = 0;
-      }
-      break;
-      
-    case 3:  // SHUTTING_DOWN - slow flow
-      delay_Primary = 2000;  // Very slow (2 seconds)
-      
-      if (currentTime - lastUpdate_Primary >= delay_Primary) {
-        lastUpdate_Primary = currentTime;
-        
-        // Same 2 adjacent LEDs pattern
-        byte pattern = 0;
-        pattern |= (1 << (7 - pos_Primary));
-        pattern |= (1 << (7 - pos_Primary - 1));
-        
-        if (pos_Primary == 7) {
-          pattern = 0b10000001;
-        }
-        
-        writeShiftRegisterIC(pattern, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
-        
-        // Advance position
-        pos_Primary++;
-        if (pos_Primary >= 8) pos_Primary = 0;
-      }
-      break;
-  }
-  
-  // ========================================
-  // SECONDARY PUMP - Independent timer and position
-  // ========================================
-  static unsigned long lastUpdate_Secondary = 0;
-  static int pos_Secondary = 0;
-  static unsigned long delay_Secondary = 250;
-  static uint8_t lastStatus_Secondary = 255;
-  
-  // Detect status change for secondary pump
-  if (pump_secondary_status != lastStatus_Secondary) {
-    Serial.printf("Secondary pump status changed: %d → %d\n", lastStatus_Secondary, pump_secondary_status);
-    lastStatus_Secondary = pump_secondary_status;
-    pos_Secondary = 0;
-  }
-  
-  // Update delay and animate
-  switch (pump_secondary_status) {
-    case 0:  // OFF
-      writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
-      break;
-      
-    case 1:  // STARTING - no flow
-      writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
-      break;
-      
-    case 2:  // ON - show flow
-      delay_Secondary = 1000;  // 1 second
-      
-      if (currentTime - lastUpdate_Secondary >= delay_Secondary) {
-        lastUpdate_Secondary = currentTime;
-        
-        // 2 adjacent LEDs pattern
-        byte pattern = 0;
-        pattern |= (1 << (7 - pos_Secondary));
-        pattern |= (1 << (7 - pos_Secondary - 1));
-        
-        if (pos_Secondary == 7) {
-          pattern = 0b10000001;
-        }
-        
-        writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
-        
-        pos_Secondary++;
-        if (pos_Secondary >= 8) pos_Secondary = 0;
-      }
-      break;
-      
-    case 3:  // SHUTTING_DOWN
-      delay_Secondary = 2000;
-      
-      if (currentTime - lastUpdate_Secondary >= delay_Secondary) {
-        lastUpdate_Secondary = currentTime;
-        
-        byte pattern = 0;
-        pattern |= (1 << (7 - pos_Secondary));
-        pattern |= (1 << (7 - pos_Secondary - 1));
-        
-        if (pos_Secondary == 7) {
-          pattern = 0b10000001;
-        }
-        
-        writeShiftRegisterIC(pattern, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
-        
-        pos_Secondary++;
-        if (pos_Secondary >= 8) pos_Secondary = 0;
-      }
-      break;
-  }
-  
-  // ========================================
-  // TERTIARY PUMP - Independent timer and position
-  // ========================================
-  static unsigned long lastUpdate_Tertiary = 0;
-  static int pos_Tertiary = 0;
-  static unsigned long delay_Tertiary = 250;
-  static uint8_t lastStatus_Tertiary = 255;
-  
-  // Detect status change for tertiary pump
-  if (pump_tertiary_status != lastStatus_Tertiary) {
-    Serial.printf("Tertiary pump status changed: %d → %d\n", lastStatus_Tertiary, pump_tertiary_status);
-    lastStatus_Tertiary = pump_tertiary_status;
-    pos_Tertiary = 0;
-  }
-  
-  // Update delay and animate
-  switch (pump_tertiary_status) {
-    case 0:  // OFF
-      writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
-      break;
-      
-    case 1:  // STARTING - no flow
-      writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
-      break;
-      
-    case 2:  // ON - show flow
-      delay_Tertiary = 1000;  // 1 second
-      
-      if (currentTime - lastUpdate_Tertiary >= delay_Tertiary) {
-        lastUpdate_Tertiary = currentTime;
-        
-        // 2 adjacent LEDs pattern
-        byte pattern = 0;
-        pattern |= (1 << (7 - pos_Tertiary));
-        pattern |= (1 << (7 - pos_Tertiary - 1));
-        
-        if (pos_Tertiary == 7) {
-          pattern = 0b10000001;
-        }
-        
-        writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
-        
-        pos_Tertiary++;
-        if (pos_Tertiary >= 8) pos_Tertiary = 0;
-      }
-      break;
-      
-    case 3:  // SHUTTING_DOWN
-      delay_Tertiary = 2000;
-      
-      if (currentTime - lastUpdate_Tertiary >= delay_Tertiary) {
-        lastUpdate_Tertiary = currentTime;
-        
-        byte pattern = 0;
-        pattern |= (1 << (7 - pos_Tertiary));
-        pattern |= (1 << (7 - pos_Tertiary - 1));
-        
-        if (pos_Tertiary == 7) {
-          pattern = 0b10000001;
-        }
-        
-        writeShiftRegisterIC(pattern, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
-        
-        pos_Tertiary++;
-        if (pos_Tertiary >= 8) pos_Tertiary = 0;
-      }
-      break;
-  }
+  // Update all 3 pumps with single function
+  updatePumpFlow(pump_primary, currentTime);
+  updatePumpFlow(pump_secondary, currentTime);
+  updatePumpFlow(pump_tertiary, currentTime);
 }
 
 // ============================================
@@ -415,19 +289,19 @@ void testShiftRegisterHardware() {
     Serial.printf("\nTest %d: Pattern %s\n", test + 1, patternNames[test]);
     Serial.println("Applying to all 3 shift registers...");
     
-    // Apply same pattern to all 3 ICs
-    writeShiftRegisterIC(testPatterns[test], DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
-    writeShiftRegisterIC(testPatterns[test], DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
-    writeShiftRegisterIC(testPatterns[test], DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+    // Apply same pattern to all 3 ICs (updated for SPI)
+    writeShiftRegisterIC(testPatterns[test], LATCH_PIN_PRIMARY);
+    writeShiftRegisterIC(testPatterns[test], LATCH_PIN_SECONDARY);
+    writeShiftRegisterIC(testPatterns[test], LATCH_PIN_TERTIARY);
     
     Serial.println("✓ Pattern applied - verify LEDs visually");
     delay(2000);  // 2 seconds to observe
   }
   
   // Clear all at end
-  writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
-  writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
-  writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
+  writeShiftRegisterIC(0x00, LATCH_PIN_PRIMARY);
+  writeShiftRegisterIC(0x00, LATCH_PIN_SECONDARY);
+  writeShiftRegisterIC(0x00, LATCH_PIN_TERTIARY);
   
   Serial.println("\n✅ Hardware test complete - all ICs cleared");
   Serial.println("If all patterns displayed correctly, hardware is OK");
@@ -491,9 +365,9 @@ void sendUpdateResponse() {
   data[4] = (uint8_t)current_pwm;
   
   // Pump status (3 bytes)
-  data[5] = pump_primary_status;
-  data[6] = pump_secondary_status;
-  data[7] = pump_tertiary_status;
+  data[5] = pump_primary.status;
+  data[6] = pump_secondary.status;
+  data[7] = pump_tertiary.status;
   
   // Calculate CRC over CMD + LEN + data (10 bytes total)
   response[11] = crc8_maxim(&response[1], 10);
@@ -560,15 +434,15 @@ void processBinaryMessage(uint8_t* msg, uint8_t len) {
     // Parse update data - thermal_kw (4 bytes) + 3 pump status bytes
     // Payload starts at index 3
     memcpy(&thermal_kw, &msg[3], 4);
-    pump_primary_status = msg[7];
-    pump_secondary_status = msg[8];
-    pump_tertiary_status = msg[9];
+    pump_primary.status = msg[7];
+    pump_secondary.status = msg[8];
+    pump_tertiary.status = msg[9];
     
     // Convert kW to MWe
     power_mwe = thermal_kw / 1000.0;
     
     Serial.printf("RX: Update - Thermal=%.1f kW → Power=%.1f MWe | Pumps: P=%d S=%d T=%d\n", 
-                  thermal_kw, power_mwe, pump_primary_status, pump_secondary_status, pump_tertiary_status);
+                  thermal_kw, power_mwe, pump_primary.status, pump_secondary.status, pump_tertiary.status);
     
     sendUpdateResponse();
   }
@@ -597,38 +471,31 @@ void setup() {
   UartComm.begin(UART_BAUD, SERIAL_8N1, 16, 17);
   delay(500);
 
-  // Initialize shift register pins
-  Serial.println("Initializing shift register pins...");
+  // Initialize HARDWARE SPI for shift registers
+  Serial.println("Initializing HARDWARE SPI for shift registers...");
   
-  // CLOCK - shared by all 3 ICs
-  pinMode(CLOCK_PIN, OUTPUT);
-  digitalWrite(CLOCK_PIN, LOW);
+  // Create HSPI instance (MOSI=13, MISO=12, SCK=14, SS=15)
+  hspi = new SPIClass(HSPI);
+  hspi->begin(SPI_CLOCK_PIN, -1, SPI_MOSI_PIN, -1);  // SCK, MISO (unused), MOSI, SS (unused)
   
-  // PRIMARY circuit
-  pinMode(DATA_PIN_PRIMARY, OUTPUT);
+  // Configure SPI settings: 8 MHz, MSB first, SPI Mode 0
+  hspi->beginTransaction(SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0));
+  
+  // Initialize LATCH pins (act as chip select for each IC)
   pinMode(LATCH_PIN_PRIMARY, OUTPUT);
-  digitalWrite(DATA_PIN_PRIMARY, LOW);
-  digitalWrite(LATCH_PIN_PRIMARY, LOW);
-  
-  // SECONDARY circuit
-  pinMode(DATA_PIN_SECONDARY, OUTPUT);
   pinMode(LATCH_PIN_SECONDARY, OUTPUT);
-  digitalWrite(DATA_PIN_SECONDARY, LOW);
-  digitalWrite(LATCH_PIN_SECONDARY, LOW);
-  
-  // TERTIARY circuit
-  pinMode(DATA_PIN_TERTIARY, OUTPUT);
   pinMode(LATCH_PIN_TERTIARY, OUTPUT);
-  digitalWrite(DATA_PIN_TERTIARY, LOW);
+  digitalWrite(LATCH_PIN_PRIMARY, LOW);
+  digitalWrite(LATCH_PIN_SECONDARY, LOW);
   digitalWrite(LATCH_PIN_TERTIARY, LOW);
   
   delay(10);  // Let pins stabilize
   
   // Clear all shift registers
-  writeShiftRegisterIC(0x00, DATA_PIN_PRIMARY, LATCH_PIN_PRIMARY);
-  writeShiftRegisterIC(0x00, DATA_PIN_SECONDARY, LATCH_PIN_SECONDARY);
-  writeShiftRegisterIC(0x00, DATA_PIN_TERTIARY, LATCH_PIN_TERTIARY);
-  Serial.println("Shift registers initialized and cleared");
+  writeShiftRegisterIC(0x00, LATCH_PIN_PRIMARY);
+  writeShiftRegisterIC(0x00, LATCH_PIN_SECONDARY);
+  writeShiftRegisterIC(0x00, LATCH_PIN_TERTIARY);
+  Serial.println("✓ SPI initialized at 8 MHz - shift registers cleared");
   
   // OPTIONAL: Hardware test mode - uncomment to test all Q0-Q7 pins
   // Recommended for first-time setup or troubleshooting
@@ -724,8 +591,7 @@ void loop() {
   // Update water flow animations
   updateFlowAnimation();
   
-  yield();
-  delay(10);
+  yield();  // Feed watchdog - no blocking delay needed
 }
 
 // ============================================
@@ -739,11 +605,11 @@ void updatePowerLED() {
   last_update = millis();
   
   // Calculate PWM based on power output
-  // 0-300 MWe → 0-255 PWM
+  // Direct conversion: 0-300 MWe → 0-255 PWM (simplified)
   int target_pwm = 0;
   
   if (power_mwe > 0) {
-    target_pwm = map(power_mwe * 1000, 0, 300000, 0, 255);
+    target_pwm = map(power_mwe, 0, 300, 0, 255);
     target_pwm = constrain(target_pwm, 0, 255);
     
     // Minimum brightness when reactor running
