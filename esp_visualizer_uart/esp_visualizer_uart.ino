@@ -84,8 +84,8 @@ const int POWER_LEDS[NUM_LEDS] = {25, 26, 27, 32};  // GPIO aman, tidak konflik
 
 // LATCH Pins (separate per IC) - GPIO yang AMAN
 #define LATCH_PIN_PRIMARY 4    // IC #1 - Primary pump flow
-#define LATCH_PIN_SECONDARY 16 // IC #2 - Secondary pump flow
-#define LATCH_PIN_TERTIARY 17  // IC #3 - Tertiary pump flow
+#define LATCH_PIN_SECONDARY 5 // IC #2 - Secondary pump flow
+#define LATCH_PIN_TERTIARY 12  // IC #3 - Tertiary pump flow
 
 // SPI Configuration
 SPIClass * hspi = NULL;
