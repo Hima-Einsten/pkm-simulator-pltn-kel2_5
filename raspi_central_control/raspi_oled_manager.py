@@ -666,9 +666,10 @@ class OLEDManager:
                    f"Rods=[{state.safety_rod},{state.shim_rod},{state.regulating_rod}]%, "
                    f"Thermal={state.thermal_kw:.1f}kW")
         
-        # Force immediate display update after sync (clear startup screen)
-        logger.info("Forcing initial display update to clear startup screen...")
+        # Force immediate display update to clear startup screen
+        logger.info("Forcing display update to clear startup screen...")
         self.update_all(state)
+        logger.info("Startup screen cleared, displays now show actual values")
     
     def update_all(self, state):
         """

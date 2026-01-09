@@ -319,11 +319,10 @@ class PLTNPanelController:
                 self.oled_manager = None
             else:
                 logger.info("✓ OLED displays initialization complete")
+                logger.info("   Startup screen will be cleared by OLED update thread")
                 
-                # Sync interpolators to current state (start from current values, not zero)
-                if self.oled_manager:
-                    with self.state_lock:
-                        self.oled_manager.sync_interpolators_to_state(self.state)
+                # NOTE: sync_interpolators_to_state() moved to oled_update_thread()
+                # This fixes race condition where sync was called before thread started
             
         except Exception as e:
             logger.warning(f"⚠️  Failed to initialize OLED displays: {e}")
@@ -708,8 +707,8 @@ class PLTNPanelController:
                 self.state.interlock_satisfied = False
                 
                 # Reset OLED interpolators to zero (instant display update)
-                if self.oled:
-                    self.oled.reset_all_interpolators()
+                if self.oled_manager:
+                    self.oled_manager.reset_all_interpolators()
                 
                 logger.info("=" * 60)
                 logger.info("🔄 SIMULATION RESET")
@@ -1171,20 +1170,38 @@ class PLTNPanelController:
         logger.info("Button hold detection thread stopped")
     
     def oled_update_thread(self):
-        """Thread for updating 9 OLED displays (100ms cycle - optimized for faster visual feedback)"""
+        """
+        Thread for updating 9 OLED displays (100ms cycle - optimized for faster visual feedback)
+        
+        This thread handles:
+        - Initial sync of interpolators to clear startup screen
+        - Continuous OLED updates at 10Hz (100ms cycle)
+        - Smooth value interpolation for better UX
+        """
         logger.info("OLED update thread started")
         
         if self.oled_manager is None:
             logger.warning("OLED manager not available, thread exiting")
             return
         
+        # First update flag - sync interpolators and clear startup screen
+        first_update = True
+        
         while self.state.running:
             try:
                 with self.state_lock:
-                    # Update all 9 OLED displays
-                    self.oled_manager.update_all(self.state)
+                    if first_update:
+                        # FIRST UPDATE: Sync interpolators to current state and force display update
+                        # This clears the "Siap" startup screen and shows actual values
+                        logger.info("OLED Thread: Performing first update to clear startup screen...")
+                        self.oled_manager.sync_interpolators_to_state(self.state)
+                        first_update = False
+                        logger.info("OLED Thread: First update complete, entering normal update loop")
+                    else:
+                        # NORMAL UPDATE: Update all 9 OLED displays with smooth interpolation
+                        self.oled_manager.update_all(self.state)
                 
-                time.sleep(0.1)  # 100ms update rate (faster visual feedback)
+                time.sleep(0.1)  # 100ms update rate (10Hz for smooth interpolation)
                 
             except Exception as e:
                 # Don't spam logs with OLED errors - it's not critical
