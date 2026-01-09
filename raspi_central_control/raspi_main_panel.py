@@ -591,8 +591,11 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.PUMP_PRIMARY_ON:
                 if self.state.pump_primary_status == 0:
-                    self.state.pump_primary_status = 1
-                    # Removed logging for performance
+                    # Check safety conditions before starting
+                    if self._check_pump_start_safe("Primary"):
+                        self.state.pump_primary_status = 1
+                        logger.info("✓ Primary pump starting (safety checks passed)")
+                    # else: already logged and buzzed by _check_pump_start_safe()
             
             elif event == ButtonEvent.PUMP_PRIMARY_OFF:
                 if self.state.pump_primary_status == 2:
@@ -601,8 +604,11 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.PUMP_SECONDARY_ON:
                 if self.state.pump_secondary_status == 0:
-                    self.state.pump_secondary_status = 1
-                    # Removed logging for performance
+                    # Check safety conditions before starting
+                    if self._check_pump_start_safe("Secondary"):
+                        self.state.pump_secondary_status = 1
+                        logger.info("✓ Secondary pump starting (safety checks passed)")
+                    # else: already logged and buzzed by _check_pump_start_safe()
             
             elif event == ButtonEvent.PUMP_SECONDARY_OFF:
                 if self.state.pump_secondary_status == 2:
@@ -611,8 +617,11 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.PUMP_TERTIARY_ON:
                 if self.state.pump_tertiary_status == 0:
-                    self.state.pump_tertiary_status = 1
-                    # Removed logging for performance
+                    # Check safety conditions before starting
+                    if self._check_pump_start_safe("Tertiary"):
+                        self.state.pump_tertiary_status = 1
+                        logger.info("✓ Tertiary pump starting (safety checks passed)")
+                    # else: already logged and buzzed by _check_pump_start_safe()
             
             elif event == ButtonEvent.PUMP_TERTIARY_OFF:
                 if self.state.pump_tertiary_status == 2:
@@ -621,7 +630,19 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.SAFETY_ROD_UP:
                 if not self._check_interlock_internal():
-                    logger.warning("Interlock not satisfied!")
+                    logger.warning("⚠️  INTERLOCK VIOLATION: Cannot raise safety rod!")
+                    logger.warning(f"   Pressure: {self.state.pressure:.1f} bar (need >= 140 bar)")
+                    logger.warning(f"   Pumps: Primary={self.state.pump_primary_status}, "
+                                 f"Secondary={self.state.pump_secondary_status}, "
+                                 f"Tertiary={self.state.pump_tertiary_status} (need all = 2)")
+                    
+                    # Trigger interlock violation buzzer (single short beep)
+                    if self.buzzer:
+                        try:
+                            self.buzzer.beep(duration=0.2)
+                        except Exception:
+                            pass
+                    
                     return
                 self.state.safety_rod = min(self.state.safety_rod + 1, 100)  # 1% increment
                 # Removed logging for performance
@@ -643,7 +664,19 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.SHIM_ROD_UP:
                 if not self._check_interlock_internal():
-                    logger.warning("Interlock not satisfied!")
+                    logger.warning("⚠️  INTERLOCK VIOLATION: Cannot raise shim rod!")
+                    logger.warning(f"   Pressure: {self.state.pressure:.1f} bar (need >= 140 bar)")
+                    logger.warning(f"   Pumps: Primary={self.state.pump_primary_status}, "
+                                 f"Secondary={self.state.pump_secondary_status}, "
+                                 f"Tertiary={self.state.pump_tertiary_status} (need all = 2)")
+                    
+                    # Trigger interlock violation buzzer
+                    if self.buzzer:
+                        try:
+                            self.buzzer.beep(duration=0.2)
+                        except Exception:
+                            pass
+                    
                     return
                 self.state.shim_rod = min(self.state.shim_rod + 1, 100)  # 1% increment
                 # Removed logging for performance
@@ -654,7 +687,19 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.REGULATING_ROD_UP:
                 if not self._check_interlock_internal():
-                    logger.warning("⚠️  Interlock not satisfied!")
+                    logger.warning("⚠️  INTERLOCK VIOLATION: Cannot raise regulating rod!")
+                    logger.warning(f"   Pressure: {self.state.pressure:.1f} bar (need >= 140 bar)")
+                    logger.warning(f"   Pumps: Primary={self.state.pump_primary_status}, "
+                                 f"Secondary={self.state.pump_secondary_status}, "
+                                 f"Tertiary={self.state.pump_tertiary_status} (need all = 2)")
+                    
+                    # Trigger interlock violation buzzer
+                    if self.buzzer:
+                        try:
+                            self.buzzer.beep(duration=0.2)
+                        except Exception:
+                            pass
+                    
                     return
                 self.state.regulating_rod = min(self.state.regulating_rod + 1, 100)  # 1% increment
                 # Removed logging for performance
@@ -849,6 +894,104 @@ class PLTNPanelController:
             return False
         
         # All checks passed - safe to move rods
+        return True
+    
+    def _check_pump_start_safe(self, pump_name: str) -> bool:
+        """
+        Check if it's safe to start pump (INTERNAL - assumes caller holds state_lock)
+        
+        Safety requirements:
+        1. Pressure >= 40 bar (prevent pump cavitation)
+        2. Correct startup sequence: Tertiary → Secondary → Primary
+        
+        Args:
+            pump_name: Name of pump ("Tertiary", "Secondary", or "Primary")
+        
+        Returns:
+            True if safe to start, False otherwise (with buzzer warning)
+        """
+        # ============================================
+        # CHECK 1: Pressure must be >= 40 bar
+        # ============================================
+        if self.state.pressure < 40.0:
+            logger.warning(f"❌ PUMP START BLOCKED: {pump_name} pump")
+            logger.warning(f"   Reason: Pressure too low!")
+            logger.warning(f"   Current: {self.state.pressure:.1f} bar, Required: >= 40 bar")
+            logger.warning(f"   Action: Raise pressure to 40 bar before starting pumps")
+            
+            # Trigger buzzer warning (double beep: bip-bip)
+            if self.buzzer:
+                try:
+                    self.buzzer.beep(duration=0.3)  # First beep
+                    time.sleep(0.3)                  # Pause
+                    self.buzzer.beep(duration=0.3)  # Second beep
+                except Exception:
+                    pass  # Silent fail
+            
+            return False
+        
+        # ============================================
+        # CHECK 2: Enforce correct pump sequence
+        # Sequence: Tertiary → Secondary → Primary
+        # ============================================
+        if pump_name == "Secondary":
+            # Secondary can only start if Tertiary is already ON
+            if self.state.pump_tertiary_status != 2:
+                logger.warning(f"❌ PUMP SEQUENCE VIOLATION: Cannot start Secondary pump")
+                logger.warning(f"   Reason: Tertiary pump must be ON first!")
+                logger.warning(f"   Tertiary status: {self.state.pump_tertiary_status} (2=ON)")
+                logger.warning(f"   Correct sequence: Tertiary → Secondary → Primary")
+                
+                # Trigger sequence violation buzzer (fast double beep)
+                if self.buzzer:
+                    try:
+                        self.buzzer.beep(duration=0.2)
+                        time.sleep(0.2)
+                        self.buzzer.beep(duration=0.2)
+                    except Exception:
+                        pass
+                
+                return False
+        
+        elif pump_name == "Primary":
+            # Primary can only start if BOTH Tertiary AND Secondary are ON
+            if self.state.pump_tertiary_status != 2:
+                logger.warning(f"❌ PUMP SEQUENCE VIOLATION: Cannot start Primary pump")
+                logger.warning(f"   Reason: Tertiary pump must be ON first!")
+                logger.warning(f"   Tertiary status: {self.state.pump_tertiary_status} (2=ON)")
+                logger.warning(f"   Correct sequence: Tertiary → Secondary → Primary")
+                
+                # Trigger buzzer
+                if self.buzzer:
+                    try:
+                        self.buzzer.beep(duration=0.2)
+                        time.sleep(0.2)
+                        self.buzzer.beep(duration=0.2)
+                    except Exception:
+                        pass
+                
+                return False
+            
+            if self.state.pump_secondary_status != 2:
+                logger.warning(f"❌ PUMP SEQUENCE VIOLATION: Cannot start Primary pump")
+                logger.warning(f"   Reason: Secondary pump must be ON first!")
+                logger.warning(f"   Secondary status: {self.state.pump_secondary_status} (2=ON)")
+                logger.warning(f"   Correct sequence: Tertiary → Secondary → Primary")
+                
+                # Trigger buzzer
+                if self.buzzer:
+                    try:
+                        self.buzzer.beep(duration=0.2)
+                        time.sleep(0.2)
+                        self.buzzer.beep(duration=0.2)
+                    except Exception:
+                        pass
+                
+                return False
+        
+        # Tertiary pump has no prerequisites (can start anytime if P >= 40)
+        # All checks passed
+        logger.info(f"✓ Pump start authorized: {pump_name}")
         return True
     
     # ============================================
