@@ -319,6 +319,11 @@ class PLTNPanelController:
                 self.oled_manager = None
             else:
                 logger.info("✓ OLED displays initialization complete")
+                
+                # Sync interpolators to current state (start from current values, not zero)
+                if self.oled_manager:
+                    with self.state_lock:
+                        self.oled_manager.sync_interpolators_to_state(self.state)
             
         except Exception as e:
             logger.warning(f"⚠️  Failed to initialize OLED displays: {e}")
@@ -701,6 +706,11 @@ class PLTNPanelController:
                 self.state.humid_ct3_cmd = 0
                 self.state.humid_ct4_cmd = 0
                 self.state.interlock_satisfied = False
+                
+                # Reset OLED interpolators to zero (instant display update)
+                if self.oled:
+                    self.oled.reset_all_interpolators()
+                
                 logger.info("=" * 60)
                 logger.info("🔄 SIMULATION RESET")
                 logger.info("All parameters reset. Press START to begin.")

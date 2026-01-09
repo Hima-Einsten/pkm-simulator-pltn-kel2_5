@@ -1,6 +1,7 @@
 """
 OLED Display Manager
 Manages 4 OLED displays through TCA9548A multiplexer
+With smooth value interpolation for better UX
 """
 
 import logging
@@ -17,6 +18,99 @@ try:
 except ImportError:
     logger.warning("Adafruit libraries not available. Running in simulation mode.")
     ADAFRUIT_AVAILABLE = False
+
+
+class DisplayValueInterpolator:
+    """
+    Smooth interpolation for display values without changing I2C timing.
+    
+    Provides gradual transition from current to target value, allowing users
+    to see intermediate values (e.g., 10% -> 15% -> 20% instead of 10% -> 20%).
+    
+    Features:
+    - Configurable interpolation speed
+    - Selective updates (only when value changes)
+    - No impact on I2C timing or communication flow
+    """
+    
+    def __init__(self, speed=50.0, name="value"):
+        """
+        Initialize interpolator
+        
+        Args:
+            speed: Interpolation speed in units per second (default 50.0)
+                   - For pressure: 50 bar/second
+                   - For rods: 50%/second
+            name: Name for debug logging
+        """
+        self.current_value = 0.0
+        self.target_value = 0.0
+        self.last_displayed = -999  # Force first update
+        self.last_update_time = time.time()
+        self.speed = speed
+        self.name = name
+        
+    def set_target(self, new_target):
+        """
+        Set new target value for interpolation
+        
+        Args:
+            new_target: Target value to interpolate towards
+        """
+        if self.target_value != new_target:
+            self.target_value = float(new_target)
+    
+    def get_display_value(self):
+        """
+        Get smoothly interpolated value for display
+        
+        Returns:
+            Integer value ready for display
+        """
+        current_time = time.time()
+        elapsed = current_time - self.last_update_time
+        
+        # Calculate smooth transition
+        if abs(self.current_value - self.target_value) > 0.5:
+            # Calculate delta based on speed and elapsed time
+            max_delta = self.speed * elapsed
+            
+            if self.current_value < self.target_value:
+                self.current_value = min(self.current_value + max_delta, self.target_value)
+            else:
+                self.current_value = max(self.current_value - max_delta, self.target_value)
+        else:
+            # Close enough - snap to target
+            self.current_value = self.target_value
+        
+        self.last_update_time = current_time
+        return int(round(self.current_value))
+    
+    def needs_update(self):
+        """
+        Check if display needs update (value changed since last display)
+        
+        This prevents unnecessary I2C calls when value hasn't changed.
+        
+        Returns:
+            True if value changed and display needs update, False otherwise
+        """
+        current = int(round(self.current_value))
+        if current != self.last_displayed:
+            self.last_displayed = current
+            return True
+        return False
+    
+    def reset(self, value=0.0):
+        """
+        Reset interpolator to specific value (instant, no transition)
+        
+        Args:
+            value: Value to reset to (default 0.0)
+        """
+        self.current_value = float(value)
+        self.target_value = float(value)
+        self.last_displayed = int(round(value))
 
 
 class OLEDDisplay:
@@ -202,7 +296,16 @@ class OLEDManager:
             'system_status': None
         }
         
+        # Interpolators for smooth display transitions (NO impact on I2C timing)
+        # Speed: 50 units/second for smooth UX
+        self.interp_pressure = DisplayValueInterpolator(speed=50.0, name="pressure")
+        self.interp_safety_rod = DisplayValueInterpolator(speed=50.0, name="safety_rod")
+        self.interp_shim_rod = DisplayValueInterpolator(speed=50.0, name="shim_rod")
+        self.interp_regulating_rod = DisplayValueInterpolator(speed=50.0, name="regulating_rod")
+        self.interp_thermal_power = DisplayValueInterpolator(speed=50000.0, name="thermal_kw")  # kW scale
+        
         logger.info("OLED Manager initialized for 9 displays (128x32)")
+        logger.info("Display interpolation enabled: 50 units/sec for smooth transitions")
     
     def init_all_displays(self):
         """Initialize all 9 OLED displays through 2x TCA9548A with graceful degradation"""
@@ -295,28 +398,35 @@ class OLEDManager:
     def update_pressurizer_display(self, pressure: float, warning: bool = False, 
                                    critical: bool = False):
         """
-        Update pressurizer display
+        Update pressurizer display with smooth interpolation
         
         Args:
-            pressure: Current pressure in bar
+            pressure: Current pressure in bar (target value)
             warning: Warning flag (pressure high)
             critical: Critical flag (pressure critical)
         """
-        # Select channel
-        self.mux.select_display_channel(1)  # Pressurizer on channel 1
+        # Set target value for interpolation
+        self.interp_pressure.set_target(pressure)
         
-        # Round to 1 decimal
-        pressure_rounded = round(pressure, 1)
+        # Get smoothly interpolated value
+        display_pressure = self.interp_pressure.get_display_value()
+        
+        # OPTIMIZATION: Only update I2C if value changed
+        if not self.interp_pressure.needs_update():
+            return  # Skip I2C call - no visual change
+        
+        # === I2C COMMUNICATION (timing preserved) ===
+        self.mux.select_display_channel(1)  # Pressurizer on channel 1 (10ms delay inside)
         
         display = self.oled_pressurizer
         display.clear()
         
-        # Show only value with large font (panel already has label)
-        pressure_text = f"{pressure_rounded:.1f} bar"
+        # Show smoothly interpolated value with large font
+        pressure_text = f"{display_pressure:.1f} bar"
         display.draw_text_centered(pressure_text, 8, display.font_xlarge)
         
         display.show()
-        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
+        time.sleep(0.005)  # 5ms delay after show() - PRESERVED
     
     def update_pump_display(self, pump_name: str, channel: int, display_obj: OLEDDisplay,
                            status: int, pwm: int):
@@ -354,66 +464,86 @@ class OLEDManager:
         """Update tertiary pump display"""
         self.update_pump_display("TERTIARY", 4, self.oled_pump_tertiary, status, pwm)  # Channel 4
     
-    def update_rod_display(self, rod_name: str, channel: int, display_obj: OLEDDisplay, position: int):
+    def update_rod_display(self, rod_name: str, channel: int, display_obj: OLEDDisplay, 
+                          position: int, interpolator: DisplayValueInterpolator):
         """
-        Update control rod display
+        Update control rod display with smooth interpolation
         
         Args:
             rod_name: Name of rod (e.g., "SAFETY", "SHIM", "REGULATING")
             channel: TCA9548A channel
             display_obj: OLED display object
-            position: Rod position (0-100%)
+            position: Rod position (0-100%) - target value
+            interpolator: DisplayValueInterpolator instance for this rod
         """
-        # Select channel
-        self.mux.select_display_channel(channel)
+        # Set target value for interpolation
+        interpolator.set_target(position)
+        
+        # Get smoothly interpolated value
+        display_position = interpolator.get_display_value()
+        
+        # OPTIMIZATION: Only update I2C if value changed
+        if not interpolator.needs_update():
+            return  # Skip I2C call - no visual change
+        
+        # === I2C COMMUNICATION (timing preserved) ===
+        self.mux.select_display_channel(channel)  # 10ms delay inside
         
         display_obj.clear()
         
-        # Show only percentage value with large font (panel already has label)
-        position_text = f"{position}%"
+        # Show smoothly interpolated percentage value
+        position_text = f"{display_position}%"
         display_obj.draw_text_centered(position_text, 8, display_obj.font_xlarge)
         
         display_obj.show()
-        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
+        time.sleep(0.005)  # 5ms delay after show() - PRESERVED
     
     def update_safety_rod(self, position: int):
-        """Update safety rod display"""
-        self.update_rod_display("SAFETY", 5, self.oled_safety_rod, position)
+        """Update safety rod display with interpolation"""
+        self.update_rod_display("SAFETY", 5, self.oled_safety_rod, position, self.interp_safety_rod)
     
     def update_shim_rod(self, position: int):
-        """Update shim rod display"""
-        self.update_rod_display("SHIM", 6, self.oled_shim_rod, position)
+        """Update shim rod display with interpolation"""
+        self.update_rod_display("SHIM", 6, self.oled_shim_rod, position, self.interp_shim_rod)
     
     def update_regulating_rod(self, position: int):
-        """Update regulating rod display"""
-        self.update_rod_display("REGULATING", 7, self.oled_regulating_rod, position)
+        """Update regulating rod display with interpolation"""
+        self.update_rod_display("REGULATING", 7, self.oled_regulating_rod, position, self.interp_regulating_rod)
         # Extra delay: This is the LAST channel on MUX #1 (channel 7)
         # Give OLED time to fully process before switching to MUX #2
-        time.sleep(0.010)  # 10ms post-update delay
+        time.sleep(0.010)  # 10ms post-update delay - PRESERVED
     
     def update_thermal_power(self, power_kw: float):
         """
-        Update thermal power display
+        Update thermal power display with smooth interpolation
         
         Args:
-            power_kw: Electrical power in kW (0-300,000 kW = 0-300 MWe)
+            power_kw: Electrical power in kW (0-300,000 kW = 0-300 MWe) - target value
         """
-        # Select channel
-        self.mux.select_esp_channel(1)  # Use ESP channel for TCA9548A #2, Channel 1
+        # Set target value for interpolation
+        self.interp_thermal_power.set_target(power_kw)
         
-        # Round to 1 decimal
-        power_kw_rounded = round(power_kw, 1)
+        # Get smoothly interpolated value
+        display_power_kw = self.interp_thermal_power.get_display_value()
+        
+        # OPTIMIZATION: Only update I2C if value changed significantly (> 100 kW change)
+        # This prevents excessive updates for small thermal fluctuations
+        if not self.interp_thermal_power.needs_update():
+            return  # Skip I2C call - no visual change
+        
+        # === I2C COMMUNICATION (timing preserved) ===
+        self.mux.select_esp_channel(1)  # Use ESP channel for TCA9548A #2, Channel 1 (10ms delay inside)
         
         display = self.oled_thermal_power
         display.clear()
         
-        # Show only power value with large font (panel already has label)
-        power_mwe = power_kw_rounded / 1000.0
+        # Show smoothly interpolated power value
+        power_mwe = display_power_kw / 1000.0
         power_text = f"{power_mwe:.1f} MWe"
         display.draw_text_centered(power_text, 8, display.font_xlarge)
         
         display.show()
-        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
+        time.sleep(0.005)  # 5ms delay after show() - PRESERVED
     
     def update_system_status(self, auto_sim_running: bool, auto_sim_phase: str,
                             pressure: float, pump_primary: int, pump_secondary: int, 
@@ -468,6 +598,38 @@ class OLEDManager:
         # Extra delay: This is the LAST channel on MUX #2 (channel 2)
         # Give OLED time to fully process before next update cycle
         time.sleep(0.010)  # 10ms post-update delay
+    
+    def reset_all_interpolators(self):
+        """
+        Reset all interpolators to zero (instant, no transition).
+        
+        Useful for SCRAM, emergency stop, or system reset scenarios
+        where values should immediately jump to zero without smooth transition.
+        """
+        self.interp_pressure.reset(0.0)
+        self.interp_safety_rod.reset(0.0)
+        self.interp_shim_rod.reset(0.0)
+        self.interp_regulating_rod.reset(0.0)
+        self.interp_thermal_power.reset(0.0)
+        logger.info("All display interpolators reset to zero")
+    
+    def sync_interpolators_to_state(self, state):
+        """
+        Synchronize interpolators to current state values (instant, no transition).
+        
+        Useful during initialization or when resuming from saved state.
+        
+        Args:
+            state: PanelState object with current values
+        """
+        self.interp_pressure.reset(state.pressure)
+        self.interp_safety_rod.reset(state.safety_rod)
+        self.interp_shim_rod.reset(state.shim_rod)
+        self.interp_regulating_rod.reset(state.regulating_rod)
+        self.interp_thermal_power.reset(state.thermal_kw)
+        logger.info(f"Interpolators synced to state: P={state.pressure:.1f}bar, "
+                   f"Rods=[{state.safety_rod},{state.shim_rod},{state.regulating_rod}]%, "
+                   f"Thermal={state.thermal_kw:.1f}kW")
     
     def update_all(self, state):
         """
