@@ -590,7 +590,7 @@ class OLEDManager:
         # Condition 2: Full power achieved (steady state operation)
         power_mwe = thermal_kw / 1000.0
         if (safety_rod == 100 and shim_rod == 100 and regulating_rod == 100 and
-            power_mwe >= 295.0):  # Close to 300 MW
+            power_mwe >= 299.0):  # Truly at 300 MW (not 295)
             return True
         
         # Not idle - user action or process ongoing
@@ -623,25 +623,45 @@ class OLEDManager:
             (line1_text, line2_text) tuple for OLED display
         """
         # ============================================
-        # PRIORITY 1: Pressure Control
+        # PRIORITY 1: Pressure Control (Initial)
         # ============================================
         if pressure < 45.0:
             return ("NAIKKAN PRES.", "KE 45 BAR")
         
-        if pressure < 140.0:
+        # ============================================
+        # PRIORITY 2: Pump Control (After 45 bar)
+        # SEQUENCE: Tertiary → Secondary → Primary
+        # ============================================
+        # Check if pumps need to be started (after reaching 45 bar)
+        if pressure >= 45.0 and pressure < 140.0:
+            # Check pump status - start sequence: Tertiary first
+            if pump_tertiary != 2:  # Tertiary not ON yet
+                if pump_tertiary == 1:
+                    return ("TUNGGU POMPA", "TERSIER...")
+                else:
+                    return ("NYALAKAN", "POMPA TERSIER")
+            
+            elif pump_secondary != 2:  # Secondary not ON yet (tertiary already ON)
+                if pump_secondary == 1:
+                    return ("TUNGGU POMPA", "SEKUNDER...")
+                else:
+                    return ("NYALAKAN", "POMPA SEKUNDER")
+            
+            elif pump_primary != 2:  # Primary not ON yet (tertiary & secondary already ON)
+                if pump_primary == 1:
+                    return ("TUNGGU POMPA", "PRIMER...")
+                else:
+                    return ("NYALAKAN", "POMPA PRIMER")
+            
+            # All pumps ON, now continue raising pressure
             return ("NAIKKAN PRES.", "KE 140 BAR")
         
         # ============================================
-        # PRIORITY 2: Pump Control
+        # PRIORITY 3: Pressure Control (To operating level)
         # ============================================
-        # Check if any pump is not in ON state (status 2)
-        if pump_primary != 2 or pump_secondary != 2 or pump_tertiary != 2:
-            # Check if any pump is in STARTING state (status 1)
-            if pump_primary == 1 or pump_secondary == 1 or pump_tertiary == 1:
-                return ("TUNGGU POMPA", "SIAP...")
-            else:
-                # Pumps are OFF (status 0)
-                return ("NYALAKAN", "POMPA-POMPA")
+        if pressure < 140.0:
+            # This handles case where pressure drops below 140 after pumps are on
+            return ("NAIKKAN PRES.", "KE 140 BAR")
         
         # ============================================
         # PRIORITY 3: Control Rod Sequence
@@ -677,16 +697,18 @@ class OLEDManager:
         # ============================================
         power_mwe = thermal_kw / 1000.0
         
-        if power_mwe >= 295.0:  # Close to maximum (300 MW)
+        # Show actual power value first, only show "DAYA PENUH" when truly at max
+        if power_mwe >= 299.0:  # Truly at maximum (300 MW)
             return ("DAYA PENUH", "300 MW")
-        elif power_mwe >= 50.0:  # Significant power
+        elif power_mwe >= 10.0:  # Significant power (10 MW and above)
             return (f"DAYA: {power_mwe:.0f} MW", "")
         else:
-            # Rods at 100% but power still building up
+            # Rods at 100% but power still building up (< 10 MW)
             return ("DAYA NAIK...", f"{power_mwe:.0f} MW")
     
     def _format_auto_phase(self, phase: str, pressure: float, safety_rod: int,
-                          shim_rod: int, regulating_rod: int, thermal_kw: float):
+                          shim_rod: int, regulating_rod: int, thermal_kw: float,
+                          pump_tertiary: int, pump_secondary: int, pump_primary: int):
         """
         Format auto simulation phase for display
         
@@ -697,6 +719,9 @@ class OLEDManager:
             shim_rod: Shim rod position (%)
             regulating_rod: Regulating rod position (%)
             thermal_kw: Thermal power in kW
+            pump_tertiary: Tertiary pump status
+            pump_secondary: Secondary pump status
+            pump_primary: Primary pump status
         
         Returns:
             (line1_text, line2_text) tuple for OLED display
@@ -709,7 +734,16 @@ class OLEDManager:
             return ("NAIK PRES 45", f"{current}/45 BAR")
         
         elif phase == "Pumps":
-            return ("START POMPA", "TERSIER...")
+            # Show which pump is being started (sequence: Tertiary → Secondary → Primary)
+            if pump_tertiary != 2:  # Tertiary not ON yet
+                return ("START POMPA", "TERSIER...")
+            elif pump_secondary != 2:  # Secondary not ON yet
+                return ("START POMPA", "SEKUNDER...")
+            elif pump_primary != 2:  # Primary not ON yet
+                return ("START POMPA", "PRIMER...")
+            else:
+                # All pumps ON
+                return ("POMPA SIAP", "SEMUA HIDUP")
         
         elif phase == "Pressure 140":
             current = int(pressure)
@@ -726,7 +760,11 @@ class OLEDManager:
         
         elif phase == "Max Power":
             power_mwe = int(thermal_kw / 1000.0)
-            return ("DAYA PENUH", f"{power_mwe} MW")
+            # Show actual power first, only say "PENUH" when truly at max
+            if power_mwe >= 299:
+                return ("DAYA PENUH", "300 MW")
+            else:
+                return ("DAYA NAIK", f"{power_mwe} MW")
         
         else:
             # Generic fallback for any other phase
@@ -801,7 +839,8 @@ class OLEDManager:
             line1, line2 = self._format_auto_phase(
                 auto_sim_phase, pressure, 
                 display_safety, display_shim, display_reg,
-                thermal_kw
+                thermal_kw,
+                pump_tertiary, pump_secondary, pump_primary
             )
             
             # Display line 1 (action)
@@ -833,12 +872,12 @@ class OLEDManager:
                 
                 if self.status_blink_state == 0:
                     # Cycle 1: "TEKAN START / UNTUK AUTO"
-                    display.draw_text_centered("TEKAN START", 6, display.font_large)
-                    display.draw_text_centered("UNTUK AUTO", 22, display.font)
+                    display.draw_text_centered("TEKAN START", 8, display.font)
+                    display.draw_text_centered("UNTUK AUTO", 20, display.font_small)
                 else:
                     # Cycle 2: "SIMULASI / OTOMATIS"
-                    display.draw_text_centered("SIMULASI", 6, display.font_large)
-                    display.draw_text_centered("OTOMATIS", 22, display.font)
+                    display.draw_text_centered("SIMULASI", 8, display.font)
+                    display.draw_text_centered("OTOMATIS", 20, display.font_small)
             
             else:
                 # ============================================
