@@ -636,10 +636,10 @@ class PLTNPanelController:
                                  f"Secondary={self.state.pump_secondary_status}, "
                                  f"Tertiary={self.state.pump_tertiary_status} (need all = 2)")
                     
-                    # Trigger interlock violation buzzer (single short beep)
+                    # Trigger interlock violation buzzer (1.5 second beep)
                     if self.buzzer:
                         try:
-                            self.buzzer.beep(duration=0.2)
+                            self.buzzer.sound_interlock_warning(duration=1.5)
                         except Exception:
                             pass
                     
@@ -654,7 +654,7 @@ class PLTNPanelController:
                     # Trigger buzzer warning if available
                     if self.buzzer:
                         try:
-                            self.buzzer.beep(duration=0.2)
+                            self.buzzer.sound_interlock_warning(duration=1.5)
                         except Exception:
                             pass  # Silent fail
                     return
@@ -663,6 +663,22 @@ class PLTNPanelController:
                 # Removed logging for performance
             
             elif event == ButtonEvent.SHIM_ROD_UP:
+                # Check safety rod priority: safety rod must be 100% before raising shim
+                if self.state.safety_rod < 100:
+                    logger.warning("⚠️  SAFETY ROD PRIORITY: Cannot raise shim rod!")
+                    logger.warning(f"   Safety rod must be at 100% first (currently: {self.state.safety_rod}%)")
+                    logger.warning(f"   Correct sequence: Safety rod to 100% → Then shim/regulating rods")
+                    
+                    # Trigger buzzer warning
+                    if self.buzzer:
+                        try:
+                            self.buzzer.sound_interlock_warning(duration=1.5)
+                        except Exception:
+                            pass
+                    
+                    return
+                
+                # Check interlock conditions
                 if not self._check_interlock_internal():
                     logger.warning("⚠️  INTERLOCK VIOLATION: Cannot raise shim rod!")
                     logger.warning(f"   Pressure: {self.state.pressure:.1f} bar (need >= 140 bar)")
@@ -673,7 +689,7 @@ class PLTNPanelController:
                     # Trigger interlock violation buzzer
                     if self.buzzer:
                         try:
-                            self.buzzer.beep(duration=0.2)
+                            self.buzzer.sound_interlock_warning(duration=1.5)
                         except Exception:
                             pass
                     
@@ -686,6 +702,22 @@ class PLTNPanelController:
                 # Removed logging for performance
             
             elif event == ButtonEvent.REGULATING_ROD_UP:
+                # Check safety rod priority: safety rod must be 100% before raising regulating
+                if self.state.safety_rod < 100:
+                    logger.warning("⚠️  SAFETY ROD PRIORITY: Cannot raise regulating rod!")
+                    logger.warning(f"   Safety rod must be at 100% first (currently: {self.state.safety_rod}%)")
+                    logger.warning(f"   Correct sequence: Safety rod to 100% → Then shim/regulating rods")
+                    
+                    # Trigger buzzer warning
+                    if self.buzzer:
+                        try:
+                            self.buzzer.sound_interlock_warning(duration=1.5)
+                        except Exception:
+                            pass
+                    
+                    return
+                
+                # Check interlock conditions
                 if not self._check_interlock_internal():
                     logger.warning("⚠️  INTERLOCK VIOLATION: Cannot raise regulating rod!")
                     logger.warning(f"   Pressure: {self.state.pressure:.1f} bar (need >= 140 bar)")
@@ -696,7 +728,7 @@ class PLTNPanelController:
                     # Trigger interlock violation buzzer
                     if self.buzzer:
                         try:
-                            self.buzzer.beep(duration=0.2)
+                            self.buzzer.sound_interlock_warning(duration=1.5)
                         except Exception:
                             pass
                     
@@ -919,12 +951,10 @@ class PLTNPanelController:
             logger.warning(f"   Current: {self.state.pressure:.1f} bar, Required: >= 40 bar")
             logger.warning(f"   Action: Raise pressure to 40 bar before starting pumps")
             
-            # Trigger buzzer warning (double beep: bip-bip)
+            # Trigger buzzer warning (procedure violation - 2 seconds)
             if self.buzzer:
                 try:
-                    self.buzzer.beep(duration=0.3)  # First beep
-                    time.sleep(0.3)                  # Pause
-                    self.buzzer.beep(duration=0.3)  # Second beep
+                    self.buzzer.sound_procedure_warning(duration=2.0)
                 except Exception:
                     pass  # Silent fail
             
@@ -942,12 +972,10 @@ class PLTNPanelController:
                 logger.warning(f"   Tertiary status: {self.state.pump_tertiary_status} (2=ON)")
                 logger.warning(f"   Correct sequence: Tertiary → Secondary → Primary")
                 
-                # Trigger sequence violation buzzer (fast double beep)
+                # Trigger sequence violation buzzer (procedure warning)
                 if self.buzzer:
                     try:
-                        self.buzzer.beep(duration=0.2)
-                        time.sleep(0.2)
-                        self.buzzer.beep(duration=0.2)
+                        self.buzzer.sound_procedure_warning(duration=1.5)
                     except Exception:
                         pass
                 
@@ -964,9 +992,7 @@ class PLTNPanelController:
                 # Trigger buzzer
                 if self.buzzer:
                     try:
-                        self.buzzer.beep(duration=0.2)
-                        time.sleep(0.2)
-                        self.buzzer.beep(duration=0.2)
+                        self.buzzer.sound_procedure_warning(duration=1.5)
                     except Exception:
                         pass
                 
@@ -981,9 +1007,7 @@ class PLTNPanelController:
                 # Trigger buzzer
                 if self.buzzer:
                     try:
-                        self.buzzer.beep(duration=0.2)
-                        time.sleep(0.2)
-                        self.buzzer.beep(duration=0.2)
+                        self.buzzer.sound_procedure_warning(duration=1.5)
                     except Exception:
                         pass
                 
