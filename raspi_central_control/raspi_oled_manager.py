@@ -297,15 +297,16 @@ class OLEDManager:
         }
         
         # Interpolators for smooth display transitions (NO impact on I2C timing)
-        # Speed: 50 units/second for smooth UX
-        self.interp_pressure = DisplayValueInterpolator(speed=50.0, name="pressure")
-        self.interp_safety_rod = DisplayValueInterpolator(speed=50.0, name="safety_rod")
-        self.interp_shim_rod = DisplayValueInterpolator(speed=50.0, name="shim_rod")
-        self.interp_regulating_rod = DisplayValueInterpolator(speed=50.0, name="regulating_rod")
-        self.interp_thermal_power = DisplayValueInterpolator(speed=50000.0, name="thermal_kw")  # kW scale
+        # OPTIMIZED: 75 units/second for faster, still smooth transitions
+        # Previous: 50 units/sec - now 1.5x faster (pressure 0→200: 2.7s vs 4s)
+        self.interp_pressure = DisplayValueInterpolator(speed=75.0, name="pressure")
+        self.interp_safety_rod = DisplayValueInterpolator(speed=75.0, name="safety_rod")
+        self.interp_shim_rod = DisplayValueInterpolator(speed=75.0, name="shim_rod")
+        self.interp_regulating_rod = DisplayValueInterpolator(speed=75.0, name="regulating_rod")
+        self.interp_thermal_power = DisplayValueInterpolator(speed=75000.0, name="thermal_kw")  # kW scale
         
         logger.info("OLED Manager initialized for 9 displays (128x32)")
-        logger.info("Display interpolation enabled: 50 units/sec for smooth transitions")
+        logger.info("Display interpolation: 75 units/sec @ 20Hz update rate (optimized)")
     
     def init_all_displays(self):
         """Initialize all 9 OLED displays through 2x TCA9548A with graceful degradation"""
