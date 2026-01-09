@@ -286,8 +286,10 @@ class OLEDManager:
         # System status display state tracking
         self.status_mode_shown = False      # Track if mode already shown
         self.status_last_mode = None        # Last mode (manual/auto)
-        self.status_blink_state = 0         # Blink cycle (0 or 1) for idle prompt
+        self.status_blink_state = 0         # Blink cycle (0 or 1) for idle prompt / emergency
         self.status_blink_time = time.time() # Last blink toggle time
+        self.emergency_blink_state = 0      # Emergency blink cycle (0 or 1)
+        self.emergency_blink_time = time.time() # Last emergency blink time
         
         # Data tracking for optimization (only update if changed)
         self.last_data = {
@@ -626,7 +628,8 @@ class OLEDManager:
         # PRIORITY 1: Pressure Control (Initial)
         # ============================================
         if pressure < 45.0:
-            return ("NAIKKAN PRES.", "KE 45 BAR")
+            current = int(pressure)
+            return ("NAIK PRESSURE", f"{current}/45 BAR")
         
         # ============================================
         # PRIORITY 2: Pump Control (After 45 bar)
@@ -653,15 +656,17 @@ class OLEDManager:
                 else:
                     return ("NYALAKAN", "POMPA PRIMER")
             
-            # All pumps ON, now continue raising pressure
-            return ("NAIKKAN PRES.", "KE 140 BAR")
+            # All pumps ON, now continue raising pressure to 140
+            current = int(pressure)
+            return ("NAIK PRESSURE", f"{current}/140 BAR")
         
         # ============================================
         # PRIORITY 3: Pressure Control (To operating level)
         # ============================================
         if pressure < 140.0:
             # This handles case where pressure drops below 140 after pumps are on
-            return ("NAIKKAN PRES.", "KE 140 BAR")
+            current = int(pressure)
+            return ("NAIK PRESSURE", f"{current}/140 BAR")
         
         # ============================================
         # PRIORITY 3: Control Rod Sequence
@@ -731,7 +736,7 @@ class OLEDManager:
         
         elif phase == "Pressure 45":
             current = int(pressure)
-            return ("NAIK PRES 45", f"{current}/45 BAR")
+            return ("NAIK PRESSURE", f"{current}/45 BAR")
         
         elif phase == "Pumps":
             # Show which pump is being started (sequence: Tertiary → Secondary → Primary)
@@ -747,7 +752,7 @@ class OLEDManager:
         
         elif phase == "Pressure 140":
             current = int(pressure)
-            return ("NAIK PRES 140", f"{current}/140 BAR")
+            return ("NAIK PRESSURE", f"{current}/140 BAR")
         
         elif phase == "Safety Rod":
             return ("NAIK SAFETY", f"{safety_rod}%")
@@ -773,7 +778,7 @@ class OLEDManager:
     def update_system_status(self, auto_sim_running: bool, auto_sim_phase: str,
                             pressure: float, pump_primary: int, pump_secondary: int, 
                             pump_tertiary: int, interlock: bool, thermal_kw: float, 
-                            turbine_speed: float):
+                            turbine_speed: float, emergency_active: bool = False):
         """
         Update system status display with enhanced user guidance
         
@@ -782,6 +787,7 @@ class OLEDManager:
         - Manual mode: Step-by-step guidance with safety rod priority
         - Auto mode: Current process display with progress
         - Idle mode: Blinking prompt to start auto simulation
+        - Emergency mode: Blinking "EMERGENCY / SISTEM SHUTDOWN"
         
         Args:
             auto_sim_running: Auto simulation running flag
@@ -793,12 +799,34 @@ class OLEDManager:
             interlock: Interlock satisfied flag
             thermal_kw: Thermal power in kW
             turbine_speed: Turbine speed percentage
+            emergency_active: Emergency shutdown flag
         """
         # Select channel
         self.mux.select_esp_channel(2)  # Use ESP channel for TCA9548A #2, Channel 2
         
         display = self.oled_system_status
         display.clear()
+        
+        # ============================================
+        # EMERGENCY MODE (HIGHEST PRIORITY!)
+        # ============================================
+        if emergency_active:
+            # Update emergency blink state (0.5 second cycle - faster for urgency)
+            current_time = time.time()
+            if current_time - self.emergency_blink_time > 0.5:
+                self.emergency_blink_state = 1 - self.emergency_blink_state
+                self.emergency_blink_time = current_time
+            
+            if self.emergency_blink_state == 0:
+                # Blink ON: Show emergency message
+                display.draw_text_centered("EMERGENCY", 6, display.font_large)
+                display.draw_text_centered("SISTEM SHUTDOWN", 22, display.font_small)
+            # else: Blink OFF: Display remains blank (cleared above)
+            
+            display.show()
+            time.sleep(0.005)
+            time.sleep(0.010)
+            return  # Skip normal display logic
         
         # ============================================
         # MODE CHANGE DETECTION
@@ -1012,7 +1040,8 @@ class OLEDManager:
             pump_tertiary=state.pump_tertiary_status,
             interlock=state.interlock_satisfied,
             thermal_kw=state.thermal_kw,
-            turbine_speed=state.turbine_speed
+            turbine_speed=state.turbine_speed,
+            emergency_active=state.emergency_active
         )
     
     def show_startup_screen(self):
