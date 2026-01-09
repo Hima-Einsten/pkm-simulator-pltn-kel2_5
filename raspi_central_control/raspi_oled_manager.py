@@ -110,7 +110,7 @@ class DisplayValueInterpolator:
         """
         self.current_value = float(value)
         self.target_value = float(value)
-        self.last_displayed = int(round(value))
+        self.last_displayed = -999  # Force update on next call
 
 
 class OLEDDisplay:
@@ -440,8 +440,15 @@ class OLEDManager:
             status: Pump status (0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN)
             pwm: PWM percentage (0-100)
         """
-        # Select channel
-        self.mux.select_display_channel(channel)
+        # Check if status changed (optimization)
+        cache_key = f"pump_{channel}"
+        if cache_key in self.last_data and self.last_data[cache_key] == status:
+            return  # No change, skip I2C call
+        
+        self.last_data[cache_key] = status
+        
+        # === I2C COMMUNICATION (timing preserved) ===
+        self.mux.select_display_channel(channel)  # 10ms delay inside
         
         display_obj.clear()
         
@@ -450,7 +457,7 @@ class OLEDManager:
         display_obj.draw_text_centered(status_text, 8, display_obj.font_xlarge)
         
         display_obj.show()
-        time.sleep(0.005)  # 5ms delay after show() to ensure OLED processing completes
+        time.sleep(0.005)  # 5ms delay after show() - PRESERVED
     
     def update_pump_primary(self, status: int, pwm: int):
         """Update primary pump display"""
@@ -611,6 +618,20 @@ class OLEDManager:
         self.interp_shim_rod.reset(0.0)
         self.interp_regulating_rod.reset(0.0)
         self.interp_thermal_power.reset(0.0)
+        
+        # Clear cache to force update
+        self.last_data = {
+            'pressurizer': None,
+            'pump_primary': None,
+            'pump_secondary': None,
+            'pump_tertiary': None,
+            'safety_rod': None,
+            'shim_rod': None,
+            'regulating_rod': None,
+            'thermal_power': None,
+            'system_status': None
+        }
+        
         logger.info("All display interpolators reset to zero")
     
     def sync_interpolators_to_state(self, state):
@@ -627,9 +648,27 @@ class OLEDManager:
         self.interp_shim_rod.reset(state.shim_rod)
         self.interp_regulating_rod.reset(state.regulating_rod)
         self.interp_thermal_power.reset(state.thermal_kw)
+        
+        # Clear cache to force first update
+        self.last_data = {
+            'pressurizer': None,
+            'pump_primary': None,
+            'pump_secondary': None,
+            'pump_tertiary': None,
+            'safety_rod': None,
+            'shim_rod': None,
+            'regulating_rod': None,
+            'thermal_power': None,
+            'system_status': None
+        }
+        
         logger.info(f"Interpolators synced to state: P={state.pressure:.1f}bar, "
                    f"Rods=[{state.safety_rod},{state.shim_rod},{state.regulating_rod}]%, "
                    f"Thermal={state.thermal_kw:.1f}kW")
+        
+        # Force immediate display update after sync (clear startup screen)
+        logger.info("Forcing initial display update to clear startup screen...")
+        self.update_all(state)
     
     def update_all(self, state):
         """
