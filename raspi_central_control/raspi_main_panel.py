@@ -1201,10 +1201,7 @@ class PLTNPanelController:
                         # NORMAL UPDATE: Update all 9 OLED displays with smooth interpolation
                         self.oled_manager.update_all(self.state)
                 
-                # OPTIMIZED: 50ms update rate (20Hz) for smoother interpolation
-                # Previous: 100ms (10Hz) - now 2x faster visual feedback
-                # Safe for I2C bus: 20-50ms update + 50ms sleep = 70-100ms cycle (50-70% load)
-                time.sleep(0.05)  # 50ms = 20Hz
+                time.sleep(0.1)  # 100ms update rate (10Hz for smooth interpolation)
                 
             except Exception as e:
                 # Don't spam logs with OLED errors - it's not critical
