@@ -32,6 +32,7 @@
  */
 
 #include <Arduino.h>
+#include <SPI.h>
 
 // ============================================
 // Binary Protocol Constants
@@ -51,10 +52,9 @@
 
 // ============================================
 // PUMP STRUCT
-// ============================================// Pump structure - simplified for OE-based control
+// ============================================
 struct Pump {
   uint8_t status;           // 0=OFF, 1=STARTING, 2=ON, 3=SHUTTING_DOWN
-  int oePin;                // Output Enable pin (LOW=enabled, HIGH=disabled)
   uint8_t lastStatus;       // For detecting status changes
 };
 
@@ -67,56 +67,46 @@ struct Pump {
 #define HARDWARE_TEST_MODE false    // Set TRUE untuk test kontinyu (bypass pump status)
 
 // ============================================
-// HARDWARE PIN ASSIGNMENT (NO CONFLICT)
+// HARDWARE PIN ASSIGNMENT
 // ============================================
 
 // LED POWER - GPIO yang AMAN (tidak konflik dengan SPI/ADC)
 const int NUM_LEDS = 4;
 const int POWER_LEDS[NUM_LEDS] = {25, 26, 27, 32};  // GPIO aman, tidak konflik
 
-#define SPI_CLOCK_PIN 14       // SCK - LEDC PWM (continuous 10kHz)
-#define SPI_MOSI_PIN 13        // MOSI - Manual bit-banging
-
-// LATCH Pin (RCLK) - GLOBAL untuk semua IC (shared)
-#define LATCH_PIN_GLOBAL 4     // Shared RCLK for all 74HC595 ICs
-
-// OUTPUT ENABLE Pins - Separate per IC untuk kontrol ON/OFF
-#define OE_PIN_PRIMARY 18      // OE IC#1 - Primary pump (LOW=enabled, HIGH=disabled)
-#define OE_PIN_SECONDARY 19    // OE IC#2 - Secondary pump
-#define OE_PIN_TERTIARY 21     // OE IC#3 - Tertiary pump
+// SPI Hardware Configuration
+#define NUM_IC 3               // 3x 74HC595 ICs
+#define SPI_CLOCK_PIN 18       // SCK - Hardware SPI
+#define SPI_MOSI_PIN 23        // MOSI - Hardware SPI
+#define LATCH_PIN_GLOBAL 5     // RCLK - Shared for all 74HC595 ICs
 
 // ============================================
-// BIT-BANGING MODE - LEDC PWM Clock Only
+// SHIFT REGISTER DATA BUFFER
 // ============================================
-#define BIT_DELAY_US 10      // 10us = half period of 10kHz
+/*
+  sr_data[0] -> IC #1 (Primary pump - closest to ESP32)
+  sr_data[1] -> IC #2 (Secondary pump)
+  sr_data[2] -> IC #3 (Tertiary pump)
+*/
+uint8_t sr_data[NUM_IC];
 
-// Animation state
-byte currentPattern = 0x00;
-int animationPos = 0;
-// Independent animation phase for each pump (WATER FLOW MODEL)
-int animPosPrimary = 0;
-int animPosSecondary = 0;
-int animPosTertiary = 0;
+// Ring pattern for each IC (2 LEDs active, circular rotation)
+uint8_t ring_pattern[NUM_IC] = {
+  0b00000011,  // IC #1
+  0b00000011,  // IC #2
+  0b00000011   // IC #3
+};
 
 // ============================================
-// TIMING CONFIGURATION (CRITICAL FOR SMOOTH ANIMATION)
+// TIMING CONFIGURATION
 // ============================================
-#define ANIM_STEP_DELAY 1000      // 1 detik per step animasi (realistic water flow)
+#define ANIM_STEP_DELAY 150       // Animation step delay (ms)
 #define LED_UPDATE_INTERVAL 100   // Update LED power setiap 100ms
 #define UART_PROCESS_INTERVAL 10  // Proses UART setiap 10ms
 #define DEBUG_INTERVAL 2000       // Debug output setiap 2 detik
 
-// Independent animation timers per pump
-unsigned long lastAnimPrimary = 0;
-unsigned long lastAnimSecondary = 0;
-unsigned long lastAnimTertiary = 0;
-
-// ============================================
-// CONTINUOUS SPI MODE (NEW APPROACH)
-// ============================================
-// SPI selalu aktif mengirim pattern ke semua IC
-// LATCH pin mengontrol apakah output IC aktif atau tidak
-
+// Animation timer
+unsigned long lastAnimTime = 0;
 
 // ============================================
 // CRC8 Checksum (CRC-8/MAXIM)
@@ -163,10 +153,10 @@ float thermal_kw = 0.0;
 float power_mwe = 0.0;
 int current_pwm = 0;
 
-// Pump instances with OE pins
-Pump pump_primary = {0, OE_PIN_PRIMARY, 0};
-Pump pump_secondary = {0, OE_PIN_SECONDARY, 0};
-Pump pump_tertiary = {0, OE_PIN_TERTIARY, 0};
+// Pump instances
+Pump pump_primary = {0, 0};
+Pump pump_secondary = {0, 0};
+Pump pump_tertiary = {0, 0};
 
 
 
@@ -176,95 +166,61 @@ Pump pump_tertiary = {0, OE_PIN_TERTIARY, 0};
 bool led_mode_high = false;
 
 // ============================================
-// Flow Animation Pattern
+// SHIFT REGISTER FUNCTIONS (SPI HARDWARE)
 // ============================================
-const byte FLOW_PATTERN[8] = {
-  0b11000000,  // Step 0: LEDs 8-7
-  0b01100000,  // Step 1: LEDs 7-6
-  0b00110000,  // Step 2: LEDs 6-5
-  0b00011000,  // Step 3: LEDs 5-4
-  0b00001100,  // Step 4: LEDs 4-3
-  0b00000110,  // Step 5: LEDs 3-2
-  0b00000011,  // Step 6: LEDs 2-1
-  0b10000001   // Step 7: LEDs 8-1 (wrap around)
-};
 
-// ============================================
-// BIT-BANGING SHIFT REGISTER FUNCTIONS
-// ============================================
-void shiftOutManual(byte data) {
-  for (int i = 7; i >= 0; i--) {
-    digitalWrite(SPI_MOSI_PIN, (data >> i) & 1);
-    digitalWrite(SPI_CLOCK_PIN, HIGH);
-    delayMicroseconds(BIT_DELAY_US);
-    digitalWrite(SPI_CLOCK_PIN, LOW);
-    delayMicroseconds(BIT_DELAY_US);
+/**
+ * Circular ring shift - rotates 2 active LEDs
+ */
+uint8_t ringShift(uint8_t value) {
+  uint8_t msb = (value & 0b10000000) >> 7;
+  value <<= 1;
+  value |= msb;  // Q7 wraps back to Q0
+  return value;
+}
+
+/**
+ * Update shift register buffer based on pump status
+ */
+void updateSRBuffer() {
+  // Clear all
+  for (int i = 0; i < NUM_IC; i++) {
+    sr_data[i] = 0x00;
+  }
+  
+  // Primary pump (IC #1)
+  if (pump_primary.status >= 2) {
+    sr_data[0] = ring_pattern[0];
+  }
+  
+  // Secondary pump (IC #2)
+  if (pump_secondary.status >= 2) {
+    sr_data[1] = ring_pattern[1];
+  }
+  
+  // Tertiary pump (IC #3)
+  if (pump_tertiary.status >= 2) {
+    sr_data[2] = ring_pattern[2];
   }
 }
 
 /**
- * Send pattern to ALL shift registers using global LATCH
- * All ICs share one RCLK line, receive same pattern
+ * Write data to shift registers via SPI hardware
  */
-void sendPattern(byte pattern) {
-  // Global LATCH LOW - prepare all ICs to receive data
+void shiftRegisterWrite() {
   digitalWrite(LATCH_PIN_GLOBAL, LOW);
-  delayMicroseconds(1);
   
-  // Send 8 bits to all 3 ICs sequentially (they share MOSI)
-  shiftOutManual(pattern);  // IC #1
-  shiftOutManual(pattern);  // IC #2
-  shiftOutManual(pattern);  // IC #3
+  // Send data from last IC to first IC
+  for (int i = NUM_IC - 1; i >= 0; i--) {
+    SPI.transfer(sr_data[i]);
+  }
   
-  delayMicroseconds(1);
-  
-  // Global LATCH HIGH - transfer to output registers
   digitalWrite(LATCH_PIN_GLOBAL, HIGH);
-  delayMicroseconds(1);
   
   #if DEBUG_SHIFT_REGISTER
-    Serial.printf("[SEND] Pattern=0x%02X to all ICs\n", pattern);
+    Serial.printf("[SR] IC1=0x%02X IC2=0x%02X IC3=0x%02X\n", 
+                  sr_data[0], sr_data[1], sr_data[2]);
   #endif
-}
-
-/**
- * Update OE pins based on pump status
- * OE LOW = output enabled (LEDs visible)
- * OE HIGH = output disabled (LEDs off)
- */
-void updatePumpOutputs() {
-  // Primary pump
-  if (pump_primary.status == 2 || pump_primary.status == 3) {
-    digitalWrite(pump_primary.oePin, LOW);  // Enable output
-  } else {
-    digitalWrite(pump_primary.oePin, HIGH); // Disable output
-  }
-  
-  // Secondary pump
-  if (pump_secondary.status == 2 || pump_secondary.status == 3) {
-    digitalWrite(pump_secondary.oePin, LOW);
-  } else {
-    digitalWrite(pump_secondary.oePin, HIGH);
-  }
-  
-  // Tertiary pump
-  if (pump_tertiary.status == 2 || pump_tertiary.status == 3) {
-    digitalWrite(pump_tertiary.oePin, LOW);
-  } else {
-    digitalWrite(pump_tertiary.oePin, HIGH);
-  }
-  
-  #if DEBUG_TIMING
-    Serial.printf("[OE] P1=%s P2=%s P3=%s\n",
-                  pump_primary.status >= 2 ? "ON" : "OFF",
-                  pump_secondary.status >= 2 ? "ON" : "OFF",
-                  pump_tertiary.status >= 2 ? "ON" : "OFF");
-  #endif
-}
-
-void clearAllShiftRegisters() {
-  // Send 0x00 using global LATCH
-  sendPattern(0x00);
 }
 
 
@@ -537,57 +493,36 @@ void setup() {
   delay(500);
   
   Serial.println("\n\n===========================================");
-  Serial.println("ESP32 Power Indicator - OPTIMIZED VERSION");
+  Serial.println("ESP32 Power Indicator - SPI HARDWARE VERSION");
   Serial.println("===========================================");
-  Serial.println("Pin Configuration (No Conflict - FIXED):");
+  Serial.println("Pin Configuration:");
   Serial.println("  Power LEDs: GPIO 25, 26, 27, 32");
-  Serial.println("  SPI HSPI: SCK=14, MOSI=13");
+  Serial.println("  SPI Hardware: MOSI=23, SCK=18, LATCH=5");
   Serial.println("  UART: RX=16, TX=17");
   Serial.println("===========================================");
   
   // Initialize UART
   UartComm.begin(UART_BAUD, SERIAL_8N1, 16, 17);
   
-  // Initialize GPIO pins for continuous mode
-  Serial.println("Initializing GPIO pins for PWM CONTINUOUS MODE...");
-  
-  // IMPORTANT: Do NOT set pinMode for SPI_CLOCK_PIN
-  // LEDC PWM will handle it automatically
-  
-  // Only initialize data pin
-  pinMode(SPI_MOSI_PIN, OUTPUT);
-  digitalWrite(SPI_MOSI_PIN, LOW);
-  Serial.println("✓ GPIO 13 (data) initialized");
-  Serial.println("✓ GPIO 14 (clock) will be controlled by LEDC PWM only");
-  
-  delay(10);
-  
-  // Initialize GLOBAL LATCH pin
+  // Initialize LATCH pin
   pinMode(LATCH_PIN_GLOBAL, OUTPUT);
-  digitalWrite(LATCH_PIN_GLOBAL, LOW);
-  Serial.println("✓ Global LATCH pin initialized (GPIO 4)");
+  digitalWrite(LATCH_PIN_GLOBAL, HIGH);
+  Serial.println("✓ LATCH pin initialized (GPIO 5)");
   
-  // Initialize OE pins (FAIL-SAFE: HIGH = disabled)
-  pinMode(OE_PIN_PRIMARY, OUTPUT);
-  pinMode(OE_PIN_SECONDARY, OUTPUT);
-  pinMode(OE_PIN_TERTIARY, OUTPUT);
-  digitalWrite(OE_PIN_PRIMARY, HIGH);    // Disabled at boot
-  digitalWrite(OE_PIN_SECONDARY, HIGH);  // Disabled at boot
-  digitalWrite(OE_PIN_TERTIARY, HIGH);   // Disabled at boot
-
-  pinMode(SPI_CLOCK_PIN, OUTPUT);
-  digitalWrite(SPI_CLOCK_PIN, LOW);
-
+  // Initialize SPI Hardware
+  SPI.begin(SPI_CLOCK_PIN, -1, SPI_MOSI_PIN, -1);
+  SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+  Serial.println("✓ SPI Hardware initialized (1MHz, MSBFIRST, MODE0)");
   
   delay(10);
-  
-  // Continuous mode will start automatically - no test needed
-  Serial.println("\nSkipping SPI test - continuous mode will verify signals");
   
   // Clear all shift registers
   Serial.println("Clearing all shift registers...");
-  clearAllShiftRegisters();
-  Serial.println("✓ SPI test complete - shift registers cleared");
+  for (int i = 0; i < NUM_IC; i++) {
+    sr_data[i] = 0x00;
+  }
+  shiftRegisterWrite();
+  Serial.println("✓ Shift registers cleared");
   
   // Initialize all power LEDs
   Serial.println("Initializing 4 power LEDs...");
@@ -597,16 +532,6 @@ void setup() {
     ledcWrite(POWER_LEDS[i], 0);
     Serial.printf("  LED %d: GPIO %d\n", i+1, POWER_LEDS[i]);
   }
-  
-  Serial.println("UART ready at 115200 baud");
-  Serial.println("Timing Configuration:");
-  Serial.printf("  Animation Step: %d ms\n", ANIM_STEP_DELAY);
-  Serial.printf("  LED Update: %d ms interval\n", LED_UPDATE_INTERVAL);
-  Serial.println("===========================================");
-  Serial.println("ESP32 Power Indicator READY");
-  Serial.println("===========================================\n");
-  
-
   
   // Quick LED test
   Serial.println("Testing power LEDs (quick flash)...");
@@ -620,11 +545,19 @@ void setup() {
     }
     delay(100);
   }
-  Serial.println("LED test complete\n");
+  Serial.println("✓ LED test complete");
+  
+  Serial.println("\nUART ready at 115200 baud");
+  Serial.println("Timing Configuration:");
+  Serial.printf("  Animation Step: %d ms\n", ANIM_STEP_DELAY);
+  Serial.printf("  LED Update: %d ms interval\n", LED_UPDATE_INTERVAL);
+  Serial.println("===========================================");
+  Serial.println("ESP32 Power Indicator READY");
+  Serial.println("===========================================\n");
 }
 
 // ============================================
-// MAIN LOOP (OPTIMIZED)
+// MAIN LOOP
 // ============================================
 
 void loop() {
@@ -633,59 +566,21 @@ void loop() {
   
   unsigned long current_time = millis();
   
-  // NORMAL OPERATION - Independent animation per pump
-  
-  // Reset animation phase when pump transitions OFF -> ON
-  if (pump_primary.lastStatus < 2 && pump_primary.status >= 2) {
-    animPosPrimary = 0;
-    lastAnimPrimary = current_time;  // Reset timer
-  }
-
-  if (pump_secondary.lastStatus < 2 && pump_secondary.status >= 2) {
-    animPosSecondary = 0;
-    lastAnimSecondary = current_time;  // Reset timer
-  }
-
-  if (pump_tertiary.lastStatus < 2 && pump_tertiary.status >= 2) {
-    animPosTertiary = 0;
-    lastAnimTertiary = current_time;  // Reset timer
-  }
-
-  byte combinedPattern = 0x00;
-
-  /* ================= PRIMARY ================= */
-  if (pump_primary.status >= 2) {
-    if (current_time - lastAnimPrimary >= ANIM_STEP_DELAY) {
-      animPosPrimary = (animPosPrimary + 1) % 8;
-      lastAnimPrimary = current_time;
+  // 1. Update ring animation at fixed interval
+  if (current_time - lastAnimTime >= ANIM_STEP_DELAY) {
+    // Rotate ring pattern for all ICs
+    for (int i = 0; i < NUM_IC; i++) {
+      ring_pattern[i] = ringShift(ring_pattern[i]);
     }
-    combinedPattern |= FLOW_PATTERN[animPosPrimary];
+    
+    // Update buffer based on pump status
+    updateSRBuffer();
+    
+    // Write to shift registers
+    shiftRegisterWrite();
+    
+    lastAnimTime = current_time;
   }
-
-  /* ================= SECONDARY ================= */
-  if (pump_secondary.status >= 2) {
-    if (current_time - lastAnimSecondary >= ANIM_STEP_DELAY) {
-      animPosSecondary = (animPosSecondary + 1) % 8;
-      lastAnimSecondary = current_time;
-    }
-    combinedPattern |= FLOW_PATTERN[animPosSecondary];
-  }
-
-  /* ================= TERTIARY ================= */
-  if (pump_tertiary.status >= 2) {
-    if (current_time - lastAnimTertiary >= ANIM_STEP_DELAY) {
-      animPosTertiary = (animPosTertiary + 1) % 8;
-      lastAnimTertiary = current_time;
-    }
-    combinedPattern |= FLOW_PATTERN[animPosTertiary];
-  }
-
-  // Kirim ke shift register & update OE
-  sendPattern(combinedPattern);
-  updatePumpOutputs();
-  
-  yield();  // Prevent watchdog timeout
-
   
   // 2. Update LED power dengan interval terpisah
   if (current_time - last_led_time >= LED_UPDATE_INTERVAL) {
@@ -698,11 +593,7 @@ void loop() {
     processUART();
     last_uart_time = current_time;
   }
-
-  pump_primary.lastStatus   = pump_primary.status;
-  pump_secondary.lastStatus = pump_secondary.status;
-  pump_tertiary.lastStatus  = pump_tertiary.status;
-
+  
   // Yield untuk menjaga stabilitas sistem
   yield();
 }
