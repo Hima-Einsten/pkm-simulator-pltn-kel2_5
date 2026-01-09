@@ -283,6 +283,12 @@ class OLEDManager:
         self.blink_state = False
         self.last_blink_time = time.time()
         
+        # System status display state tracking
+        self.status_mode_shown = False      # Track if mode already shown
+        self.status_last_mode = None        # Last mode (manual/auto)
+        self.status_blink_state = 0         # Blink cycle (0 or 1) for idle prompt
+        self.status_blink_time = time.time() # Last blink toggle time
+        
         # Data tracking for optimization (only update if changed)
         self.last_data = {
             'pressurizer': None,
@@ -552,12 +558,192 @@ class OLEDManager:
         display.show()
         time.sleep(0.005)  # 5ms delay after show() - PRESERVED
     
+    def _is_system_idle(self, pressure: float, pump_primary: int, pump_secondary: int,
+                       pump_tertiary: int, safety_rod: int, shim_rod: int,
+                       regulating_rod: int, thermal_kw: float) -> bool:
+        """
+        Determine if system is in steady/idle state (no user action needed)
+        
+        Idle conditions:
+        1. Zero state (initial) - all off
+        2. Full power achieved - rods at 100%, power ≥ 295 MW
+        
+        Args:
+            pressure: Current pressure in bar
+            pump_primary: Primary pump status
+            pump_secondary: Secondary pump status
+            pump_tertiary: Tertiary pump status
+            safety_rod: Safety rod position (%)
+            shim_rod: Shim rod position (%)
+            regulating_rod: Regulating rod position (%)
+            thermal_kw: Thermal power in kW
+        
+        Returns:
+            True if system is idle (show blinking prompt), False otherwise
+        """
+        # Condition 1: Zero state (initial cold system)
+        if (pressure < 1.0 and 
+            pump_primary == 0 and pump_secondary == 0 and pump_tertiary == 0 and
+            safety_rod == 0 and shim_rod == 0 and regulating_rod == 0):
+            return True
+        
+        # Condition 2: Full power achieved (steady state operation)
+        power_mwe = thermal_kw / 1000.0
+        if (safety_rod == 100 and shim_rod == 100 and regulating_rod == 100 and
+            power_mwe >= 295.0):  # Close to 300 MW
+            return True
+        
+        # Not idle - user action or process ongoing
+        return False
+    
+    def _get_manual_guidance(self, pressure: float, pump_primary: int, pump_secondary: int,
+                            pump_tertiary: int, safety_rod: int, shim_rod: int,
+                            regulating_rod: int, thermal_kw: float):
+        """
+        Determine what user should do in manual mode
+        
+        CRITICAL SEQUENCE FOR PWR STARTUP:
+        1. Pressure to 140 bar (operating pressure)
+        2. All pumps ON (coolant circulation)
+        3. Safety rod to 100% (MUST BE FIRST! - for SCRAM capability)
+        4. Shim rod to 100% (coarse power control - after safety ready)
+        5. Regulating rod to 100% (fine power tuning - after safety ready)
+        
+        Args:
+            pressure: Current pressure in bar
+            pump_primary: Primary pump status (0=OFF, 1=STARTING, 2=ON)
+            pump_secondary: Secondary pump status
+            pump_tertiary: Tertiary pump status
+            safety_rod: Safety rod position (%)
+            shim_rod: Shim rod position (%)
+            regulating_rod: Regulating rod position (%)
+            thermal_kw: Thermal power in kW
+        
+        Returns:
+            (line1_text, line2_text) tuple for OLED display
+        """
+        # ============================================
+        # PRIORITY 1: Pressure Control
+        # ============================================
+        if pressure < 45.0:
+            return ("NAIKKAN PRES.", "KE 45 BAR")
+        
+        if pressure < 140.0:
+            return ("NAIKKAN PRES.", "KE 140 BAR")
+        
+        # ============================================
+        # PRIORITY 2: Pump Control
+        # ============================================
+        # Check if any pump is not in ON state (status 2)
+        if pump_primary != 2 or pump_secondary != 2 or pump_tertiary != 2:
+            # Check if any pump is in STARTING state (status 1)
+            if pump_primary == 1 or pump_secondary == 1 or pump_tertiary == 1:
+                return ("TUNGGU POMPA", "SIAP...")
+            else:
+                # Pumps are OFF (status 0)
+                return ("NYALAKAN", "POMPA-POMPA")
+        
+        # ============================================
+        # PRIORITY 3: Control Rod Sequence
+        # CRITICAL: Safety rod MUST reach 100% first!
+        # ============================================
+        
+        # Step 3a: Safety rod not at 100% - THIS IS HIGHEST PRIORITY!
+        if safety_rod < 100:
+            if safety_rod == 0:
+                # Safety rod at zero - clear instruction
+                return ("NAIK SAFETY", "ROD KE 100%")
+            else:
+                # Safety rod in progress - show progress
+                return ("NAIK SAFETY", f"{safety_rod}% → 100%")
+        
+        # Step 3b: Safety rod at 100%, now handle power rods
+        # Shim rod should be raised next (coarse power control)
+        if shim_rod < 100:
+            if shim_rod == 0 and regulating_rod == 0:
+                # Just starting power rods - guide to shim first
+                return ("NAIK SHIM", "ROD KE 100%")
+            else:
+                # Shim in progress or both rods being adjusted
+                return ("NAIK SHIM/REG", "KE 100%")
+        
+        # Step 3c: Shim at 100%, regulating rod remaining
+        if regulating_rod < 100:
+            return ("NAIK REG", "ROD KE 100%")
+        
+        # ============================================
+        # PRIORITY 4: Operating State
+        # All conditions met, show power level
+        # ============================================
+        power_mwe = thermal_kw / 1000.0
+        
+        if power_mwe >= 295.0:  # Close to maximum (300 MW)
+            return ("DAYA PENUH", "300 MW")
+        elif power_mwe >= 50.0:  # Significant power
+            return (f"DAYA: {power_mwe:.0f} MW", "")
+        else:
+            # Rods at 100% but power still building up
+            return ("DAYA NAIK...", f"{power_mwe:.0f} MW")
+    
+    def _format_auto_phase(self, phase: str, pressure: float, safety_rod: int,
+                          shim_rod: int, regulating_rod: int, thermal_kw: float):
+        """
+        Format auto simulation phase for display
+        
+        Args:
+            phase: Current auto simulation phase name
+            pressure: Current pressure in bar
+            safety_rod: Safety rod position (%)
+            shim_rod: Shim rod position (%)
+            regulating_rod: Regulating rod position (%)
+            thermal_kw: Thermal power in kW
+        
+        Returns:
+            (line1_text, line2_text) tuple for OLED display
+        """
+        if phase == "Init":
+            return ("INISIALISASI", "SISTEM")
+        
+        elif phase == "Pressure 45":
+            current = int(pressure)
+            return ("NAIK PRES 45", f"{current}/45 BAR")
+        
+        elif phase == "Pumps":
+            return ("START POMPA", "TERSIER...")
+        
+        elif phase == "Pressure 140":
+            current = int(pressure)
+            return ("NAIK PRES 140", f"{current}/140 BAR")
+        
+        elif phase == "Safety Rod":
+            return ("NAIK SAFETY", f"{safety_rod}%")
+        
+        elif phase == "Shim Rod 50%":
+            return ("NAIK SHIM", f"{shim_rod}/50%")
+        
+        elif phase == "Reg Rod 50%":
+            return ("NAIK REG", f"{regulating_rod}/50%")
+        
+        elif phase == "Max Power":
+            power_mwe = int(thermal_kw / 1000.0)
+            return ("DAYA PENUH", f"{power_mwe} MW")
+        
+        else:
+            # Generic fallback for any other phase
+            return ("BERJALAN...", "")
+    
     def update_system_status(self, auto_sim_running: bool, auto_sim_phase: str,
                             pressure: float, pump_primary: int, pump_secondary: int, 
                             pump_tertiary: int, interlock: bool, thermal_kw: float, 
                             turbine_speed: float):
         """
-        Update system status display with mode and progress
+        Update system status display with enhanced user guidance
+        
+        Features:
+        - Mode indicator shown once when mode changes
+        - Manual mode: Step-by-step guidance with safety rod priority
+        - Auto mode: Current process display with progress
+        - Idle mode: Blinking prompt to start auto simulation
         
         Args:
             auto_sim_running: Auto simulation running flag
@@ -576,31 +762,105 @@ class OLEDManager:
         display = self.oled_system_status
         display.clear()
         
-        # Show mode and status in Indonesian
-        if auto_sim_running:
-            mode_text = "AUTO"
-            display.draw_text_centered(mode_text, 2, display.font_large)
-            display.draw_text_centered("Berjalan...", 18, display.font)
-        else:
-            mode_text = "MANUAL"
-            display.draw_text_centered(mode_text, 2, display.font_large)
+        # ============================================
+        # MODE CHANGE DETECTION
+        # ============================================
+        # Check if mode changed (show mode indicator once)
+        current_mode = "AUTO" if auto_sim_running else "MANUAL"
+        if self.status_last_mode != current_mode:
+            # Mode just changed - reset mode shown flag
+            self.status_mode_shown = False
+            self.status_last_mode = current_mode
+            logger.debug(f"System status: Mode changed to {current_mode}")
+        
+        # ============================================
+        # SHOW MODE INDICATOR (ONCE ONLY)
+        # ============================================
+        if not self.status_mode_shown:
+            # Show mode indicator only once when mode changes
+            display.draw_text_centered(current_mode, 10, display.font_xlarge)
+            display.show()
+            time.sleep(0.005)
             
-            # Show simple status in Indonesian
-            if pressure < 40.0:
-                status_text = f"{pressure:.0f} bar"
-                display.draw_text_centered(status_text, 18, display.font)
-            elif pump_primary != 2 or pump_secondary != 2 or pump_tertiary != 2:
-                status_text = "Pompa Siap"
-                display.draw_text_centered(status_text, 18, display.font)
-            elif thermal_kw >= 50000:
-                power_mwe = thermal_kw / 1000.0
-                status_text = f"{power_mwe:.0f} MW"
-                display.draw_text_centered(status_text, 18, display.font)
+            # Mark as shown after first display
+            self.status_mode_shown = True
+            return
+        
+        # ============================================
+        # GET INTERPOLATED ROD VALUES FOR DISPLAY
+        # ============================================
+        # Use interpolated values for smoother display
+        display_safety = self.interp_safety_rod.get_display_value()
+        display_shim = self.interp_shim_rod.get_display_value()
+        display_reg = self.interp_regulating_rod.get_display_value()
+        
+        # ============================================
+        # AUTO MODE: Show process and progress
+        # ============================================
+        if auto_sim_running:
+            line1, line2 = self._format_auto_phase(
+                auto_sim_phase, pressure, 
+                display_safety, display_shim, display_reg,
+                thermal_kw
+            )
+            
+            # Display line 1 (action)
+            display.draw_text_centered(line1, 8, display.font)
+            
+            # Display line 2 (progress) if not empty
+            if line2:
+                display.draw_text_centered(line2, 20, display.font_small)
+        
+        # ============================================
+        # MANUAL MODE: Active or Idle
+        # ============================================
+        else:
+            # Check if system is idle (no action needed)
+            is_idle = self._is_system_idle(
+                pressure, pump_primary, pump_secondary, pump_tertiary,
+                display_safety, display_shim, display_reg, thermal_kw
+            )
+            
+            if is_idle:
+                # ============================================
+                # IDLE STATE: Blinking prompt
+                # ============================================
+                # Update blink state (1 second cycle)
+                current_time = time.time()
+                if current_time - self.status_blink_time > 1.0:
+                    self.status_blink_state = 1 - self.status_blink_state  # Toggle 0/1
+                    self.status_blink_time = current_time
+                
+                if self.status_blink_state == 0:
+                    # Cycle 1: "TEKAN START / UNTUK AUTO"
+                    display.draw_text_centered("TEKAN START", 6, display.font_large)
+                    display.draw_text_centered("UNTUK AUTO", 22, display.font)
+                else:
+                    # Cycle 2: "SIMULASI / OTOMATIS"
+                    display.draw_text_centered("SIMULASI", 6, display.font_large)
+                    display.draw_text_centered("OTOMATIS", 22, display.font)
+            
             else:
-                status_text = "Siap"
-                display.draw_text_centered(status_text, 18, display.font)
+                # ============================================
+                # ACTIVE STATE: User guidance
+                # ============================================
+                line1, line2 = self._get_manual_guidance(
+                    pressure, pump_primary, pump_secondary, pump_tertiary,
+                    display_safety, display_shim, display_reg, thermal_kw
+                )
+                
+                # Display line 1 (primary instruction)
+                display.draw_text_centered(line1, 8, display.font)
+                
+                # Display line 2 (detail/target) if not empty
+                if line2:
+                    display.draw_text_centered(line2, 20, display.font_small)
         
         display.show()
+        time.sleep(0.005)  # 5ms delay after show() - PRESERVED
+        
+        # Post-update delay for MUX #2
+        time.sleep(0.010)  # 10ms post-update delay
         
         # Extra delay: This is the LAST channel on MUX #2 (channel 2)
         # Give OLED time to fully process before next update cycle
