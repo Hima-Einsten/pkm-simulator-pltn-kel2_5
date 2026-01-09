@@ -101,7 +101,7 @@ uint8_t ring_pattern[NUM_IC] = {
 // TIMING CONFIGURATION
 // ============================================
 #define ANIM_STEP_DELAY 150       // Animation step delay (ms)
-#define LED_UPDATE_INTERVAL 100   // Update LED power setiap 100ms
+#define LED_UPDATE_INTERVAL 20    // Update LED power setiap 20ms (50Hz refresh) - FIXED GLITCH
 #define UART_PROCESS_INTERVAL 10  // Proses UART setiap 10ms
 #define DEBUG_INTERVAL 2000       // Debug output setiap 2 detik
 
