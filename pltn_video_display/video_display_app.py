@@ -72,18 +72,36 @@ class VideoDisplayApp:
         # Display mode
         self.display_mode = DisplayMode.IDLE
         
-        # Fonts
+        # Fonts - Enhanced for professional display
+        self.font_title = pygame.font.Font(None, 60)      # Main title
+        self.font_subtitle = pygame.font.Font(None, 48)   # Subtitle
+        self.font_heading = pygame.font.Font(None, 40)    # Institution
         self.font_large = pygame.font.Font(None, 72)
         self.font_medium = pygame.font.Font(None, 48)
         self.font_small = pygame.font.Font(None, 36)
+        self.font_instruction = pygame.font.Font(None, 32) # Instruction text
         
-        # Colors
+        # Colors - Enhanced palette
         self.COLOR_BG = (20, 20, 40)
         self.COLOR_TEXT = (255, 255, 255)
-        self.COLOR_ACCENT = (0, 200, 255)
+        self.COLOR_ACCENT = (0, 200, 255)           # Cyan for titles
+        self.COLOR_YELLOW = (255, 215, 0)           # Gold for instructions
+        self.COLOR_GRAY = (200, 200, 200)           # Light gray
         self.COLOR_SUCCESS = (0, 255, 100)
         self.COLOR_WARNING = (255, 200, 0)
         self.COLOR_ERROR = (255, 50, 50)
+        
+        # Load logos
+        self.logo_brin = None
+        self.logo_poltek = None
+        self.logo_size_large = (120, 120)  # IDLE mode
+        self.logo_size_small = (60, 60)    # MANUAL mode - Updated from 40x40
+        self.load_logos()
+        
+        # IDLE screen animation
+        self.idle_fade_alpha = 255
+        self.idle_fade_direction = -1
+        self.idle_fade_speed = 2
         
         # Manual guide - step tracker
         self.current_step = 0
@@ -94,14 +112,15 @@ class VideoDisplayApp:
             print("🧪 TESTING MODE ACTIVE")
             print("   Using mock simulation data")
             print("   Press keys to simulate states:")
-            print("   - 1: IDLE mode")
-            print("   - 2: AUTO mode (play video)")
-            print("   - 3: MANUAL mode (step guide)")
-            print("   - UP/DOWN: Adjust mock values")
-            print("   - R: Toggle rods")
+            print("   - I: IDLE mode (branding screen)")
+            print("   - M: MANUAL mode (interactive guide)")
+            print("   - A: AUTO mode (play video)")
+            print("   - UP/DOWN: Adjust pressure values")
+            print("   - R: Toggle control rods")
             print("   - P: Toggle pumps")
+            print("   - ESC: Exit")
             self.mock_state = self.create_mock_state()
-            self.mock_mode = "idle"
+            self.mock_mode = "idle"  # Start with IDLE
         else:
             print("🚀 PRODUCTION MODE")
             print(f"   Reading state from: {self.state_file}")
@@ -109,6 +128,37 @@ class VideoDisplayApp:
         print(f"🎬 Video Display App initialized")
         print(f"   Screen: {self.width}x{self.height}")
         print(f"   Fullscreen: {fullscreen}")
+        if self.logo_brin and self.logo_poltek:
+            print(f"   ✅ Logos loaded successfully")
+        else:
+            print(f"   ⚠️  Logos not found (will skip)")
+    
+    def load_logos(self):
+        """Load BRIN and Poltek logos from assets folder"""
+        try:
+            logo_path_brin = Path(__file__).parent / "assets" / "logo-brin.png"
+            logo_path_poltek = Path(__file__).parent / "assets" / "logo-poltek.png"
+            
+            if logo_path_brin.exists():
+                logo_img = pygame.image.load(str(logo_path_brin))
+                # Scale for IDLE mode (large)
+                self.logo_brin = pygame.transform.smoothscale(logo_img, self.logo_size_large)
+                print(f"   ✅ Loaded BRIN logo")
+            else:
+                print(f"   ⚠️  BRIN logo not found: {logo_path_brin}")
+            
+            if logo_path_poltek.exists():
+                logo_img = pygame.image.load(str(logo_path_poltek))
+                # Scale for IDLE mode (large)
+                self.logo_poltek = pygame.transform.smoothscale(logo_img, self.logo_size_large)
+                print(f"   ✅ Loaded Poltek logo")
+            else:
+                print(f"   ⚠️  Poltek logo not found: {logo_path_poltek}")
+        
+        except Exception as e:
+            print(f"   ❌ Error loading logos: {e}")
+            self.logo_brin = None
+            self.logo_poltek = None
     
     def create_mock_state(self) -> Dict:
         """Create mock state for testing"""
@@ -137,17 +187,16 @@ class VideoDisplayApp:
         """
         if self.test_mode:
             # Update mock state based on current mode
-            if self.mock_mode == "auto":
+            if self.mock_mode == "idle":
+                # Return empty state for IDLE mode
+                return {}
+            elif self.mock_mode == "auto":
                 self.mock_state["mode"] = "auto"
                 self.mock_state["auto_running"] = True
                 self.mock_state["auto_phase"] = "Running"
             elif self.mock_mode == "manual":
                 self.mock_state["mode"] = "manual"
                 self.mock_state["auto_running"] = False
-            else:  # idle
-                self.mock_state["mode"] = "manual"
-                self.mock_state["auto_running"] = False
-                self.mock_state["pressure"] = 0
             
             return self.mock_state
         
@@ -168,18 +217,20 @@ class VideoDisplayApp:
             return
         
         if event.type == pygame.KEYDOWN:
-            # Mode switches
-            if event.key == pygame.K_1:
+            # Mode switches - Updated keys: I, M, A
+            if event.key == pygame.K_i:
                 print("🔄 Test: Switching to IDLE mode")
                 self.mock_mode = "idle"
+                self.current_step = 0  # Reset manual step
             
-            elif event.key == pygame.K_2:
-                print("🔄 Test: Switching to AUTO mode")
-                self.mock_mode = "auto"
-            
-            elif event.key == pygame.K_3:
+            elif event.key == pygame.K_m:
                 print("🔄 Test: Switching to MANUAL mode")
                 self.mock_mode = "manual"
+                self.current_step = 0  # Reset to step 1
+            
+            elif event.key == pygame.K_a:
+                print("🔄 Test: Switching to AUTO mode")
+                self.mock_mode = "auto"
             
             # Adjust mock values (for manual mode testing)
             elif event.key == pygame.K_UP:
@@ -262,32 +313,73 @@ class VideoDisplayApp:
             print("⏹️  Video stopped")
     
     def draw_idle_screen(self):
-        """Display idle/intro screen"""
+        """Display idle/intro screen - Professional branding"""
         self.screen.fill(self.COLOR_BG)
         
-        # Title
-        title = self.font_large.render("PLTN SIMULATOR", True, self.COLOR_ACCENT)
-        title_rect = title.get_rect(center=(self.width//2, self.height//3))
-        self.screen.blit(title, title_rect)
+        # Update fade animation
+        self.idle_fade_alpha += self.idle_fade_direction * self.idle_fade_speed
+        if self.idle_fade_alpha >= 255:
+            self.idle_fade_alpha = 255
+            self.idle_fade_direction = -1
+        elif self.idle_fade_alpha <= 180:
+            self.idle_fade_alpha = 180
+            self.idle_fade_direction = 1
         
-        # Subtitle
-        subtitle = self.font_medium.render("Pressurized Water Reactor", True, self.COLOR_TEXT)
-        subtitle_rect = subtitle.get_rect(center=(self.width//2, self.height//2))
-        self.screen.blit(subtitle, subtitle_rect)
+        # === TOP SECTION: LOGOS ===
+        logo_y = 40
+        logo_margin = 60
         
-        # Instructions
-        inst1 = self.font_small.render("Press START AUTO SIMULATION for guided demo", True, self.COLOR_SUCCESS)
-        inst1_rect = inst1.get_rect(center=(self.width//2, self.height*2//3))
-        self.screen.blit(inst1, inst1_rect)
+        # BRIN Logo (Top Left)
+        if self.logo_brin:
+            logo_x = logo_margin
+            self.screen.blit(self.logo_brin, (logo_x, logo_y))
         
-        inst2 = self.font_small.render("Or use MANUAL MODE for hands-on training", True, self.COLOR_WARNING)
-        inst2_rect = inst2.get_rect(center=(self.width//2, self.height*2//3 + 50))
-        self.screen.blit(inst2, inst2_rect)
+        # Poltek Logo (Top Right)
+        if self.logo_poltek:
+            logo_x = self.width - self.logo_size_large[0] - logo_margin
+            self.screen.blit(self.logo_poltek, (logo_x, logo_y))
         
-        # Test mode indicator
+        # === CENTER SECTION: MAIN TITLE ===
+        center_y_start = self.height // 2 - 100
+        
+        # Main Title Line 1
+        title1 = self.font_title.render("ALAT PERAGA PLTN TIPE PWR", True, self.COLOR_ACCENT)
+        title1_rect = title1.get_rect(center=(self.width//2, center_y_start))
+        self.screen.blit(title1, title1_rect)
+        
+        # Main Title Line 2 (Subtitle)
+        title2 = self.font_subtitle.render("BERBASIS MIKROKONTROLER", True, self.COLOR_TEXT)
+        title2_rect = title2.get_rect(center=(self.width//2, center_y_start + 70))
+        self.screen.blit(title2, title2_rect)
+        
+        # Institution Name
+        institution = self.font_heading.render("Politeknik Teknologi Nuklir Indonesia", True, self.COLOR_GRAY)
+        inst_rect = institution.get_rect(center=(self.width//2, center_y_start + 140))
+        self.screen.blit(institution, inst_rect)
+        
+        # === BOTTOM SECTION: INSTRUCTIONS ===
+        instruction_y = self.height - 120
+        
+        # Instruction text with fade animation
+        instruction_color = (self.COLOR_YELLOW[0], 
+                           self.COLOR_YELLOW[1], 
+                           self.COLOR_YELLOW[2], 
+                           int(self.idle_fade_alpha))
+        
+        # Create surface with alpha for fade effect
+        inst_text = "Tekan START AUTO SIMULATION atau gunakan MANUAL MODE"
+        inst_surface = self.font_instruction.render(inst_text, True, self.COLOR_YELLOW)
+        
+        # Apply fade by adjusting alpha
+        inst_surface.set_alpha(int(self.idle_fade_alpha))
+        inst_rect = inst_surface.get_rect(center=(self.width//2, instruction_y))
+        self.screen.blit(inst_surface, inst_rect)
+        
+        # === TEST MODE INDICATOR ===
         if self.test_mode:
-            test_text = self.font_small.render("TEST MODE - Press 1/2/3 to change mode", True, self.COLOR_ERROR)
-            test_rect = test_text.get_rect(center=(self.width//2, self.height - 50))
+            test_y = self.height - 50
+            test_text = self.font_small.render("TEST MODE - Press I/M/A to change mode | ESC to exit", True, self.COLOR_ERROR)
+            test_rect = test_text.get_rect(center=(self.width//2, test_y))
             self.screen.blit(test_text, test_rect)
         
         pygame.display.flip()
@@ -296,16 +388,47 @@ class VideoDisplayApp:
         """Display interactive step-by-step guide"""
         self.screen.fill(self.COLOR_BG)
         
+        # === HEADER BAR === (Updated: larger size)
+        header_height = 80  # Increased from 60
+        header_bg_color = (26, 26, 46)
+        left_margin = 30    # Increased from 15
+        right_margin = 30   # Increased from 15
+        
+        # Draw header background
+        pygame.draw.rect(self.screen, header_bg_color, (0, 0, self.width, header_height))
+        pygame.draw.line(self.screen, self.COLOR_ACCENT, (0, header_height), (self.width, header_height), 2)
+        
+        # Logo BRIN (left) - larger version (60x60)
+        if self.logo_brin:
+            logo_small_brin = pygame.transform.smoothscale(self.logo_brin, self.logo_size_small)
+            logo_y = (header_height - self.logo_size_small[1]) // 2
+            self.screen.blit(logo_small_brin, (left_margin, logo_y))
+        
+        # Title text (center)
+        header_title = self.font_heading.render("PLTN Simulator - Manual Mode", True, self.COLOR_TEXT)
+        header_title_rect = header_title.get_rect(center=(self.width//2, header_height//2))
+        self.screen.blit(header_title, header_title_rect)
+        
+        # Logo Poltek (right) - larger version (60x60)
+        if self.logo_poltek:
+            logo_small_poltek = pygame.transform.smoothscale(self.logo_poltek, self.logo_size_small)
+            logo_y = (header_height - self.logo_size_small[1]) // 2
+            logo_x = self.width - self.logo_size_small[0] - right_margin
+            self.screen.blit(logo_small_poltek, (logo_x, logo_y))
+        
+        # === MAIN CONTENT AREA ===
+        content_y_start = header_height + 20
+        
         # Current step instruction
         step_text = self.get_current_step_instruction(state)
         
         # Draw step title
         title = self.font_large.render(f"STEP {self.current_step + 1}", True, self.COLOR_ACCENT)
-        title_rect = title.get_rect(center=(self.width//2, 100))
+        title_rect = title.get_rect(center=(self.width//2, content_y_start + 30))
         self.screen.blit(title, title_rect)
         
         # Draw instruction
-        y_offset = 200
+        y_offset = content_y_start + 80
         for line in step_text:
             text = self.font_medium.render(line, True, self.COLOR_TEXT)
             text_rect = text.get_rect(center=(self.width//2, y_offset))
@@ -317,9 +440,13 @@ class VideoDisplayApp:
         
         # Test mode hint
         if self.test_mode:
-            hint = self.font_small.render("TEST: Use UP/DOWN/R/P keys to simulate", True, self.COLOR_WARNING)
-            hint_rect = hint.get_rect(center=(self.width//2, self.height - 50))
-            self.screen.blit(hint, hint_rect)
+            hint1 = self.font_small.render("TEST: I=IDLE | M=MANUAL | A=AUTO", True, self.COLOR_ERROR)
+            hint1_rect = hint1.get_rect(center=(self.width//2, self.height - 80))
+            self.screen.blit(hint1, hint1_rect)
+            
+            hint2 = self.font_small.render("UP/DOWN=Pressure | R=Rods | P=Pumps", True, self.COLOR_WARNING)
+            hint2_rect = hint2.get_rect(center=(self.width//2, self.height - 40))
+            self.screen.blit(hint2, hint2_rect)
         
         pygame.display.flip()
     
@@ -425,7 +552,39 @@ class VideoDisplayApp:
         """Main update loop"""
         state = self.read_simulation_state()
         
-        if not state and not self.test_mode:
+        # In test mode, check mock_mode first
+        if self.test_mode:
+            if self.mock_mode == "idle":
+                # Force IDLE mode
+                if self.display_mode != DisplayMode.IDLE:
+                    self.stop_video()
+                    self.display_mode = DisplayMode.IDLE
+                self.draw_idle_screen()
+                return
+            elif self.mock_mode == "auto":
+                # Force AUTO mode
+                if self.display_mode != DisplayMode.AUTO_VIDEO:
+                    print("🎬 Switching to AUTO VIDEO mode")
+                    video_path = str(Path(__file__).parent / "assets" / "penjelasan.mp4")
+                    self.play_video(video_path, loop=True)
+                    self.display_mode = DisplayMode.AUTO_VIDEO
+                
+                # Show overlay in test mode
+                self.draw_video_playing_overlay()
+                return
+            elif self.mock_mode == "manual":
+                # Force MANUAL mode
+                if self.display_mode != DisplayMode.MANUAL_GUIDE:
+                    print("📋 Switching to MANUAL GUIDE mode")
+                    self.stop_video()
+                    self.display_mode = DisplayMode.MANUAL_GUIDE
+                    self.current_step = 0
+                
+                self.draw_manual_guide(state)
+                return
+        
+        # Production mode logic
+        if not state:
             # No state yet - show idle
             if self.display_mode != DisplayMode.IDLE:
                 self.stop_video()
@@ -489,8 +648,8 @@ class VideoDisplayApp:
             # Update display
             self.update()
             
-            # 10 FPS sufficient for UI updates
-            clock.tick(10)
+            # 30 FPS sufficient for UI updates
+            clock.tick(30)
         
         # Cleanup
         self.stop_video()

@@ -1,8 +1,8 @@
 @echo off
-REM Quick test script for PLTN Video Display (Windows)
+REM Updated test script with new keyboard controls
 
 echo ==========================================
-echo PLTN Video Display - Quick Test
+echo PLTN Video Display - Test (Updated)
 echo ==========================================
 echo.
 
@@ -19,14 +19,18 @@ if errorlevel 1 (
 
 echo.
 echo Starting test mode (windowed)...
-echo Controls:
-echo   1 = IDLE mode
-echo   2 = AUTO mode
-echo   3 = MANUAL mode
-echo   UP/DOWN = Adjust values
+echo.
+echo NEW KEYBOARD CONTROLS:
+echo   I = IDLE mode (branding screen)
+echo   M = MANUAL mode (interactive guide)
+echo   A = AUTO mode (video playback)
+echo.
+echo   UP/DOWN = Adjust pressure
 echo   R = Toggle rods
 echo   P = Toggle pumps
 echo   ESC = Exit
+echo.
+echo Will start in IDLE mode (branding screen)
 echo.
 echo Press any key to start...
 pause >nul
