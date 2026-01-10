@@ -300,182 +300,273 @@ python3 video_display_app.py --test --windowed
 
 **GPIO Usage:**
 ```
-GPIO 2/3:   I2C (SDA/SCL) - 9 OLED + 3 ESP
-GPIO 5-26:  15 Push Buttons (with internal pull-up)
-(Optional: GPIO untuk buzzer, status LED)
+GPIO 2/3:   I2C (SDA/SCL) - 9 OLED displays only
+GPIO 14/15: UART0 (TXD/RXD) - ESP-BC communication
+GPIO 4/5:   UART3 (TXD/RXD) - ESP-E communication (requires dtoverlay=uart3)
+GPIO 6-27:  17 Push Buttons (with internal pull-up)
+GPIO 22:    Buzzer (PWM output)
 ```
 
 **Tasks:**
-1. Baca 15 push buttons (dengan debouncing 200ms)
+1. Baca 17 push buttons (event queue pattern, no deadlocks)
 2. Implementasi safety interlock logic
-3. Kontrol 9 OLED displays via 2x PCA9548A
-4. Komunikasi dengan 3 ESP32 via PCA9548A
+3. Kontrol 9 OLED displays via TCA9548A (I2C)
+4. Komunikasi dengan 2 ESP32 via UART (binary protocol)
 5. Kalkulasi humidifier control
-6. Data logging ke CSV
-7. (Optional) Web dashboard
+6. System health monitoring
+7. Export state to JSON (untuk video display)
+8. Data logging ke CSV
 
 ---
 
-### 2. ESP-B (0x08) - Control Rods & Reactor Core
+### 2. ESP-BC (UART) - Control Rods + Turbine + Motors + Humidifiers
 
 **Hardware:**
-- ESP32 Dev Board
-- 3x Servo motors (MG996R recommended)
-- Sensor suhu (optional)
+- ESP32 Dev Board (38-pin)
+- 3x Servo motors (MG996R recommended) - Control rods
+- 2x L298N Motor Driver (4 channels total: 3 pumps + 1 turbine)
+- 4x Relay Module (Cooling Tower humidifiers)
+- UART connection to Raspberry Pi
+
+**UART Connection:**
+```
+Raspberry Pi GPIO 14 (UART0 TX) → ESP32 GPIO 16 (UART2 RX)
+Raspberry Pi GPIO 15 (UART0 RX) ← ESP32 GPIO 17 (UART2 TX)
+Common GND
+```
 
 **GPIO Pins:**
 ```cpp
-// Servo motors
-#define SERVO_ROD1 27  // Safety rod
-#define SERVO_ROD2 14  // Shim rod  
-#define SERVO_ROD3 12  // Regulating rod
+// UART Communication
+#define UART_RX 16  // From Raspberry Pi
+#define UART_TX 17  // To Raspberry Pi
 
-// I2C
-#define SDA 21
-#define SCL 22
+// Servo motors (Control Rods)
+#define SERVO_SAFETY 13      // Safety rod
+#define SERVO_SHIM 12        // Shim rod  
+#define SERVO_REGULATING 14  // Regulating rod
+
+// L298N Motor Drivers (PWM)
+#define MOTOR_PUMP_PRIMARY 4      // Primary pump
+#define MOTOR_PUMP_SECONDARY 5    // Secondary pump
+#define MOTOR_PUMP_TERTIARY 18    // Tertiary pump
+#define MOTOR_TURBINE 19          // Turbine motor
+
+// L298N Direction Control (Turbine only)
+#define MOTOR_TURBINE_IN1 23  // Forward
+#define MOTOR_TURBINE_IN2 15  // Reverse
+
+// Cooling Tower Humidifier Relays
+#define RELAY_CT1 27  // Cooling Tower 1
+#define RELAY_CT2 26  // Cooling Tower 2
+#define RELAY_CT3 25  // Cooling Tower 3
+#define RELAY_CT4 32  // Cooling Tower 4
 ```
 
 **Fungsi:**
-- Terima target positions dari Raspberry Pi (3 bytes)
-- Gerakkan 3 servo motors sesuai target
+- Terima commands via UART (binary protocol, 15 bytes)
+- Gerakkan 3 servo motors sesuai target (smooth interpolation)
+- Kontrol 4 motor drivers (PWM 0-255) dengan L298N
+- Kontrol direction turbin (FORWARD/REVERSE/STOP)
+- Kontrol 4 relay humidifier (ON/OFF sesuai command)
 - Hitung thermal power (kW) dari posisi rod
-- Kirim actual positions + thermal kW (16 bytes)
+- Kirim status via UART (binary protocol, 28 bytes)
 
-**I2C Protocol:**
+**UART Binary Protocol:**
 ```cpp
-// Receive (3 bytes):
-// - Byte 0: Safety rod target (0-100%)
-// - Byte 1: Shim rod target (0-100%)
-// - Byte 2: Regulating rod target (0-100%)
+// Receive Command (15 bytes):
+// [STX][CMD=0x55][LEN=10][rod1][rod2][rod3][pump1][pump2][pump3]
+// [humid1][humid2][humid3][humid4][CRC8][ETX]
 
-// Send (16 bytes):
-// - Byte 0: Safety rod actual
-// - Byte 1: Shim rod actual
-// - Byte 2: Regulating rod actual
-// - Byte 3: Reserved
-// - Byte 4-7: Thermal power kW (float)
-// - Byte 8-15: Reserved for future
+// Send Response (28 bytes):
+// [STX][ACK=0x06][LEN=23][rod1_actual][rod2_actual][rod3_actual]
+// [thermal_kw (float)][power_level (float)][state][turbine_speed (float)]
+// [pump1_speed (float)][pump2_speed (float)][pump3_speed (float)]
+// [humid1_status][humid2_status][humid3_status][humid4_status]
+// [CRC8][ETX]
 ```
 
 ---
 
-### 3. ESP-C (0x09) - Turbine, Generator & Humidifier
+### 3. ESP-E (UART) - LED Visualizer + Power Indicator
 
 **Hardware:**
-- ESP32 Dev Board
-- 4x Relay module (main components)
-- 2x Relay module (humidifiers) ⭐ **NEW**
-- 4x Motor/Fan (PWM control)
-
-**GPIO Pins:**
-```cpp
-// Main component relays
-#define RELAY_STEAM_GEN 25
-#define RELAY_TURBINE 26
-#define RELAY_CONDENSER 27
-#define RELAY_COOLING_TOWER 14
-
-// Humidifier relays (NEW!)
-#define RELAY_HUMIDIFIER_STEAM_GEN 32    // ⭐ Steam Generator
-#define RELAY_HUMIDIFIER_COOLING_TOWER 33 // ⭐ Cooling Tower
-
-// Motor PWM
-#define MOTOR_STEAM_GEN_PIN 12
-#define MOTOR_TURBINE_PIN 13
-#define MOTOR_CONDENSER_PIN 15
-#define MOTOR_COOLING_PIN 4
-
-// I2C
-#define SDA 21
-#define SCL 22
-```
-
-**Fungsi:**
-- Kontrol relay untuk komponen utama (based on power level)
-- **Kontrol 2 humidifier relay (based on RasPi command)**
-- State machine: IDLE → STARTING → RUNNING → SHUTDOWN
-- PWM control untuk motor speeds
-
-**I2C Protocol (UPDATED):**
-```cpp
-// Receive (12 bytes):
-// - Byte 0: Register (0x00)
-// - Byte 1: Safety rod position
-// - Byte 2: Shim rod position  
-// - Byte 3: Regulating rod position
-// - Byte 4-7: Thermal power kW (float)
-// - Byte 8: Humidifier Steam Gen command (0/1) ⭐
-// - Byte 9: Humidifier Cooling Tower command (0/1) ⭐
-
-// Send (12 bytes):
-// - Byte 0-3: Power level (float, 0-100%)
-// - Byte 4-7: State (uint32)
-// - Byte 8: Generator status
-// - Byte 9: Turbine status
-// - Byte 10: Humidifier SG status ⭐
-// - Byte 11: Humidifier CT status ⭐
-```
-
----
-
-### 4. ESP-E (0x0A) - 3-Flow LED Visualizer
-
-**Hardware:**
-- ESP32 Dev Board
+- ESP32 Dev Board (38-pin)
 - 3x CD74HC4067 (16-channel multiplexer)
-- 48x LED (16 per flow)
-- Current limiting resistors
+- 48x LED (16 per flow) - Water flow visualization
+- 10x LED - Power indicator (0-300 MWe)
+- Current limiting resistors (220Ω per LED)
+- UART connection to Raspberry Pi
+
+**UART Connection:**
+```
+Raspberry Pi GPIO 4 (UART3 TX) → ESP32 GPIO 16 (UART2 RX)
+Raspberry Pi GPIO 5 (UART3 RX) ← ESP32 GPIO 17 (UART2 TX)
+Common GND
+```
 
 **GPIO Pins:**
 ```cpp
-// Shared selector (all 3 multiplexers)
-#define S0 14
-#define S1 27
-#define S2 26
-#define S3 25
+// UART Communication
+#define UART_RX 16  // From Raspberry Pi
+#define UART_TX 17  // To Raspberry Pi
 
-// Flow 1: Primary
-#define EN_PRIMARY 33
-#define SIG_PRIMARY 32
+// Multiplexer Control (Shared)
+#define MUX_S0 14
+#define MUX_S1 27
+#define MUX_S2 26
+#define MUX_S3 25
 
-// Flow 2: Secondary
-#define EN_SECONDARY 15
-#define SIG_SECONDARY 4
+// Flow LED Control (3 flows)
+#define FLOW_EN_PRIMARY 33     // Enable pin
+#define FLOW_SIG_PRIMARY 32    // Signal pin (PWM)
 
-// Flow 3: Tertiary
-#define EN_TERTIARY 2
-#define SIG_TERTIARY 16
+#define FLOW_EN_SECONDARY 15
+#define FLOW_SIG_SECONDARY 4
 
-// I2C
-#define SDA 21
-#define SCL 22
+#define FLOW_EN_TERTIARY 2
+#define FLOW_SIG_TERTIARY 16
+
+// Power Indicator LEDs (10 LEDs, 0-300 MWe)
+#define LED_POWER_1  23
+#define LED_POWER_2  22
+#define LED_POWER_3  21
+#define LED_POWER_4  19
+#define LED_POWER_5  18
+#define LED_POWER_6  5
+#define LED_POWER_7  17  // Note: Conflicts with TX, use different pin
+#define LED_POWER_8  13
+#define LED_POWER_9  12
+#define LED_POWER_10 14
 ```
 
 **Fungsi:**
-- Terima status 3 pump dari Raspberry Pi
-- Animate 48 LEDs (16 per flow) dengan kecepatan berbeda
-- Multi-wave flowing effect (looks realistic!)
+- Terima status via UART (binary protocol, 17 bytes)
+- Animate 48 LEDs (3 flows × 16 LEDs) dengan kecepatan berbeda
+- Kontrol 10 power LEDs (simultaneous brightness control)
+- Multi-wave flowing effect untuk realistis
+- PWM brightness control (0-255)
 
-**I2C Protocol:**
+**UART Binary Protocol:**
 ```cpp
-// Receive (16 bytes):
-// - Byte 0: Register (0x00)
-// - Byte 1-5: Primary (pressure float + pump status)
-// - Byte 6-10: Secondary (pressure float + pump status)
-// - Byte 11-15: Tertiary (pressure float + pump status)
+// Receive Command (17 bytes):
+// [STX][CMD=0x55][LEN=12][thermal_kw (float)][pump1_status]
+// [pump2_status][pump3_status][reserved...][CRC8][ETX]
 
-// Send (2 bytes):
-// - Byte 0: Animation speed
-// - Byte 1: LED count (16)
+// Send Response (10 bytes):
+// [STX][ACK=0x06][LEN=5][power_mwe (float)][pwm][CRC8][ETX]
 ```
+
+---
+
+## 🎬 Video Display System (NEW v4.0)
+
+### Overview
+
+Sistem visualisasi video **terpisah** yang menampilkan educational content dan interactive guide pada monitor terpisah.
+
+**Key Features:**
+- ✅ **Standalone module** - Independent from main control
+- ✅ **Pygame-based** - Lightweight & cross-platform
+- ✅ **3 display modes** - IDLE, AUTO (video), MANUAL (guide)
+- ✅ **Real-time sync** - Reads state from JSON file
+- ✅ **Testing mode** - No simulation required
+
+### Architecture
+
+```
+┌──────────────────────┐         ┌──────────────────────┐
+│  raspi_main_panel.py │         │ video_display_app.py │
+│  (Main Controller)   │         │ (Video Display)      │
+│                      │         │                      │
+│  • Button handling   │         │  • Pygame window     │
+│  • ESP comm (UART)   │         │  • mpv video player  │
+│  • Control logic     │         │  • State reading     │
+│  • OLED displays     │         │  • UI rendering      │
+│  • Export state ───> │  JSON   │  • Step guides       │
+│                      │  File   │                      │
+└──────────────────────┘         └──────────────────────┘
+         ↑                                    ↓
+         │                               HDMI Monitor
+    ESP32 Hardware                     (1920x1080)
+```
+
+### JSON State File
+
+**Location:**
+- Linux/RPi: `/tmp/pltn_state.json`
+- Windows: `C:/temp/pltn_state.json`
+
+**Format:**
+```json
+{
+  "timestamp": 1736520312.123,
+  "mode": "manual",
+  "auto_running": false,
+  "auto_phase": "",
+  "pressure": 45.0,
+  "safety_rod": 100,
+  "shim_rod": 50,
+  "regulating_rod": 50,
+  "pump_primary": 2,
+  "pump_secondary": 2,
+  "pump_tertiary": 2,
+  "thermal_kw": 25000.0,
+  "turbine_speed": 85.0,
+  "emergency": false
+}
+```
+
+### Display Modes
+
+**1. IDLE Screen**
+- Shown when: No activity, backend not running
+- Content: Welcome screen with instructions
+
+**2. AUTO Mode - Video**
+- Shown when: `mode='auto'` and `auto_running=True`
+- Content: Fullscreen educational video (`videos/full_process.mp4`)
+- Duration: ~60-90 seconds loop
+
+**3. MANUAL Mode - Interactive Guide**
+- Shown when: `mode='manual'`
+- Content: Step-by-step instructions with real-time feedback
+- Steps: 9 phases (pressure, pumps, rods, operation)
+- Includes: Progress bars, parameter display, next step hints
+
+### Quick Start
+
+**Test Mode (No Hardware):**
+```bash
+cd pltn_video_display
+python video_display_app.py --test --windowed
+
+# Controls:
+# Press 1 = IDLE, 2 = AUTO, 3 = MANUAL
+# Press UP/DOWN = Adjust pressure
+# Press R/P = Toggle rods/pumps
+```
+
+**Production Mode (With Simulation):**
+```bash
+# Terminal 1: Main simulation
+cd raspi_central_control
+python raspi_main_panel.py
+
+# Terminal 2: Video display
+cd pltn_video_display
+python video_display_app.py
+```
+
+**See [pltn_video_display/README.md](pltn_video_display/README.md) for complete documentation.**
 
 ---
 
 ## 🎛️ Control Panel
 
-### 9 OLED Displays (via 2x PCA9548A)
+### 9 OLED Displays (via TCA9548A)
 
-**PCA9548A #1 (Address: 0x70)**
+**TCA9548A (Address: 0x70)**
 
 | Channel | OLED | Content | Example Display |
 |---------|------|---------|-----------------|
@@ -487,18 +578,15 @@ GPIO 5-26:  15 Push Buttons (with internal pull-up)
 | 5 | 6 | Shim Rod Position | `60%` + bar graph |
 | 6 | 7 | Regulating Rod Position | `45%` + bar graph |
 | 7 | 8 | Thermal Power | `1250 kW` |
+| 7 | 9 | System Status | `Humidifiers: CT1-4` |
 
-**PCA9548A #2 (Address: 0x71)**
+### 17 Push Buttons (via GPIO)
 
-| Channel | OLED | Content | Example Display |
-|---------|------|---------|-----------------|
-| 0 | 9 | System Status | `Humidifiers: SG✓ CT✓` |
-
-### 15 Push Buttons (via GPIO)
+**See [GPIO_PIN_MAPPING.md](GPIO_PIN_MAPPING.md) for complete pin mapping guide.**
 
 **Pump Control (6 buttons):**
 ```
-GPIO 5:  Pump Primary ON      GPIO 6:  Pump Primary OFF
+GPIO 11: Pump Primary ON      GPIO 6:  Pump Primary OFF
 GPIO 13: Pump Secondary ON    GPIO 19: Pump Secondary OFF
 GPIO 26: Pump Tertiary ON     GPIO 21: Pump Tertiary OFF
 ```
@@ -515,10 +603,14 @@ GPIO 8:  Regulating Rod UP    GPIO 25: Regulating Rod DOWN
 GPIO 24: Pressure UP          GPIO 23: Pressure DOWN
 ```
 
-**Emergency (1 button):**
+**System Control (3 buttons):**
 ```
-GPIO 18: EMERGENCY SHUTDOWN (RED BUTTON)
+GPIO 17: REACTOR START (GREEN)
+GPIO 27: REACTOR RESET (YELLOW)
+GPIO 18: EMERGENCY SHUTDOWN (RED)
 ```
+
+**Note:** GPIO 5 previously used for PUMP_PRIMARY_ON has been moved to GPIO 11 to accommodate UART3 (GPIO 4/5 for ESP-E communication).
 
 ---
 
