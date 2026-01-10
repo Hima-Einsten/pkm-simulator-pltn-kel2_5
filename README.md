@@ -616,38 +616,166 @@ GPIO 18: EMERGENCY SHUTDOWN (RED)
 
 ## 🧠 Software Architecture
 
-### File Structure
+### File Structure (v4.0)
 
 ```
 pkm-simulator-PLTN/
-├── ESP_B/
-│   └── ESP_B_I2C/
-│       └── ESP_B_I2C.ino              # Control rods
+├── esp_utama_uart/
+│   └── esp_utama_uart.ino              # ✅ ESP-BC UART firmware
 │
-├── ESP_C/
-│   ├── ESP_C_I2C.ino                  # Old version
-│   └── ESP_C_HUMIDIFIER.ino           # ⭐ NEW with humidifier
+├── esp_visualizer_uart/
+│   └── esp_visualizer_uart.ino         # ✅ ESP-E UART firmware
 │
-├── ESP_E_Aliran_Primer/
-│   └── ESP_E_I2C/
-│       └── ESP_E_I2C.ino              # 3-flow visualizer
+├── pltn_video_display/
+│   ├── video_display_app.py            # ✅ Video display application
+│   ├── README.md                       # ✅ Video display guide
+│   ├── 3_MODE_DESIGN_SPEC.md          # ✅ Design specification
+│   ├── PYGAME_ANIMATION_GUIDE.md      # ✅ Animation guide
+│   ├── requirements.txt               # ✅ Python dependencies
+│   └── assets/                        # ✅ Video files
 │
 └── raspi_central_control/
-    ├── raspi_main_panel.py            # ⏳ Main program (TODO)
-    ├── raspi_gpio_buttons.py          # ✅ Button handler
-    ├── raspi_panel_oled.py            # ⏳ 9-OLED manager (TODO)
+    ├── raspi_main_panel.py            # ✅ Main program (v4.0)
+    ├── raspi_uart_master.py           # ✅ UART communication
+    ├── raspi_gpio_buttons.py          # ✅ Button handler (event queue)
     ├── raspi_humidifier_control.py    # ✅ Humidifier logic
-    ├── raspi_interlock.py             # ⏳ Safety logic (TODO)
-    ├── raspi_i2c_master.py            # ⏳ ESP communication (TODO)
-    ├── raspi_config.py                # Configuration
-    ├── test_esp_e_quick.py            # ✅ ESP-E test
-    └── test_pca9548a_esp.py           # ✅ Full test
+    ├── raspi_buzzer_alarm.py          # ✅ Buzzer alarm
+    ├── raspi_oled_manager.py          # ✅ OLED display manager
+    ├── raspi_tca9548a.py              # ✅ I2C multiplexer (OLEDs)
+    ├── raspi_system_health.py         # ✅ System health monitor
+    ├── raspi_config.py                # ✅ Configuration
+    ├── raspi_README.md                # ✅ Installation guide
+    ├── raspi_requirements.txt         # ✅ Python dependencies
+    └── test_komunikasi_lengkap.py     # ✅ Full system test
 ```
 
-### Multi-threaded Architecture
+### Multi-threaded Architecture (v4.0)
 
 ```python
 # Thread 1: Button Polling (10ms cycle)
+# - Non-blocking GPIO reads
+# - Debounce handling (200ms)
+# - Immediate response
+while running:
+    button_handler.check_all_buttons()
+    time.sleep(0.01)
+
+# Thread 2: Button Event Processor (event queue pattern)
+# - Process events from queue
+# - Can use locks safely
+# - Decoupled from interrupt context
+while running:
+    try:
+        event = button_event_queue.get(timeout=0.1)
+        process_button_event(event)  # with state_lock
+        button_event_queue.task_done()
+    except Empty:
+        pass
+
+# Thread 3: Control Logic & Safety (50ms cycle)
+# - Check safety interlock
+# - Update rod positions
+# - Calculate humidifier commands
+# - Thermal calculations
+while running:
+    with state_lock:
+        # Safety interlock check
+        rod_movement_allowed = check_interlock()
+        
+        # Update system state
+        if rod_movement_allowed:
+            update_rod_positions()
+        
+        # Humidifier control logic
+        update_humidifier_status()
+    
+    time.sleep(0.05)
+
+# Thread 4: UART ESP-BC Communication (100ms cycle)
+# - Binary protocol with CRC8
+# - Send rod targets + humidifier commands
+# - Receive rod actuals + thermal + pump speeds
+while running:
+    with state_lock:
+        # Prepare command
+        rod_targets = [safety_rod, shim_rod, regulating_rod]
+        humid_cmds = [ct1_cmd, ct2_cmd, ct3_cmd, ct4_cmd]
+    
+    # Send/receive via UART (outside lock)
+    esp_bc_data = uart_master.update_esp_bc(rod_targets, [], humid_cmds)
+    
+    with state_lock:
+        # Update state with response
+        update_from_esp_bc(esp_bc_data)
+    
+    time.sleep(0.1)
+
+# Thread 5: UART ESP-E Communication (100ms cycle)
+# - Binary protocol with CRC8
+# - Send thermal power + pump status
+# - Receive power indicator status
+while running:
+    with state_lock:
+        thermal_kw = state.thermal_kw
+        pump_status = [pump_primary, pump_secondary, pump_tertiary]
+    
+    # Send/receive via UART
+    esp_e_data = uart_master.update_esp_e(thermal_kw, pump_status)
+    
+    with state_lock:
+        state.power_mwe = esp_e_data.power_mwe
+    
+    time.sleep(0.1)
+
+# Thread 6: OLED Display Update (200ms cycle)
+# - Update 9 OLED displays via TCA9548A
+# - Format data for display
+# - Progress bars and status
+while running:
+    with state_lock:
+        display_data = get_display_data()
+    
+    # Update displays (I2C communication)
+    oled_manager.update_all_displays(display_data)
+    
+    time.sleep(0.2)
+
+# Thread 7: System Health Monitor (1000ms cycle)
+# - Check thread status
+# - Monitor UART communication
+# - Log system statistics
+# - Watchdog functionality
+while running:
+    health_status = system_health.check_all()
+    
+    if health_status.errors:
+        logger.warning(f"Health check warnings: {health_status.errors}")
+    
+    time.sleep(1.0)
+```
+
+### Event Queue Pattern (No Deadlocks!)
+
+**See [BUTTON_EVENT_QUEUE_PATTERN.md](BUTTON_EVENT_QUEUE_PATTERN.md) for complete implementation guide.**
+
+**Key Points:**
+- Button callbacks only enqueue events (< 1μs)
+- Dedicated thread processes events with locks
+- No deadlock risk from interrupt context
+- Proven pattern in embedded systems
+
+```python
+# In button callback (interrupt context)
+def on_pressure_up(self):
+    self.button_event_queue.put(ButtonEvent.PRESSURE_UP)
+    logger.info("⚡ Queued: PRESSURE_UP")
+
+# In event processor thread (can use locks)
+def process_button_event(self, event):
+    with self.state_lock:  # Safe to use lock here!
+        if event == ButtonEvent.PRESSURE_UP:
+            self.state.pressure = min(self.state.pressure + 5.0, 200.0)
+```
 while running:
     button_handler.check_all_buttons()  # Non-blocking
     time.sleep(0.01)
@@ -1100,28 +1228,67 @@ Phase 8: Emergency Shutdown (Jika diperlukan)
 
 ### 1. Hardware Assembly
 
-#### Wiring Raspberry Pi
+#### Wiring Raspberry Pi (v4.0 - UART)
 
 ```
-GPIO 2  (SDA) ─┬─ PCA9548A #1 (0x70) ─ 8x OLED
-GPIO 3  (SCL) ─┤
-               ├─ PCA9548A #2 (0x71) ─ 1x OLED
-               └─ PCA9548A #3 (0x72) ─┬─ ESP-B (0x08)
-                                       ├─ ESP-C (0x09)
-                                       └─ ESP-E (0x0A)
+I2C Bus (Display Only):
+GPIO 2  (SDA) ─→ TCA9548A (0x70) ─→ 9x OLED displays
+GPIO 3  (SCL) ─┘
 
-GPIO 5-26: 15x Push Buttons (with 10kΩ pull-up to 3.3V)
+UART Communication (ESP32):
+GPIO 14 (UART0 TX) ─→ ESP-BC GPIO 16 (RX)
+GPIO 15 (UART0 RX) ←─ ESP-BC GPIO 17 (TX)
+
+GPIO 4  (UART3 TX) ─→ ESP-E GPIO 16 (RX)
+GPIO 5  (UART3 RX) ←─ ESP-E GPIO 17 (TX)
+
+Buttons:
+GPIO 6-27: 17x Push Buttons (with internal pull-up)
+GPIO 22:   Buzzer output (PWM)
+
+Common GND between RasPi and all ESP32 modules!
 ```
 
-#### Wiring ESP-C Humidifier
+#### Wiring ESP-BC (Control + Motors + Humidifiers)
 
 ```
-ESP-C GPIO 32 ─→ Relay Module IN1 ─→ Humidifier #1 (220V AC)
-ESP-C GPIO 33 ─→ Relay Module IN2 ─→ Humidifier #2 (220V AC)
+UART:
+ESP GPIO 16 (RX) ←─ RasPi GPIO 14 (TX)
+ESP GPIO 17 (TX) ─→ RasPi GPIO 15 (RX)
+
+Servos (Control Rods):
+ESP GPIO 13 ─→ Safety Rod Servo (Signal)
+ESP GPIO 12 ─→ Shim Rod Servo (Signal)
+ESP GPIO 14 ─→ Regulating Rod Servo (Signal)
+
+L298N Motor Drivers:
+ESP GPIO 4  ─→ ENA (Primary Pump PWM)
+ESP GPIO 5  ─→ ENB (Secondary Pump PWM)
+ESP GPIO 18 ─→ ENA (Tertiary Pump PWM)
+ESP GPIO 19 ─→ ENB (Turbine PWM)
+ESP GPIO 23 ─→ IN1 (Turbine direction)
+ESP GPIO 15 ─→ IN2 (Turbine direction)
+
+Cooling Tower Humidifier Relays:
+ESP GPIO 27 ─→ Relay 1 IN ─→ CT1 (220V AC)
+ESP GPIO 26 ─→ Relay 2 IN ─→ CT2 (220V AC)
+ESP GPIO 25 ─→ Relay 3 IN ─→ CT3 (220V AC)
+ESP GPIO 32 ─→ Relay 4 IN ─→ CT4 (220V AC)
 
 ⚠️ WARNING: Use optocoupler relay module!
 ⚠️ Separate ground for 220V AC and 5V logic!
 ⚠️ Add fuse on AC line!
+```
+
+#### Wiring ESP-E (LED Visualizer)
+
+```
+UART:
+ESP GPIO 16 (RX) ←─ RasPi GPIO 4 (TX)
+ESP GPIO 17 (TX) ─→ RasPi GPIO 5 (RX)
+
+Flow LEDs & Power LEDs:
+(See hardware section for complete pin mapping)
 ```
 
 ### 2. Software Installation
@@ -1133,44 +1300,52 @@ ESP-C GPIO 33 ─→ Relay Module IN2 ─→ Humidifier #2 (220V AC)
 sudo apt update && sudo apt upgrade -y
 
 # Install Python packages
-sudo apt install python3-pip python3-smbus i2c-tools -y
+sudo apt install python3-pip python3-dev i2c-tools -y
 
-# Install dependencies
-cd raspi_central_control
-pip3 install -r requirements.txt
-
-# Enable I2C
+# Enable I2C (for OLED displays)
 sudo raspi-config
 # → Interface Options → I2C → Enable
+
+# Enable UART3 (for ESP-E communication)
+sudo nano /boot/config.txt
+# Add this line at the end:
+dtoverlay=uart3
+
+# Install Python dependencies
+cd raspi_central_control
+pip3 install -r raspi_requirements.txt
 
 # Reboot
 sudo reboot
 
-# Test I2C detection
+# After reboot, verify UART ports
+ls -l /dev/ttyAMA*
+# Should see:
+# /dev/ttyAMA0 (UART0 - ESP-BC)
+# /dev/ttyAMA1 (UART3 - ESP-E)
+
+# Test I2C detection (OLED displays only)
 sudo i2cdetect -y 1
 ```
 
-**Expected i2cdetect output:**
+**Expected i2cdetect output (v4.0):**
 ```
      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
-00:          -- -- -- -- -- 08 09 0a -- -- -- -- -- 
+00:          -- -- -- -- -- -- -- -- -- -- -- -- -- 
 10:          -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 20:          -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 30:          -- -- -- -- -- -- -- -- -- -- -- -- 3c -- -- 
 40:          -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 50:          -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 60:          -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
-70: 70 71 72 -- -- -- -- --
+70: 70 -- -- -- -- -- -- --
 ```
 
 Addresses found:
-- `0x08` = ESP-B
-- `0x09` = ESP-C
-- `0x0A` = ESP-E
 - `0x3C` = OLED displays
-- `0x70` = PCA9548A #1 (OLED 1-8)
-- `0x71` = PCA9548A #2 (OLED 9)
-- `0x72` = PCA9548A #3 (ESP comm)
+- `0x70` = TCA9548A (OLED multiplexer)
+
+**Note:** ESP32 no longer appear on I2C bus (now using UART).
 
 #### ESP32 (Arduino IDE)
 
@@ -1185,31 +1360,60 @@ Addresses found:
 
 3. Select board
    Tools → Board → ESP32 Dev Module
+   
+4. Install ESP32Servo library
+   Tools → Manage Libraries → Search "ESP32Servo" → Install
 ```
 
 **Upload Firmware:**
 ```
-1. ESP-B:
-   Open: ESP_B/ESP_B_I2C/ESP_B_I2C.ino
+1. ESP-BC (Control Rods + Motors + Humidifiers):
+   Open: esp_utama_uart/esp_utama_uart.ino
+   Select: Tools → Port → (your ESP32 port)
    Upload to ESP32 #1
 
-2. ESP-C (with humidifier support):
-   Open: ESP_C/ESP_C_HUMIDIFIER.ino
+2. ESP-E (LED Visualizer):
+   Open: esp_visualizer_uart/esp_visualizer_uart.ino
+   Select: Tools → Port → (your ESP32 port)
    Upload to ESP32 #2
-
-3. ESP-E:
-   Open: ESP_E_Aliran_Primer/ESP_E_I2C/ESP_E_I2C.ino
-   Upload to ESP32 #3
 ```
 
 ### 3. Testing
 
+**Test UART Communication:**
+```bash
+# Test ESP-BC UART
+sudo minicom -D /dev/ttyAMA0 -b 115200
+# Should see binary data stream when ESP is running
+
+# Test ESP-E UART
+sudo minicom -D /dev/ttyAMA1 -b 115200
+# Should see binary data stream when ESP is running
+```
+
 **Test individual modules:**
 ```bash
-# Test button handler
+cd raspi_central_control
+
+# Test button handler (event queue pattern)
 python3 raspi_gpio_buttons.py
 
-# Test humidifier logic
+# Test UART communication
+python3 test_komunikasi_lengkap.py
+
+# Test OLED displays
+python3 raspi_oled_manager.py
+```
+
+**Run main program:**
+```bash
+cd raspi_central_control
+python3 raspi_main_panel.py
+
+# In separate terminal, run video display (optional)
+cd pltn_video_display
+python3 video_display_app.py --test --windowed
+```
 python3 raspi_humidifier_control.py
 
 # Test ESP-E LED visualization
