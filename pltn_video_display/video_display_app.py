@@ -689,7 +689,7 @@ class VideoDisplayApp:
         if mode == "auto" and auto_running:
             if self.display_mode != DisplayMode.AUTO_VIDEO:
                 print("🎬 Switching to AUTO VIDEO mode")
-                # Update: Use video from assets folder (development)
+                # Use video from assets folder (production ready)
                 video_path = str(Path(__file__).parent / "assets" / "penjelasan.mp4")
                 self.play_video(video_path, loop=True)
                 self.display_mode = DisplayMode.AUTO_VIDEO

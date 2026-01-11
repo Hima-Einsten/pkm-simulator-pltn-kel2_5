@@ -1,0 +1,33 @@
+[Unit]
+Description=PLTN Video Display System
+Documentation=https://github.com/Sanssin/pkm-simulator-PLTN
+After=network.target graphical.target pkm-simulator.service
+Wants=graphical.target
+Requires=pkm-simulator.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/pkm-simulator-PLTN/pltn_video_display
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=/home/pi/.Xauthority"
+
+# Start video display in fullscreen mode
+ExecStart=/usr/bin/python3 /home/pi/pkm-simulator-PLTN/pltn_video_display/video_display_app.py
+
+# Restart on failure
+Restart=on-failure
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pltn_video_display
+
+# Security hardening (optional)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=graphical.target
