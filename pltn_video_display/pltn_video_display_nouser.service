@@ -7,11 +7,11 @@ Requires=pkm-simulator.service
 
 [Service]
 Type=simple
-# User and Group will be set dynamically
-# Remove User= and Group= lines, run as current user
+# Run as root to avoid user permission issues
 WorkingDirectory=/home/pi/pkm-simulator-PLTN/pltn_video_display
 Environment="DISPLAY=:0"
 Environment="XAUTHORITY=/home/pi/.Xauthority"
+Environment="HOME=/home/pi"
 
 # Start video display in fullscreen mode
 ExecStart=/usr/bin/python /home/pi/pkm-simulator-PLTN/pltn_video_display/video_display_app.py
@@ -24,10 +24,6 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pltn_video_display
-
-# Security hardening (optional)
-NoNewPrivileges=true
-PrivateTmp=true
 
 [Install]
 WantedBy=graphical.target
