@@ -54,6 +54,15 @@ class VideoDisplayApp:
         self.width, self.height = self.screen.get_size()
         pygame.display.set_caption("PLTN Simulator - Educational Display")
         
+        # Calculate scale factor for 4K displays
+        # Base design: 1920x1080, actual: could be 3840x2160
+        self.scale_x = self.width / 1920.0
+        self.scale_y = self.height / 1080.0
+        self.scale = min(self.scale_x, self.scale_y)  # Use minimum to maintain aspect ratio
+        
+        print(f"🖥️  Display: {self.width}x{self.height}")
+        print(f"📏 Scale factor: {self.scale:.2f}x")
+        
         # State file path (cross-platform)
         if sys.platform == 'win32':
             # Windows: use temp folder
@@ -73,15 +82,17 @@ class VideoDisplayApp:
         self.display_mode = DisplayMode.IDLE
         
         # Fonts - Enhanced for professional display with better hierarchy
-        self.font_display = pygame.font.Font(None, 56)     # Main title (IDLE)
-        self.font_title = pygame.font.Font(None, 48)       # Title
-        self.font_subtitle = pygame.font.Font(None, 42)    # Subtitle
-        self.font_heading = pygame.font.Font(None, 40)     # Institution
-        self.font_large = pygame.font.Font(None, 36)       # Large text
-        self.font_medium = pygame.font.Font(None, 30)      # Medium text
-        self.font_body = pygame.font.Font(None, 28)        # Body text
-        self.font_small = pygame.font.Font(None, 24)       # Small text
-        self.font_caption = pygame.font.Font(None, 20)     # Caption/tiny
+        # Scale fonts based on display resolution (4K support)
+        base_scale = int(self.scale * 56)
+        self.font_display = pygame.font.Font(None, base_scale)                    # Main title (IDLE)
+        self.font_title = pygame.font.Font(None, int(base_scale * 0.86))          # Title (48)
+        self.font_subtitle = pygame.font.Font(None, int(base_scale * 0.75))       # Subtitle (42)
+        self.font_heading = pygame.font.Font(None, int(base_scale * 0.71))        # Institution (40)
+        self.font_large = pygame.font.Font(None, int(base_scale * 0.64))          # Large text (36)
+        self.font_medium = pygame.font.Font(None, int(base_scale * 0.54))         # Medium text (30)
+        self.font_body = pygame.font.Font(None, int(base_scale * 0.50))           # Body text (28)
+        self.font_small = pygame.font.Font(None, int(base_scale * 0.43))          # Small text (24)
+        self.font_caption = pygame.font.Font(None, int(base_scale * 0.36))        # Caption/tiny (20)
         
         # Professional Nuclear Blue Color Palette
         # === BACKGROUNDS ===
@@ -120,11 +131,9 @@ class VideoDisplayApp:
         # Legacy compatibility (deprecated, will be removed)
         self.COLOR_ACCENT = self.COLOR_PRIMARY_BRIGHT
         
-        # Load logos
-        self.logo_brin = None
-        self.logo_poltek = None
-        self.logo_size_large = (120, 120)  # IDLE mode
-        self.logo_size_small = (60, 60)    # MANUAL mode - Updated from 40x40
+        # Logo sizes - scaled for 4K
+        self.logo_size_large = (int(120 * self.scale), int(120 * self.scale))  # IDLE mode
+        self.logo_size_small = (int(60 * self.scale), int(60 * self.scale))    # MANUAL mode
         self.load_logos()
         
         # IDLE screen animation
@@ -342,7 +351,7 @@ class VideoDisplayApp:
             print("⏹️  Video stopped")
     
     def draw_idle_screen(self):
-        """Display idle/intro screen - Professional branding with Nuclear Blue theme"""
+        """Display idle/intro screen - Professional branding with Nuclear Blue theme (4K scaled)"""
         self.screen.fill(self.COLOR_BG)
         
         # Update fade animation for instruction text
@@ -354,9 +363,9 @@ class VideoDisplayApp:
             self.idle_fade_alpha = 180
             self.idle_fade_direction = 1
         
-        # === TOP SECTION: LOGOS ===
-        logo_y = 50
-        logo_margin = 80
+        # === TOP SECTION: LOGOS === (scaled)
+        logo_y = int(50 * self.scale)
+        logo_margin = int(80 * self.scale)
         
         # BRIN Logo (Top Left)
         if self.logo_brin:
@@ -368,68 +377,73 @@ class VideoDisplayApp:
             logo_x = self.width - self.logo_size_large[0] - logo_margin
             self.screen.blit(self.logo_poltek, (logo_x, logo_y))
         
-        # === CENTER SECTION: MAIN TITLE WITH DECORATIVE LINES ===
-        center_y_start = self.height // 2 - 120
+        # === CENTER SECTION: MAIN TITLE WITH DECORATIVE LINES === (scaled)
+        center_y_start = self.height // 2 - int(120 * self.scale)
         
-        # Decorative line (top)
-        line_width = 400
+        # Decorative line (top) - scaled
+        line_width = int(400 * self.scale)
         line_x = (self.width - line_width) // 2
+        line_thickness = max(int(3 * self.scale), 2)
         pygame.draw.line(self.screen, self.COLOR_BORDER, 
-                        (line_x, center_y_start - 20), 
-                        (line_x + line_width, center_y_start - 20), 3)
+                        (line_x, center_y_start - int(20 * self.scale)), 
+                        (line_x + line_width, center_y_start - int(20 * self.scale)), 
+                        line_thickness)
         
         # Main Title Line 1 (Bright Cyan with shadow for depth)
         title1_text = "ALAT PERAGA PLTN TIPE PWR"
         # Shadow
         title1_shadow = self.font_display.render(title1_text, True, (0, 0, 0))
-        title1_shadow_rect = title1_shadow.get_rect(center=(self.width//2 + 2, center_y_start + 22))
+        shadow_offset = int(2 * self.scale)
+        title1_shadow_rect = title1_shadow.get_rect(center=(self.width//2 + shadow_offset, center_y_start + int(22 * self.scale)))
         self.screen.blit(title1_shadow, title1_shadow_rect)
         # Main text
         title1 = self.font_display.render(title1_text, True, self.COLOR_PRIMARY_BRIGHT)
-        title1_rect = title1.get_rect(center=(self.width//2, center_y_start + 20))
+        title1_rect = title1.get_rect(center=(self.width//2, center_y_start + int(20 * self.scale)))
         self.screen.blit(title1, title1_rect)
         
         # Main Title Line 2 (Pure White)
         title2_text = "BERBASIS MIKROKONTROLER"
         # Shadow
         title2_shadow = self.font_subtitle.render(title2_text, True, (0, 0, 0))
-        title2_shadow_rect = title2_shadow.get_rect(center=(self.width//2 + 2, center_y_start + 82))
+        title2_shadow_rect = title2_shadow.get_rect(center=(self.width//2 + shadow_offset, center_y_start + int(82 * self.scale)))
         self.screen.blit(title2_shadow, title2_shadow_rect)
         # Main text
         title2 = self.font_subtitle.render(title2_text, True, self.COLOR_TEXT)
-        title2_rect = title2.get_rect(center=(self.width//2, center_y_start + 80))
+        title2_rect = title2.get_rect(center=(self.width//2, center_y_start + int(80 * self.scale)))
         self.screen.blit(title2, title2_rect)
         
-        # Decorative line (bottom)
+        # Decorative line (bottom) - scaled
         pygame.draw.line(self.screen, self.COLOR_BORDER, 
-                        (line_x, center_y_start + 130), 
-                        (line_x + line_width, center_y_start + 130), 3)
+                        (line_x, center_y_start + int(130 * self.scale)), 
+                        (line_x + line_width, center_y_start + int(130 * self.scale)), 
+                        line_thickness)
         
         # Institution Name (Light Blue)
         institution = self.font_heading.render("Politeknik Teknologi Nuklir Indonesia", 
                                                True, self.COLOR_TEXT_TERTIARY)
-        inst_rect = institution.get_rect(center=(self.width//2, center_y_start + 170))
+        inst_rect = institution.get_rect(center=(self.width//2, center_y_start + int(170 * self.scale)))
         self.screen.blit(institution, inst_rect)
         
-        # === STATUS BADGE ===
-        status_y = center_y_start + 230
+        # === STATUS BADGE === (scaled)
+        status_y = center_y_start + int(230 * self.scale)
         
-        # Status badge background
-        badge_width = 280
-        badge_height = 40
+        # Status badge background - scaled
+        badge_width = int(280 * self.scale)
+        badge_height = int(40 * self.scale)
         badge_x = (self.width - badge_width) // 2
-        badge_rect = pygame.Rect(badge_x, status_y - 10, badge_width, badge_height)
-        pygame.draw.rect(self.screen, self.COLOR_BG_TERTIARY, badge_rect, border_radius=20)
-        pygame.draw.rect(self.screen, self.COLOR_GOLD, badge_rect, 2, border_radius=20)
+        badge_radius = int(20 * self.scale)
+        badge_rect = pygame.Rect(badge_x, status_y - int(10 * self.scale), badge_width, badge_height)
+        pygame.draw.rect(self.screen, self.COLOR_BG_TERTIARY, badge_rect, border_radius=badge_radius)
+        pygame.draw.rect(self.screen, self.COLOR_GOLD, badge_rect, max(int(2 * self.scale), 1), border_radius=badge_radius)
         
         # Status text with icon
         status_text = "⚡ SIMULATION READY ⚡"
         status_surface = self.font_body.render(status_text, True, self.COLOR_GOLD)
-        status_rect = status_surface.get_rect(center=(self.width//2, status_y + 10))
+        status_rect = status_surface.get_rect(center=(self.width//2, status_y + int(10 * self.scale)))
         self.screen.blit(status_surface, status_rect)
         
-        # === BOTTOM SECTION: INSTRUCTIONS ===
-        instruction_y = self.height - 120
+        # === BOTTOM SECTION: INSTRUCTIONS === (scaled)
+        instruction_y = self.height - int(120 * self.scale)
         
         # Instruction text with fade animation (Bright Cyan)
         inst_text = "Tekan tombol untuk memulai simulasi"
@@ -442,7 +456,7 @@ class VideoDisplayApp:
         
         # === TEST MODE INDICATOR ===
         if self.test_mode:
-            test_y = self.height - 50
+            test_y = self.height - int(50 * self.scale)
             test_text = self.font_small.render("TEST MODE - Press I/M/A to change mode | ESC to exit", 
                                                True, self.COLOR_ERROR)
             test_rect = test_text.get_rect(center=(self.width//2, test_y))
@@ -451,17 +465,18 @@ class VideoDisplayApp:
         pygame.display.flip()
     
     def draw_manual_guide(self, state: Dict):
-        """Display interactive step-by-step guide with Nuclear Blue theme"""
+        """Display interactive step-by-step guide with Nuclear Blue theme (4K scaled)"""
         self.screen.fill(self.COLOR_BG)
         
-        # === HEADER BAR === (Updated: Full title centered)
-        header_height = 80
-        left_margin = 30
-        right_margin = 30
+        # === HEADER BAR === (Updated: Full title centered) - scaled
+        header_height = int(80 * self.scale)
+        left_margin = int(30 * self.scale)
+        right_margin = int(30 * self.scale)
         
         # Draw header background (Medium Navy)
         pygame.draw.rect(self.screen, self.COLOR_BG_SECONDARY, (0, 0, self.width, header_height))
-        pygame.draw.line(self.screen, self.COLOR_BORDER, (0, header_height), (self.width, header_height), 3)
+        line_thickness = max(int(3 * self.scale), 2)
+        pygame.draw.line(self.screen, self.COLOR_BORDER, (0, header_height), (self.width, header_height), line_thickness)
         
         # Logo BRIN (left)
         if self.logo_brin:
@@ -482,36 +497,37 @@ class VideoDisplayApp:
             logo_x = self.width - self.logo_size_small[0] - right_margin
             self.screen.blit(logo_small_poltek, (logo_x, logo_y))
         
-        # === MAIN CONTENT AREA ===
-        content_y_start = header_height + 30
+        # === MAIN CONTENT AREA === (scaled)
+        content_y_start = header_height + int(30 * self.scale)
         
         # Current step instruction
         step_text = self.get_current_step_instruction(state)
         
         # Draw step title (Bright Cyan)
         title = self.font_title.render(f"STEP {self.current_step + 1}", True, self.COLOR_PRIMARY_BRIGHT)
-        title_rect = title.get_rect(center=(self.width//2, content_y_start + 20))
+        title_rect = title.get_rect(center=(self.width//2, content_y_start + int(20 * self.scale)))
         self.screen.blit(title, title_rect)
         
-        # Draw instruction (Pure White)
-        y_offset = content_y_start + 70
+        # Draw instruction (Pure White) - scaled line spacing
+        y_offset = content_y_start + int(70 * self.scale)
+        line_spacing = int(50 * self.scale)
         for line in step_text:
             text = self.font_body.render(line, True, self.COLOR_TEXT)
             text_rect = text.get_rect(center=(self.width//2, y_offset))
             self.screen.blit(text, text_rect)
-            y_offset += 50
+            y_offset += line_spacing
         
-        # Draw progress bar (moved up significantly)
+        # Draw progress bar (moved up significantly) - scaled
         self.draw_progress_bar(state)
         
-        # Test mode hint
+        # Test mode hint - scaled
         if self.test_mode:
             hint1 = self.font_small.render("TEST: I=IDLE | M=MANUAL | A=AUTO", True, self.COLOR_ERROR)
-            hint1_rect = hint1.get_rect(center=(self.width//2, self.height - 80))
+            hint1_rect = hint1.get_rect(center=(self.width//2, self.height - int(80 * self.scale)))
             self.screen.blit(hint1, hint1_rect)
             
             hint2 = self.font_small.render("UP/DOWN=Pressure | R=Rods | P=Pumps", True, self.COLOR_WARNING)
-            hint2_rect = hint2.get_rect(center=(self.width//2, self.height - 50))
+            hint2_rect = hint2.get_rect(center=(self.width//2, self.height - int(50 * self.scale)))
             self.screen.blit(hint2, hint2_rect)
         
         pygame.display.flip()
@@ -571,10 +587,11 @@ class VideoDisplayApp:
             return ["Simulation Complete!", "Press RESET to restart"]
     
     def draw_progress_bar(self, state: Dict):
-        """Draw parameter progress bars with Nuclear Blue theme"""
-        y_start = self.height - 300  # Moved up significantly
-        bar_width = 300
-        bar_height = 30
+        """Draw parameter progress bars with Nuclear Blue theme (4K scaled)"""
+        y_start = self.height - int(300 * self.scale)  # Moved up significantly - scaled
+        bar_width = int(300 * self.scale)
+        bar_height = int(30 * self.scale)
+        bar_spacing = int(45 * self.scale)  # Reduced spacing - scaled
         
         params = [
             ("Pressure", state.get("pressure", 0), 155, "bar"),
@@ -584,9 +601,9 @@ class VideoDisplayApp:
         ]
         
         for i, (label, value, max_val, unit) in enumerate(params):
-            y = y_start + i * 45  # Reduced spacing
-            x_label = 200
-            x_bar = 380
+            y = y_start + i * bar_spacing
+            x_label = int(200 * self.scale)
+            x_bar = int(380 * self.scale)
             
             # Label (Light Blue)
             text = self.font_small.render(f"{label}:", True, self.COLOR_TEXT_TERTIARY)
@@ -594,16 +611,17 @@ class VideoDisplayApp:
             
             # Value text (Pure White)
             value_text = self.font_small.render(f"{value:.0f}{unit}", True, self.COLOR_TEXT)
-            self.screen.blit(value_text, (x_bar + bar_width + 15, y))
+            self.screen.blit(value_text, (x_bar + bar_width + int(15 * self.scale), y))
             
             # Bar background (Panel BG)
-            bg_rect = pygame.Rect(x_bar, y + 5, bar_width, bar_height)
-            pygame.draw.rect(self.screen, self.COLOR_BG_PANEL, bg_rect, border_radius=5)
+            border_radius = int(5 * self.scale)
+            bg_rect = pygame.Rect(x_bar, y + int(5 * self.scale), bar_width, bar_height)
+            pygame.draw.rect(self.screen, self.COLOR_BG_PANEL, bg_rect, border_radius=border_radius)
             
             # Bar fill (Color based on value)
             fill_width = int((value / max_val) * bar_width) if max_val > 0 else 0
             if fill_width > 0:
-                fill_rect = pygame.Rect(x_bar, y + 5, fill_width, bar_height)
+                fill_rect = pygame.Rect(x_bar, y + int(5 * self.scale), fill_width, bar_height)
                 # Choose color based on value
                 if value > max_val * 0.7:
                     color = self.COLOR_SUCCESS
@@ -611,10 +629,11 @@ class VideoDisplayApp:
                     color = self.COLOR_PRIMARY
                 else:
                     color = self.COLOR_INFO
-                pygame.draw.rect(self.screen, color, fill_rect, border_radius=5)
+                pygame.draw.rect(self.screen, color, fill_rect, border_radius=border_radius)
             
             # Bar border (Border color)
-            pygame.draw.rect(self.screen, self.COLOR_BORDER, bg_rect, 2, border_radius=5)
+            border_thickness = max(int(2 * self.scale), 1)
+            pygame.draw.rect(self.screen, self.COLOR_BORDER, bg_rect, border_thickness, border_radius=border_radius)
     
     def draw_video_playing_overlay(self):
         """Draw overlay when video is playing (for debug) with Nuclear Blue theme"""
@@ -641,6 +660,12 @@ class VideoDisplayApp:
     def update(self):
         """Main update loop"""
         state = self.read_simulation_state()
+        
+        # DEBUG: Print state info
+        if state:
+            mode = state.get("mode", "unknown")
+            auto_running = state.get("auto_running", False)
+            print(f"📊 State: mode={mode}, auto_running={auto_running}, display_mode={self.display_mode.value}")
         
         # In test mode, check mock_mode first
         if self.test_mode:
@@ -676,6 +701,7 @@ class VideoDisplayApp:
         # Production mode logic
         if not state:
             # No state yet - show idle
+            print("⚠️  No state file - showing IDLE")
             if self.display_mode != DisplayMode.IDLE:
                 self.stop_video()
                 self.display_mode = DisplayMode.IDLE
@@ -688,28 +714,29 @@ class VideoDisplayApp:
         # MODE 1: AUTO SIMULATION - Play video
         if mode == "auto" and auto_running:
             if self.display_mode != DisplayMode.AUTO_VIDEO:
-                print("🎬 Switching to AUTO VIDEO mode")
+                print(f"🎬 Switching to AUTO VIDEO mode (mode={mode}, auto_running={auto_running})")
                 # Use video from assets folder (production ready)
                 video_path = str(Path(__file__).parent / "assets" / "penjelasan.mp4")
                 self.play_video(video_path, loop=True)
                 self.display_mode = DisplayMode.AUTO_VIDEO
             
-            # In test mode, show overlay instead
-            if self.test_mode:
-                self.draw_video_playing_overlay()
+            # Video is playing via mpv - don't draw anything
+            # (mpv handles fullscreen itself)
+            return
         
-        # MODE 2: MANUAL - Show guide
-        elif mode == "manual" and not auto_running:
+        # MODE 2: MANUAL - Show guide (any manual mode, including after auto)
+        elif mode == "manual":
             if self.display_mode != DisplayMode.MANUAL_GUIDE:
-                print("📋 Switching to MANUAL GUIDE mode")
+                print(f"📋 Switching to MANUAL GUIDE mode (mode={mode})")
                 self.stop_video()
                 self.display_mode = DisplayMode.MANUAL_GUIDE
                 self.current_step = 0
             
             self.draw_manual_guide(state)
         
-        # IDLE
+        # IDLE - fallback
         else:
+            print(f"ℹ️  Unknown mode: {mode}, showing IDLE")
             if self.display_mode != DisplayMode.IDLE:
                 self.stop_video()
                 self.display_mode = DisplayMode.IDLE
