@@ -141,6 +141,14 @@ class VideoDisplayApp:
         self.idle_fade_direction = -1
         self.idle_fade_speed = 2
         
+        # Mode transition tracking
+        self.last_state_hash = None  # Track state changes
+        self.auto_complete_time = None  # Track when auto simulation completes
+        self.user_has_interacted = False  # Track if user pressed any button
+        self.last_pressure = 0
+        self.last_rods_sum = 0
+        self.last_pumps_sum = 0
+        
         # Manual guide - step tracker
         self.current_step = 0
         self.steps_completed = []
@@ -244,7 +252,35 @@ class VideoDisplayApp:
                 return {}
             
             with open(self.state_file, 'r') as f:
-                return json.load(f)
+                state = json.load(f)
+            
+            # Check if state has changed significantly (user interaction)
+            if not self.user_has_interacted:
+                current_pressure = state.get("pressure", 0)
+                current_rods = (state.get("safety_rod", 0) + 
+                              state.get("shim_rod", 0) + 
+                              state.get("regulating_rod", 0))
+                current_pumps = (state.get("pump_primary", 0) + 
+                               state.get("pump_secondary", 0) + 
+                               state.get("pump_tertiary", 0))
+                
+                # Detect user interaction (significant state change)
+                if (abs(current_pressure - self.last_pressure) > 5 or
+                    abs(current_rods - self.last_rods_sum) > 10 or
+                    abs(current_pumps - self.last_pumps_sum) > 0):
+                    
+                    # Only consider as interaction if not during auto simulation
+                    auto_running = state.get("auto_running", False)
+                    if not auto_running:
+                        self.user_has_interacted = True
+                        print("👤 User interaction detected - enabling MANUAL mode")
+                
+                # Update last known values
+                self.last_pressure = current_pressure
+                self.last_rods_sum = current_rods
+                self.last_pumps_sum = current_pumps
+            
+            return state
         except Exception as e:
             print(f"⚠️  Failed to read state: {e}")
             return {}
@@ -677,14 +713,18 @@ class VideoDisplayApp:
             pygame.display.flip()
     
     def update(self):
-        """Main update loop"""
+        """Main update loop with improved mode transition logic"""
         state = self.read_simulation_state()
         
-        # DEBUG: Print state info
-        if state:
-            mode = state.get("mode", "unknown")
-            auto_running = state.get("auto_running", False)
-            print(f"📊 State: mode={mode}, auto_running={auto_running}, display_mode={self.display_mode.value}")
+        # DEBUG: Print state info (less frequent)
+        if state and hasattr(self, '_debug_counter'):
+            self._debug_counter = (self._debug_counter + 1) % 30  # Print every 30 frames (~1 sec)
+            if self._debug_counter == 0:
+                mode = state.get("mode", "unknown")
+                auto_running = state.get("auto_running", False)
+                print(f"📊 mode={mode}, auto={auto_running}, display={self.display_mode.value}, user_interacted={self.user_has_interacted}")
+        elif not hasattr(self, '_debug_counter'):
+            self._debug_counter = 0
         
         # In test mode, check mock_mode first
         if self.test_mode:
@@ -717,45 +757,85 @@ class VideoDisplayApp:
                 self.draw_manual_guide(state)
                 return
         
-        # Production mode logic
+        # Production mode logic with improved transitions
         if not state:
             # No state yet - show idle
-            print("⚠️  No state file - showing IDLE")
+            if self._debug_counter == 0:
+                print("⚠️  No state file - showing IDLE")
             if self.display_mode != DisplayMode.IDLE:
                 self.stop_video()
                 self.display_mode = DisplayMode.IDLE
+                self.user_has_interacted = False  # Reset on no state
             self.draw_idle_screen()
             return
         
         mode = state.get("mode", "manual")
         auto_running = state.get("auto_running", False)
+        emergency = state.get("emergency", False)
         
-        # MODE 1: AUTO SIMULATION - Play video
+        # Check if auto simulation just completed
+        if not auto_running and self.display_mode == DisplayMode.AUTO_VIDEO:
+            # Auto simulation just finished
+            print("🏁 Auto simulation completed")
+            self.stop_video()
+            self.auto_complete_time = time.time()  # Mark completion time
+            self.display_mode = DisplayMode.IDLE
+            self.user_has_interacted = False  # Reset - wait for new input
+            print("   Waiting 60 seconds before allowing MANUAL...")
+        
+        # MODE 1: EMERGENCY - Always return to IDLE
+        if emergency:
+            if self.display_mode != DisplayMode.IDLE:
+                print("🚨 Emergency detected - returning to IDLE")
+                self.stop_video()
+                self.display_mode = DisplayMode.IDLE
+                self.user_has_interacted = False
+                self.auto_complete_time = None
+            self.draw_idle_screen()
+            return
+        
+        # MODE 2: AUTO SIMULATION - Play video
         if mode == "auto" and auto_running:
             if self.display_mode != DisplayMode.AUTO_VIDEO:
-                print(f"🎬 Switching to AUTO VIDEO mode (mode={mode}, auto_running={auto_running})")
+                print(f"🎬 Switching to AUTO VIDEO mode")
                 # Use video from assets folder (production ready)
                 video_path = str(Path(__file__).parent / "assets" / "penjelasan.mp4")
                 self.play_video(video_path, loop=True)
                 self.display_mode = DisplayMode.AUTO_VIDEO
+                self.auto_complete_time = None  # Reset completion timer
+                self.user_has_interacted = False  # Reset interaction flag
             
             # Video is playing via mpv - don't draw anything
             # (mpv handles fullscreen itself)
             return
         
-        # MODE 2: MANUAL - Show guide (any manual mode, including after auto)
-        elif mode == "manual":
+        # MODE 3: After AUTO complete - Wait 60 seconds in IDLE
+        if self.auto_complete_time is not None:
+            elapsed = time.time() - self.auto_complete_time
+            if elapsed < 60:
+                # Still in waiting period
+                if self.display_mode != DisplayMode.IDLE:
+                    self.display_mode = DisplayMode.IDLE
+                self.draw_idle_screen()
+                return
+            else:
+                # 60 seconds passed, allow transition to MANUAL
+                print("⏰ 60 seconds elapsed after AUTO - allowing MANUAL mode")
+                self.auto_complete_time = None
+                # Don't auto-enable MANUAL - wait for user interaction
+        
+        # MODE 4: MANUAL - Only if user has interacted
+        if mode == "manual" and self.user_has_interacted:
             if self.display_mode != DisplayMode.MANUAL_GUIDE:
-                print(f"📋 Switching to MANUAL GUIDE mode (mode={mode})")
+                print(f"📋 Switching to MANUAL GUIDE mode (user pressed button)")
                 self.stop_video()
                 self.display_mode = DisplayMode.MANUAL_GUIDE
                 self.current_step = 0
             
             self.draw_manual_guide(state)
         
-        # IDLE - fallback
+        # MODE 5: IDLE - Default (no user interaction yet)
         else:
-            print(f"ℹ️  Unknown mode: {mode}, showing IDLE")
             if self.display_mode != DisplayMode.IDLE:
                 self.stop_video()
                 self.display_mode = DisplayMode.IDLE
