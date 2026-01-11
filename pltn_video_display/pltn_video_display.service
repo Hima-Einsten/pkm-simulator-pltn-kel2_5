@@ -14,7 +14,7 @@ Environment="DISPLAY=:0"
 Environment="XAUTHORITY=/home/pi/.Xauthority"
 
 # Start video display in fullscreen mode
-ExecStart=/usr/bin/python3 /home/pi/pkm-simulator-PLTN/pltn_video_display/video_display_app.py
+ExecStart=/usr/bin/python /home/pi/pkm-simulator-PLTN/pltn_video_display/video_display_app.py
 
 # Restart on failure
 Restart=on-failure
