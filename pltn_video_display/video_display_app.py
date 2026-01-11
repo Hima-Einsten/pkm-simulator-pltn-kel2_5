@@ -297,7 +297,14 @@ class VideoDisplayApp:
                 print(f"🔄 Pumps toggled: {val}")
     
     def play_video(self, video_path: str, loop: bool = False):
-        """Play video using mpv (lightweight & HW accelerated)"""
+        """
+        Play video using mpv (Wayland compatible)
+        
+        Args:
+            video_path: Path to video file
+            loop: Loop video infinitely
+        """
+        # Stop any current video
         if self.video_process:
             self.stop_video()
         
@@ -309,13 +316,16 @@ class VideoDisplayApp:
                 print("   💡 Create video file or use placeholder")
             return
         
-        # Build mpv command
+        # Build mpv command for Wayland
         cmd = [
             'mpv',
-            '--fs',                  # Fullscreen
-            '--no-osd-bar',         # No on-screen display
+            '--fs',                      # Fullscreen
+            '--no-osd-bar',             # No on-screen display
             '--no-input-default-bindings',  # Disable keyboard
-            '--really-quiet',       # Minimal output
+            '--really-quiet',           # Minimal output
+            '--vo=gpu',                 # Video output: GPU (Wayland compatible)
+            '--hwdec=auto',             # Hardware decode (4K support)
+            '--gpu-context=wayland',    # Use Wayland context
             video_path
         ]
         
@@ -323,13 +333,22 @@ class VideoDisplayApp:
             cmd.insert(1, '--loop=inf')
         
         try:
+            # Set Wayland environment for mpv
+            env = {
+                'DISPLAY': ':0',
+                'WAYLAND_DISPLAY': 'wayland-0',
+                'XDG_RUNTIME_DIR': '/run/user/1000'
+            }
+            
             self.video_process = subprocess.Popen(
                 cmd,
+                env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
             self.current_video = video_path
             print(f"▶️  Playing: {Path(video_path).name}")
+            print(f"   Using Wayland GPU context with hardware decode")
         except FileNotFoundError:
             print("❌ mpv not installed!")
             print("   Install: sudo apt install mpv")
