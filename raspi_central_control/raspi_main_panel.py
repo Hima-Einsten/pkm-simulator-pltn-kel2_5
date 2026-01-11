@@ -8,7 +8,9 @@ import logging
 import signal
 import sys
 import threading
-from dataclasses import dataclass
+import json
+from pathlib import Path
+from dataclasses import dataclass, asdict
 from typing import Optional
 from queue import Queue, Empty
 from enum import Enum
@@ -166,6 +168,10 @@ class PLTNPanelController:
         # Threading locks
         self.uart_lock = threading.Lock()  # Changed from i2c_lock
         self.state_lock = threading.Lock()
+        
+        # State export for video display integration
+        self.state_export_file = Path("/tmp/pltn_state.json")
+        logger.info(f"State export file: {self.state_export_file}")
         
         # System health monitor
         logger.info("Phase 3: System health check...")
@@ -1803,7 +1809,8 @@ class PLTNPanelController:
             threading.Thread(target=self.esp_communication_thread, daemon=True, name="ESPCommThread"),
             threading.Thread(target=self.oled_update_thread, daemon=True, name="OLEDThread"),
             threading.Thread(target=self.health_monitoring_thread, daemon=True, name="HealthThread"),
-            threading.Thread(target=self.auto_simulation_thread, daemon=True, name="AutoSimThread")  # NEW
+            threading.Thread(target=self.auto_simulation_thread, daemon=True, name="AutoSimThread"),  # NEW
+            threading.Thread(target=self.state_export_thread, daemon=True, name="StateExportThread")  # NEW for video display
         ]
         
         for t in threads:
@@ -1859,6 +1866,55 @@ class PLTNPanelController:
             time.sleep(60.0)  # Just keep thread alive
         
         logger.info("Health monitoring thread stopped")
+    
+    def state_export_thread(self):
+        """
+        Export state to JSON file for video display integration
+        Updates every 100ms (10 Hz) - sufficient for UI updates
+        """
+        logger.info("State export thread started (for video display)")
+        logger.info(f"   Export file: {self.state_export_file}")
+        
+        try:
+            while self.state.running:
+                try:
+                    with self.state_lock:
+                        # Prepare state dict for JSON export
+                        state_dict = {
+                            "timestamp": time.time(),
+                            "mode": self.state.simulation_mode,
+                            "auto_running": self.state.auto_sim_running,
+                            "auto_phase": self.state.auto_sim_phase,
+                            "pressure": float(self.state.pressure),
+                            "safety_rod": int(self.state.safety_rod),
+                            "shim_rod": int(self.state.shim_rod),
+                            "regulating_rod": int(self.state.regulating_rod),
+                            "pump_primary": int(self.state.pump_primary_status),
+                            "pump_secondary": int(self.state.pump_secondary_status),
+                            "pump_tertiary": int(self.state.pump_tertiary_status),
+                            "thermal_kw": float(self.state.thermal_kw),
+                            "turbine_speed": float(self.state.turbine_speed),
+                            "emergency": bool(self.state.emergency_active)
+                        }
+                    
+                    # Write to file (atomic write with temp file)
+                    temp_file = self.state_export_file.with_suffix('.tmp')
+                    with open(temp_file, 'w') as f:
+                        json.dump(state_dict, f, indent=2)
+                    
+                    # Atomic rename (prevents partial reads)
+                    temp_file.replace(self.state_export_file)
+                
+                except Exception as e:
+                    logger.error(f"State export error: {e}")
+                
+                # Update rate: 100ms = 10 Hz (sufficient for UI)
+                time.sleep(0.1)
+        
+        except Exception as e:
+            logger.error(f"State export thread crashed: {e}")
+        
+        logger.info("State export thread stopped")
     
     def shutdown(self):
         """Shutdown system gracefully with proper UART cleanup"""
