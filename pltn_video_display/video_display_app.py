@@ -236,11 +236,14 @@ class VideoDisplayApp:
             print("")
             print("   ESC: Exit")
             self.mock_state = self.create_mock_state()
-            self.mock_mode = "manual"  # Start with MANUAL (not IDLE)
+            self.mock_mode = "idle"  # Start with IDLE mode
             
             # Keyboard state tracking (untuk level detection)
             self.last_key_trigger = {}  # Last trigger time for each button
             self.key_repeat_interval = 0.05  # 50ms repeat for held keys
+            
+            # Track user interaction untuk mode transition
+            self.user_has_interacted = False  # Start False, switch to True on first input
 
         else:
             print("🚀 PRODUCTION MODE")
@@ -394,6 +397,12 @@ class VideoDisplayApp:
     
     def trigger_button_action(self, button_name: str):
         """Execute action untuk button yang ditekan"""
+        # Switch from IDLE to MANUAL on first input (except RESET and AUTO)
+        if not self.user_has_interacted and button_name not in ["REACTOR_RESET", "START_AUTO_SIMULATION"]:
+            self.user_has_interacted = True
+            self.mock_mode = "manual"
+            print(f"  → Switching to MANUAL mode (first input detected)")
+        
         # Pump controls
         if button_name == "PUMP_PRIMARY_ON":
             self.mock_state["pump_primary"] = 2
@@ -439,6 +448,7 @@ class VideoDisplayApp:
             self.mock_mode = "auto"
             self.mock_state["mode"] = "auto"
             self.mock_state["auto_running"] = True
+            self.user_has_interacted = True  # Mark as interacted
             print(f"  ✓ AUTO SIMULATION STARTED")
         elif button_name == "REACTOR_RESET":
             self.reset_simulation()
@@ -448,11 +458,12 @@ class VideoDisplayApp:
             print(f"  ✓ EMERGENCY SHUTDOWN!")
     
     def reset_simulation(self):
-        """Reset semua parameter ke nilai awal"""
+        """Reset semua parameter ke nilai awal dan kembali ke IDLE"""
         self.mock_state = self.create_mock_state()
-        self.mock_mode = "manual"
+        self.mock_mode = "idle"  # Kembali ke IDLE setelah reset
         self.current_step = 0
-        print("  → All parameters reset to initial state")
+        self.user_has_interacted = False  # Reset interaction flag
+        print("  → All parameters reset, returning to IDLE mode")
     
     def emergency_shutdown(self):
         """Emergency shutdown - set semua ke safe state"""
@@ -463,8 +474,9 @@ class VideoDisplayApp:
         self.mock_state["pump_primary"] = 0
         self.mock_state["pump_secondary"] = 0
         self.mock_state["pump_tertiary"] = 0
-        self.mock_mode = "manual"
-        print("  → Emergency: All rods inserted, pumps stopped")
+        self.mock_mode = "idle"  # Kembali ke IDLE setelah emergency
+        self.user_has_interacted = False  # Reset interaction flag
+        print("  → Emergency: All rods inserted, pumps stopped, returning to IDLE")
 
     
     def play_video(self, video_path: str, loop: bool = False):
@@ -787,59 +799,7 @@ class VideoDisplayApp:
         # Draw progress bars (larger)
         self.draw_progress_bar_enhanced(state, params_y_start)
         
-        # Keyboard hints overlay (test mode only)
-        self.draw_keyboard_hints()
-        
         pygame.display.flip()
-    
-    def draw_keyboard_hints(self):
-        """Draw keyboard shortcuts overlay (test mode only)"""
-        if not self.test_mode:
-            return
-        
-        # Semi-transparent panel di bottom-right
-        panel_width = int(450 * self.scale)
-        panel_height = int(280 * self.scale)
-        panel_x = self.width - panel_width - int(20 * self.scale)
-        panel_y = self.height - panel_height - int(20 * self.scale)
-        
-        # Background with transparency
-        panel_surface = pygame.Surface((panel_width, panel_height))
-        panel_surface.set_alpha(220)
-        panel_surface.fill(self.COLOR_BG_PANEL)
-        self.screen.blit(panel_surface, (panel_x, panel_y))
-        
-        # Border
-        pygame.draw.rect(self.screen, self.COLOR_BORDER, 
-                        (panel_x, panel_y, panel_width, panel_height), 
-                        max(int(3 * self.scale), 2), 
-                        border_radius=int(10 * self.scale))
-        
-        # Title
-        title = self.font_medium.render("KEYBOARD SHORTCUTS", True, self.COLOR_PRIMARY_BRIGHT)
-        self.screen.blit(title, (panel_x + int(20 * self.scale), panel_y + int(15 * self.scale)))
-        
-        # Shortcuts list
-        shortcuts = [
-            ("Pumps:", "1/2/4/5/7/8"),
-            ("Rods:", "Q/W E/R T/Y"),
-            ("Pressure:", "Arrow Up/Down"),
-            ("System:", "F1/F2/F3"),
-            ("Exit:", "ESC")
-        ]
-        
-        y_offset = panel_y + int(65 * self.scale)
-        for label, keys in shortcuts:
-            # Label (cyan)
-            label_text = self.font_small.render(label, True, self.COLOR_PRIMARY_BRIGHT)
-            self.screen.blit(label_text, (panel_x + int(20 * self.scale), y_offset))
-            
-            # Keys (white)
-            keys_text = self.font_small.render(keys, True, self.COLOR_TEXT_SECONDARY)
-            self.screen.blit(keys_text, (panel_x + int(150 * self.scale), y_offset))
-            
-            y_offset += int(40 * self.scale)
-
     
     def get_current_step_instruction(self, state: Dict) -> list:
         """Get instruction text for current step"""
