@@ -8,7 +8,9 @@ import logging
 import signal
 import sys
 import threading
-from dataclasses import dataclass
+import json
+from pathlib import Path
+from dataclasses import dataclass, asdict
 from typing import Optional
 from queue import Queue, Empty
 from enum import Enum
@@ -167,6 +169,10 @@ class PLTNPanelController:
         self.uart_lock = threading.Lock()  # Changed from i2c_lock
         self.state_lock = threading.Lock()
         
+        # State export for video display integration
+        self.state_export_file = Path("/tmp/pltn_state.json")
+        logger.info(f"State export file: {self.state_export_file}")
+        
         # System health monitor
         logger.info("Phase 3: System health check...")
         self.health_monitor = SystemHealthMonitor()
@@ -319,6 +325,10 @@ class PLTNPanelController:
                 self.oled_manager = None
             else:
                 logger.info("✓ OLED displays initialization complete")
+                logger.info("   Startup screen will be cleared by OLED update thread")
+                
+                # NOTE: sync_interpolators_to_state() moved to oled_update_thread()
+                # This fixes race condition where sync was called before thread started
             
         except Exception as e:
             logger.warning(f"⚠️  Failed to initialize OLED displays: {e}")
@@ -587,8 +597,11 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.PUMP_PRIMARY_ON:
                 if self.state.pump_primary_status == 0:
-                    self.state.pump_primary_status = 1
-                    # Removed logging for performance
+                    # Check safety conditions before starting
+                    if self._check_pump_start_safe("Primary"):
+                        self.state.pump_primary_status = 1
+                        logger.info("✓ Primary pump starting (safety checks passed)")
+                    # else: already logged and buzzed by _check_pump_start_safe()
             
             elif event == ButtonEvent.PUMP_PRIMARY_OFF:
                 if self.state.pump_primary_status == 2:
@@ -597,8 +610,11 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.PUMP_SECONDARY_ON:
                 if self.state.pump_secondary_status == 0:
-                    self.state.pump_secondary_status = 1
-                    # Removed logging for performance
+                    # Check safety conditions before starting
+                    if self._check_pump_start_safe("Secondary"):
+                        self.state.pump_secondary_status = 1
+                        logger.info("✓ Secondary pump starting (safety checks passed)")
+                    # else: already logged and buzzed by _check_pump_start_safe()
             
             elif event == ButtonEvent.PUMP_SECONDARY_OFF:
                 if self.state.pump_secondary_status == 2:
@@ -607,8 +623,11 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.PUMP_TERTIARY_ON:
                 if self.state.pump_tertiary_status == 0:
-                    self.state.pump_tertiary_status = 1
-                    # Removed logging for performance
+                    # Check safety conditions before starting
+                    if self._check_pump_start_safe("Tertiary"):
+                        self.state.pump_tertiary_status = 1
+                        logger.info("✓ Tertiary pump starting (safety checks passed)")
+                    # else: already logged and buzzed by _check_pump_start_safe()
             
             elif event == ButtonEvent.PUMP_TERTIARY_OFF:
                 if self.state.pump_tertiary_status == 2:
@@ -617,7 +636,19 @@ class PLTNPanelController:
             
             elif event == ButtonEvent.SAFETY_ROD_UP:
                 if not self._check_interlock_internal():
-                    logger.warning("Interlock not satisfied!")
+                    logger.warning("⚠️  INTERLOCK VIOLATION: Cannot raise safety rod!")
+                    logger.warning(f"   Pressure: {self.state.pressure:.1f} bar (need >= 140 bar)")
+                    logger.warning(f"   Pumps: Primary={self.state.pump_primary_status}, "
+                                 f"Secondary={self.state.pump_secondary_status}, "
+                                 f"Tertiary={self.state.pump_tertiary_status} (need all = 2)")
+                    
+                    # Trigger interlock violation buzzer (1.5 second beep)
+                    if self.buzzer:
+                        try:
+                            self.buzzer.sound_interlock_warning(duration=1.5)
+                        except Exception:
+                            pass
+                    
                     return
                 self.state.safety_rod = min(self.state.safety_rod + 1, 100)  # 1% increment
                 # Removed logging for performance
@@ -629,7 +660,7 @@ class PLTNPanelController:
                     # Trigger buzzer warning if available
                     if self.buzzer:
                         try:
-                            self.buzzer.beep(duration=0.2)
+                            self.buzzer.sound_interlock_warning(duration=1.5)
                         except Exception:
                             pass  # Silent fail
                     return
@@ -638,8 +669,36 @@ class PLTNPanelController:
                 # Removed logging for performance
             
             elif event == ButtonEvent.SHIM_ROD_UP:
+                # Check safety rod priority: safety rod must be 100% before raising shim
+                if self.state.safety_rod < 100:
+                    logger.warning("⚠️  SAFETY ROD PRIORITY: Cannot raise shim rod!")
+                    logger.warning(f"   Safety rod must be at 100% first (currently: {self.state.safety_rod}%)")
+                    logger.warning(f"   Correct sequence: Safety rod to 100% → Then shim/regulating rods")
+                    
+                    # Trigger buzzer warning
+                    if self.buzzer:
+                        try:
+                            self.buzzer.sound_interlock_warning(duration=1.5)
+                        except Exception:
+                            pass
+                    
+                    return
+                
+                # Check interlock conditions
                 if not self._check_interlock_internal():
-                    logger.warning("Interlock not satisfied!")
+                    logger.warning("⚠️  INTERLOCK VIOLATION: Cannot raise shim rod!")
+                    logger.warning(f"   Pressure: {self.state.pressure:.1f} bar (need >= 140 bar)")
+                    logger.warning(f"   Pumps: Primary={self.state.pump_primary_status}, "
+                                 f"Secondary={self.state.pump_secondary_status}, "
+                                 f"Tertiary={self.state.pump_tertiary_status} (need all = 2)")
+                    
+                    # Trigger interlock violation buzzer
+                    if self.buzzer:
+                        try:
+                            self.buzzer.sound_interlock_warning(duration=1.5)
+                        except Exception:
+                            pass
+                    
                     return
                 self.state.shim_rod = min(self.state.shim_rod + 1, 100)  # 1% increment
                 # Removed logging for performance
@@ -649,8 +708,36 @@ class PLTNPanelController:
                 # Removed logging for performance
             
             elif event == ButtonEvent.REGULATING_ROD_UP:
+                # Check safety rod priority: safety rod must be 100% before raising regulating
+                if self.state.safety_rod < 100:
+                    logger.warning("⚠️  SAFETY ROD PRIORITY: Cannot raise regulating rod!")
+                    logger.warning(f"   Safety rod must be at 100% first (currently: {self.state.safety_rod}%)")
+                    logger.warning(f"   Correct sequence: Safety rod to 100% → Then shim/regulating rods")
+                    
+                    # Trigger buzzer warning
+                    if self.buzzer:
+                        try:
+                            self.buzzer.sound_interlock_warning(duration=1.5)
+                        except Exception:
+                            pass
+                    
+                    return
+                
+                # Check interlock conditions
                 if not self._check_interlock_internal():
-                    logger.warning("⚠️  Interlock not satisfied!")
+                    logger.warning("⚠️  INTERLOCK VIOLATION: Cannot raise regulating rod!")
+                    logger.warning(f"   Pressure: {self.state.pressure:.1f} bar (need >= 140 bar)")
+                    logger.warning(f"   Pumps: Primary={self.state.pump_primary_status}, "
+                                 f"Secondary={self.state.pump_secondary_status}, "
+                                 f"Tertiary={self.state.pump_tertiary_status} (need all = 2)")
+                    
+                    # Trigger interlock violation buzzer
+                    if self.buzzer:
+                        try:
+                            self.buzzer.sound_interlock_warning(duration=1.5)
+                        except Exception:
+                            pass
+                    
                     return
                 self.state.regulating_rod = min(self.state.regulating_rod + 1, 100)  # 1% increment
                 # Removed logging for performance
@@ -701,6 +788,11 @@ class PLTNPanelController:
                 self.state.humid_ct3_cmd = 0
                 self.state.humid_ct4_cmd = 0
                 self.state.interlock_satisfied = False
+                
+                # Reset OLED interpolators to zero (instant display update)
+                if self.oled_manager:
+                    self.oled_manager.reset_all_interpolators()
+                
                 logger.info("=" * 60)
                 logger.info("🔄 SIMULATION RESET")
                 logger.info("All parameters reset. Press START to begin.")
@@ -840,6 +932,96 @@ class PLTNPanelController:
             return False
         
         # All checks passed - safe to move rods
+        return True
+    
+    def _check_pump_start_safe(self, pump_name: str) -> bool:
+        """
+        Check if it's safe to start pump (INTERNAL - assumes caller holds state_lock)
+        
+        Safety requirements:
+        1. Pressure >= 40 bar (prevent pump cavitation)
+        2. Correct startup sequence: Tertiary → Secondary → Primary
+        
+        Args:
+            pump_name: Name of pump ("Tertiary", "Secondary", or "Primary")
+        
+        Returns:
+            True if safe to start, False otherwise (with buzzer warning)
+        """
+        # ============================================
+        # CHECK 1: Pressure must be >= 40 bar
+        # ============================================
+        if self.state.pressure < 40.0:
+            logger.warning(f"❌ PUMP START BLOCKED: {pump_name} pump")
+            logger.warning(f"   Reason: Pressure too low!")
+            logger.warning(f"   Current: {self.state.pressure:.1f} bar, Required: >= 40 bar")
+            logger.warning(f"   Action: Raise pressure to 40 bar before starting pumps")
+            
+            # Trigger buzzer warning (procedure violation - 2 seconds)
+            if self.buzzer:
+                try:
+                    self.buzzer.sound_procedure_warning(duration=2.0)
+                except Exception:
+                    pass  # Silent fail
+            
+            return False
+        
+        # ============================================
+        # CHECK 2: Enforce correct pump sequence
+        # Sequence: Tertiary → Secondary → Primary
+        # ============================================
+        if pump_name == "Secondary":
+            # Secondary can only start if Tertiary is already ON
+            if self.state.pump_tertiary_status != 2:
+                logger.warning(f"❌ PUMP SEQUENCE VIOLATION: Cannot start Secondary pump")
+                logger.warning(f"   Reason: Tertiary pump must be ON first!")
+                logger.warning(f"   Tertiary status: {self.state.pump_tertiary_status} (2=ON)")
+                logger.warning(f"   Correct sequence: Tertiary → Secondary → Primary")
+                
+                # Trigger sequence violation buzzer (procedure warning)
+                if self.buzzer:
+                    try:
+                        self.buzzer.sound_procedure_warning(duration=1.5)
+                    except Exception:
+                        pass
+                
+                return False
+        
+        elif pump_name == "Primary":
+            # Primary can only start if BOTH Tertiary AND Secondary are ON
+            if self.state.pump_tertiary_status != 2:
+                logger.warning(f"❌ PUMP SEQUENCE VIOLATION: Cannot start Primary pump")
+                logger.warning(f"   Reason: Tertiary pump must be ON first!")
+                logger.warning(f"   Tertiary status: {self.state.pump_tertiary_status} (2=ON)")
+                logger.warning(f"   Correct sequence: Tertiary → Secondary → Primary")
+                
+                # Trigger buzzer
+                if self.buzzer:
+                    try:
+                        self.buzzer.sound_procedure_warning(duration=1.5)
+                    except Exception:
+                        pass
+                
+                return False
+            
+            if self.state.pump_secondary_status != 2:
+                logger.warning(f"❌ PUMP SEQUENCE VIOLATION: Cannot start Primary pump")
+                logger.warning(f"   Reason: Secondary pump must be ON first!")
+                logger.warning(f"   Secondary status: {self.state.pump_secondary_status} (2=ON)")
+                logger.warning(f"   Correct sequence: Tertiary → Secondary → Primary")
+                
+                # Trigger buzzer
+                if self.buzzer:
+                    try:
+                        self.buzzer.sound_procedure_warning(duration=1.5)
+                    except Exception:
+                        pass
+                
+                return False
+        
+        # Tertiary pump has no prerequisites (can start anytime if P >= 40)
+        # All checks passed
+        logger.info(f"✓ Pump start authorized: {pump_name}")
         return True
     
     # ============================================
@@ -1161,20 +1343,38 @@ class PLTNPanelController:
         logger.info("Button hold detection thread stopped")
     
     def oled_update_thread(self):
-        """Thread for updating 9 OLED displays (100ms cycle - optimized for faster visual feedback)"""
+        """
+        Thread for updating 9 OLED displays (100ms cycle - optimized for faster visual feedback)
+        
+        This thread handles:
+        - Initial sync of interpolators to clear startup screen
+        - Continuous OLED updates at 10Hz (100ms cycle)
+        - Smooth value interpolation for better UX
+        """
         logger.info("OLED update thread started")
         
         if self.oled_manager is None:
             logger.warning("OLED manager not available, thread exiting")
             return
         
+        # First update flag - sync interpolators and clear startup screen
+        first_update = True
+        
         while self.state.running:
             try:
                 with self.state_lock:
-                    # Update all 9 OLED displays
-                    self.oled_manager.update_all(self.state)
+                    if first_update:
+                        # FIRST UPDATE: Sync interpolators to current state and force display update
+                        # This clears the "Siap" startup screen and shows actual values
+                        logger.info("OLED Thread: Performing first update to clear startup screen...")
+                        self.oled_manager.sync_interpolators_to_state(self.state)
+                        first_update = False
+                        logger.info("OLED Thread: First update complete, entering normal update loop")
+                    else:
+                        # NORMAL UPDATE: Update all 9 OLED displays with smooth interpolation
+                        self.oled_manager.update_all(self.state)
                 
-                time.sleep(0.1)  # 100ms update rate (faster visual feedback)
+                time.sleep(0.1)  # 100ms update rate (10Hz for smooth interpolation)
                 
             except Exception as e:
                 # Don't spam logs with OLED errors - it's not critical
@@ -1609,7 +1809,8 @@ class PLTNPanelController:
             threading.Thread(target=self.esp_communication_thread, daemon=True, name="ESPCommThread"),
             threading.Thread(target=self.oled_update_thread, daemon=True, name="OLEDThread"),
             threading.Thread(target=self.health_monitoring_thread, daemon=True, name="HealthThread"),
-            threading.Thread(target=self.auto_simulation_thread, daemon=True, name="AutoSimThread")  # NEW
+            threading.Thread(target=self.auto_simulation_thread, daemon=True, name="AutoSimThread"),  # NEW
+            threading.Thread(target=self.state_export_thread, daemon=True, name="StateExportThread")  # NEW for video display
         ]
         
         for t in threads:
@@ -1665,6 +1866,55 @@ class PLTNPanelController:
             time.sleep(60.0)  # Just keep thread alive
         
         logger.info("Health monitoring thread stopped")
+    
+    def state_export_thread(self):
+        """
+        Export state to JSON file for video display integration
+        Updates every 100ms (10 Hz) - sufficient for UI updates
+        """
+        logger.info("State export thread started (for video display)")
+        logger.info(f"   Export file: {self.state_export_file}")
+        
+        try:
+            while self.state.running:
+                try:
+                    with self.state_lock:
+                        # Prepare state dict for JSON export
+                        state_dict = {
+                            "timestamp": time.time(),
+                            "mode": self.state.simulation_mode,
+                            "auto_running": self.state.auto_sim_running,
+                            "auto_phase": self.state.auto_sim_phase,
+                            "pressure": float(self.state.pressure),
+                            "safety_rod": int(self.state.safety_rod),
+                            "shim_rod": int(self.state.shim_rod),
+                            "regulating_rod": int(self.state.regulating_rod),
+                            "pump_primary": int(self.state.pump_primary_status),
+                            "pump_secondary": int(self.state.pump_secondary_status),
+                            "pump_tertiary": int(self.state.pump_tertiary_status),
+                            "thermal_kw": float(self.state.thermal_kw),
+                            "turbine_speed": float(self.state.turbine_speed),
+                            "emergency": bool(self.state.emergency_active)
+                        }
+                    
+                    # Write to file (atomic write with temp file)
+                    temp_file = self.state_export_file.with_suffix('.tmp')
+                    with open(temp_file, 'w') as f:
+                        json.dump(state_dict, f, indent=2)
+                    
+                    # Atomic rename (prevents partial reads)
+                    temp_file.replace(self.state_export_file)
+                
+                except Exception as e:
+                    logger.error(f"State export error: {e}")
+                
+                # Update rate: 100ms = 10 Hz (sufficient for UI)
+                time.sleep(0.1)
+        
+        except Exception as e:
+            logger.error(f"State export thread crashed: {e}")
+        
+        logger.info("State export thread stopped")
     
     def shutdown(self):
         """Shutdown system gracefully with proper UART cleanup"""

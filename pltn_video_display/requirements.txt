@@ -1,0 +1,7 @@
+# Python Dependencies for PLTN Video Display System
+
+# Main framework
+pygame==2.5.2
+
+# No other dependencies needed!
+# mpv is system package: sudo apt install mpv
