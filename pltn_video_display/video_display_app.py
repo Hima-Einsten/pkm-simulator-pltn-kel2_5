@@ -17,6 +17,12 @@ from enum import Enum
 from typing import Optional, Dict
 import argparse
 
+# Fix Windows console encoding untuk emoji support
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 # Initialize Pygame
 pygame.init()
 
@@ -24,6 +30,62 @@ class DisplayMode(Enum):
     AUTO_VIDEO = "auto_video"           # Play full video (auto sim)
     MANUAL_GUIDE = "manual_guide"       # Show step guide (manual)
     IDLE = "idle"                       # Standby/intro screen
+
+
+# ============================================
+# Keyboard Mapping untuk Simulasi Push Button
+# ============================================
+
+# Keyboard mapping untuk 17 tombol fisik
+KEYBOARD_MAPPING = {
+    # Pump controls (Numpad OR regular numbers)
+    pygame.K_KP1: "PUMP_PRIMARY_ON",
+    pygame.K_1: "PUMP_PRIMARY_ON",        # Alternative untuk laptop
+    pygame.K_KP2: "PUMP_PRIMARY_OFF",
+    pygame.K_2: "PUMP_PRIMARY_OFF",       # Alternative untuk laptop
+    pygame.K_KP4: "PUMP_SECONDARY_ON",
+    pygame.K_4: "PUMP_SECONDARY_ON",      # Alternative untuk laptop
+    pygame.K_KP5: "PUMP_SECONDARY_OFF",
+    pygame.K_5: "PUMP_SECONDARY_OFF",     # Alternative untuk laptop
+    pygame.K_KP7: "PUMP_TERTIARY_ON",
+    pygame.K_7: "PUMP_TERTIARY_ON",       # Alternative untuk laptop
+    pygame.K_KP8: "PUMP_TERTIARY_OFF",
+    pygame.K_8: "PUMP_TERTIARY_OFF",      # Alternative untuk laptop
+    
+    # Control rods (Q/W, E/R, T/Y)
+    pygame.K_q: "SAFETY_ROD_UP",
+    pygame.K_w: "SAFETY_ROD_DOWN",
+    pygame.K_e: "SHIM_ROD_UP",
+    pygame.K_r: "SHIM_ROD_DOWN",
+    pygame.K_t: "REGULATING_ROD_UP",
+    pygame.K_y: "REGULATING_ROD_DOWN",
+    
+    # Pressure (Arrow keys)
+    pygame.K_UP: "PRESSURE_UP",
+    pygame.K_DOWN: "PRESSURE_DOWN",
+    
+    # System controls (F-keys)
+    pygame.K_F1: "START_AUTO_SIMULATION",
+    pygame.K_F2: "REACTOR_RESET",
+    pygame.K_F3: "EMERGENCY",
+}
+
+# Edge detection buttons (trigger once per press)
+EDGE_BUTTONS = {
+    "PUMP_PRIMARY_ON", "PUMP_PRIMARY_OFF",
+    "PUMP_SECONDARY_ON", "PUMP_SECONDARY_OFF",
+    "PUMP_TERTIARY_ON", "PUMP_TERTIARY_OFF",
+    "START_AUTO_SIMULATION", "REACTOR_RESET", "EMERGENCY"
+}
+
+# Level detection buttons (trigger while held)
+LEVEL_BUTTONS = {
+    "SAFETY_ROD_UP", "SAFETY_ROD_DOWN",
+    "SHIM_ROD_UP", "SHIM_ROD_DOWN",
+    "REGULATING_ROD_UP", "REGULATING_ROD_DOWN",
+    "PRESSURE_UP", "PRESSURE_DOWN"
+}
+
 
 
 class VideoDisplayApp:
@@ -158,16 +220,31 @@ class VideoDisplayApp:
         if self.test_mode:
             print("🧪 TESTING MODE ACTIVE")
             print("   Using mock simulation data")
-            print("   Press keys to simulate states:")
-            print("   - I: IDLE mode (branding screen)")
-            print("   - M: MANUAL mode (interactive guide)")
-            print("   - A: AUTO mode (play video)")
-            print("   - UP/DOWN: Adjust pressure values")
-            print("   - R: Toggle control rods")
-            print("   - P: Toggle pumps")
-            print("   - ESC: Exit")
+            print("   Press keys to simulate push buttons:")
+            print("")
+            print("   === PUMP CONTROLS ===")
+            print("   1/2: Primary ON/OFF | 4/5: Secondary ON/OFF | 7/8: Tertiary ON/OFF")
+            print("")
+            print("   === CONTROL RODS (Hold for continuous) ===")
+            print("   Q/W: Safety UP/DOWN | E/R: Shim UP/DOWN | T/Y: Regulating UP/DOWN")
+            print("")
+            print("   === PRESSURE ===")
+            print("   ↑/↓: Pressure UP/DOWN")
+            print("")
+            print("   === SYSTEM CONTROLS ===")
+            print("   F1: Start Auto | F2: Reset | F3: Emergency")
+            print("")
+            print("   ESC: Exit")
             self.mock_state = self.create_mock_state()
-            self.mock_mode = "idle"  # Start with IDLE
+            self.mock_mode = "idle"  # Start with IDLE mode
+            
+            # Keyboard state tracking (untuk level detection)
+            self.last_key_trigger = {}  # Last trigger time for each button
+            self.key_repeat_interval = 0.05  # 50ms repeat for held keys
+            
+            # Track user interaction untuk mode transition
+            self.user_has_interacted = False  # Start False, switch to True on first input
+
         else:
             print("🚀 PRODUCTION MODE")
             print(f"   Reading state from: {self.state_file}")
@@ -287,51 +364,120 @@ class VideoDisplayApp:
             return {}
     
     def handle_test_mode_keys(self, event):
-        """Handle keyboard input for test mode"""
+        """Handle keyboard input for test mode - 17 button simulation"""
         if not self.test_mode:
             return
         
         if event.type == pygame.KEYDOWN:
-            # Mode switches - Updated keys: I, M, A
-            if event.key == pygame.K_i:
-                print("🔄 Test: Switching to IDLE mode")
-                self.mock_mode = "idle"
-                self.current_step = 0  # Reset manual step
-            
-            elif event.key == pygame.K_m:
-                print("🔄 Test: Switching to MANUAL mode")
-                self.mock_mode = "manual"
-                self.current_step = 0  # Reset to step 1
-            
-            elif event.key == pygame.K_a:
-                print("🔄 Test: Switching to AUTO mode")
-                self.mock_mode = "auto"
-            
-            # Adjust mock values (for manual mode testing)
-            elif event.key == pygame.K_UP:
-                if self.mock_mode == "manual":
-                    self.mock_state["pressure"] = min(155, self.mock_state["pressure"] + 10)
-                    print(f"📈 Pressure: {self.mock_state['pressure']}")
-            
-            elif event.key == pygame.K_DOWN:
-                if self.mock_mode == "manual":
-                    self.mock_state["pressure"] = max(0, self.mock_state["pressure"] - 10)
-                    print(f"📉 Pressure: {self.mock_state['pressure']}")
-            
-            elif event.key == pygame.K_r:
-                # Toggle rods
-                self.mock_state["safety_rod"] = 100 if self.mock_state["safety_rod"] == 0 else 0
-                self.mock_state["shim_rod"] = 50 if self.mock_state["shim_rod"] == 0 else 0
-                self.mock_state["regulating_rod"] = 50 if self.mock_state["regulating_rod"] == 0 else 0
-                print(f"🔄 Rods toggled: Safety={self.mock_state['safety_rod']}, Shim={self.mock_state['shim_rod']}")
-            
-            elif event.key == pygame.K_p:
-                # Toggle pumps
-                val = 2 if self.mock_state["pump_primary"] == 0 else 0
-                self.mock_state["pump_primary"] = val
-                self.mock_state["pump_secondary"] = val
-                self.mock_state["pump_tertiary"] = val
-                print(f"🔄 Pumps toggled: {val}")
+            # Check if key is mapped to a button
+            if event.key in KEYBOARD_MAPPING:
+                button_name = KEYBOARD_MAPPING[event.key]
+                
+                # Edge buttons: trigger once per press
+                if button_name in EDGE_BUTTONS:
+                    self.trigger_button_action(button_name)
+                    print(f"🔘 Button pressed: {button_name}")
+    
+    def check_held_keys(self):
+        """Check for held keys (level detection) - called in update loop"""
+        if not self.test_mode:
+            return
+        
+        current_time = time.time()
+        keys = pygame.key.get_pressed()
+        
+        for key_code, button_name in KEYBOARD_MAPPING.items():
+            if button_name in LEVEL_BUTTONS:
+                if keys[key_code]:
+                    # Check repeat interval
+                    last_trigger = self.last_key_trigger.get(button_name, 0)
+                    if current_time - last_trigger > self.key_repeat_interval:
+                        self.trigger_button_action(button_name)
+                        self.last_key_trigger[button_name] = current_time
+    
+    def trigger_button_action(self, button_name: str):
+        """Execute action untuk button yang ditekan"""
+        # Switch from IDLE to MANUAL on first input (except RESET and AUTO)
+        if not self.user_has_interacted and button_name not in ["REACTOR_RESET", "START_AUTO_SIMULATION"]:
+            self.user_has_interacted = True
+            self.mock_mode = "manual"
+            print(f"  → Switching to MANUAL mode (first input detected)")
+        
+        # Pump controls
+        if button_name == "PUMP_PRIMARY_ON":
+            self.mock_state["pump_primary"] = 2
+            print(f"  ✓ Primary pump: ON")
+        elif button_name == "PUMP_PRIMARY_OFF":
+            self.mock_state["pump_primary"] = 0
+            print(f"  ✓ Primary pump: OFF")
+        elif button_name == "PUMP_SECONDARY_ON":
+            self.mock_state["pump_secondary"] = 2
+            print(f"  ✓ Secondary pump: ON")
+        elif button_name == "PUMP_SECONDARY_OFF":
+            self.mock_state["pump_secondary"] = 0
+            print(f"  ✓ Secondary pump: OFF")
+        elif button_name == "PUMP_TERTIARY_ON":
+            self.mock_state["pump_tertiary"] = 2
+            print(f"  ✓ Tertiary pump: ON")
+        elif button_name == "PUMP_TERTIARY_OFF":
+            self.mock_state["pump_tertiary"] = 0
+            print(f"  ✓ Tertiary pump: OFF")
+        
+        # Control rods (increment/decrement by 2% per trigger)
+        elif button_name == "SAFETY_ROD_UP":
+            self.mock_state["safety_rod"] = min(100, self.mock_state["safety_rod"] + 2)
+        elif button_name == "SAFETY_ROD_DOWN":
+            self.mock_state["safety_rod"] = max(0, self.mock_state["safety_rod"] - 2)
+        elif button_name == "SHIM_ROD_UP":
+            self.mock_state["shim_rod"] = min(100, self.mock_state["shim_rod"] + 2)
+        elif button_name == "SHIM_ROD_DOWN":
+            self.mock_state["shim_rod"] = max(0, self.mock_state["shim_rod"] - 2)
+        elif button_name == "REGULATING_ROD_UP":
+            self.mock_state["regulating_rod"] = min(100, self.mock_state["regulating_rod"] + 2)
+        elif button_name == "REGULATING_ROD_DOWN":
+            self.mock_state["regulating_rod"] = max(0, self.mock_state["regulating_rod"] - 2)
+        
+        # Pressure (increment/decrement by 2 bar per trigger)
+        elif button_name == "PRESSURE_UP":
+            self.mock_state["pressure"] = min(200, self.mock_state["pressure"] + 2)
+        elif button_name == "PRESSURE_DOWN":
+            self.mock_state["pressure"] = max(0, self.mock_state["pressure"] - 2)
+        
+        # System controls
+        elif button_name == "START_AUTO_SIMULATION":
+            self.mock_mode = "auto"
+            self.mock_state["mode"] = "auto"
+            self.mock_state["auto_running"] = True
+            self.user_has_interacted = True  # Mark as interacted
+            print(f"  ✓ AUTO SIMULATION STARTED")
+        elif button_name == "REACTOR_RESET":
+            self.reset_simulation()
+            print(f"  ✓ REACTOR RESET")
+        elif button_name == "EMERGENCY":
+            self.emergency_shutdown()
+            print(f"  ✓ EMERGENCY SHUTDOWN!")
+    
+    def reset_simulation(self):
+        """Reset semua parameter ke nilai awal dan kembali ke IDLE"""
+        self.mock_state = self.create_mock_state()
+        self.mock_mode = "idle"  # Kembali ke IDLE setelah reset
+        self.current_step = 0
+        self.user_has_interacted = False  # Reset interaction flag
+        print("  → All parameters reset, returning to IDLE mode")
+    
+    def emergency_shutdown(self):
+        """Emergency shutdown - set semua ke safe state"""
+        self.mock_state["emergency"] = True
+        self.mock_state["safety_rod"] = 0
+        self.mock_state["shim_rod"] = 0
+        self.mock_state["regulating_rod"] = 0
+        self.mock_state["pump_primary"] = 0
+        self.mock_state["pump_secondary"] = 0
+        self.mock_state["pump_tertiary"] = 0
+        self.mock_mode = "idle"  # Kembali ke IDLE setelah emergency
+        self.user_has_interacted = False  # Reset interaction flag
+        print("  → Emergency: All rods inserted, pumps stopped, returning to IDLE")
+
     
     def play_video(self, video_path: str, loop: bool = False):
         """
@@ -436,8 +582,8 @@ class VideoDisplayApp:
         # === CENTER SECTION: MAIN TITLE WITH DECORATIVE LINES ===
         center_y_start = self.height // 2 - int(180 * self.scale)  # Adjusted for larger content
         
-        # Decorative line (top) - longer and thicker
-        line_width = int(600 * self.scale)  # Increased from 400
+        # Decorative line (top) - much longer to use more width
+        line_width = int(1200 * self.scale)  # Increased from 600 - use more screen width
         line_x = (self.width - line_width) // 2
         line_thickness = max(int(4 * self.scale), 3)  # Thicker
         pygame.draw.line(self.screen, self.COLOR_BORDER, 
@@ -498,8 +644,8 @@ class VideoDisplayApp:
         # === STATUS BADGE === (larger and more prominent)
         status_y = center_y_start + int(520 * self.scale)
         
-        # Status badge background - larger
-        badge_width = int(420 * self.scale)  # Increased from 280
+        # Status badge background - much wider
+        badge_width = int(800 * self.scale)  # Increased from 420 - use more width
         badge_height = int(60 * self.scale)  # Increased from 40
         badge_x = (self.width - badge_width) // 2
         badge_radius = int(30 * self.scale)  # Increased from 20
@@ -507,17 +653,17 @@ class VideoDisplayApp:
         pygame.draw.rect(self.screen, self.COLOR_BG_TERTIARY, badge_rect, border_radius=badge_radius)
         pygame.draw.rect(self.screen, self.COLOR_GOLD, badge_rect, max(int(3 * self.scale), 2), border_radius=badge_radius)
         
-        # Status text with icon (larger)
-        status_text = "⚡ SIMULATION READY ⚡"
-        status_surface = self.font_large.render(status_text, True, self.COLOR_GOLD)  # Changed from font_body to font_large
+        # Status text with icon (larger) - NO EMOJI
+        status_text = ">>> SIMULATION READY <<<"  # Replaced emoji with ASCII
+        status_surface = self.font_display.render(status_text, True, self.COLOR_GOLD)  # Use largest font
         status_rect = status_surface.get_rect(center=(self.width//2, status_y + int(15 * self.scale)))
         self.screen.blit(status_surface, status_rect)
         
         # === BOTTOM SECTION: INSTRUCTIONS ===
-        instruction_y = self.height - int(150 * self.scale)  # More space from bottom
+        instruction_y = self.height - int(120 * self.scale)  # Adjusted to avoid overlap
         
         # Instruction text with fade animation (Bright Cyan, larger)
-        inst_text = "Tekan tombol untuk memulai simulasi"
+        inst_text = ">> Tekan tombol untuk memulai simulasi <<"  # Removed emoji
         inst_surface = self.font_medium.render(inst_text, True, self.COLOR_ENERGY)  # Changed from font_body
         
         # Apply fade by adjusting alpha
@@ -539,37 +685,66 @@ class VideoDisplayApp:
         """Display interactive step-by-step guide - Optimized for 4K"""
         self.screen.fill(self.COLOR_BG)
         
+        # === PRESSURE WARNING NOTIFICATION (TOP) ===
+        current_pressure = state.get("pressure", 0)
+        if current_pressure > 160:
+            # Show warning banner at top
+            banner_height = int(100 * self.scale)
+            if current_pressure > 180:
+                banner_color = self.COLOR_ERROR
+                warning_text = "!!! BAHAYA: TEKANAN TERLALU TINGGI !!!"
+            else:
+                banner_color = self.COLOR_WARNING
+                warning_text = "!!! PERINGATAN: TEKANAN TINGGI !!!"
+            
+            # Draw warning banner
+            pygame.draw.rect(self.screen, banner_color, (0, 0, self.width, banner_height))
+            
+            # Warning text (white, bold)
+            warning_surface = self.font_title.render(warning_text, True, self.COLOR_TEXT)
+            warning_rect = warning_surface.get_rect(center=(self.width//2, banner_height//2))
+            self.screen.blit(warning_surface, warning_rect)
+            
+            # Adjust header position to avoid overlap
+            header_y_offset = banner_height
+        else:
+            header_y_offset = 0
+        
         # === HEADER BAR === (larger and more prominent)
         header_height = int(120 * self.scale)  # Increased from 80
         left_margin = int(50 * self.scale)  # Increased from 30
         right_margin = int(50 * self.scale)
         
         # Draw header background (Medium Navy)
-        pygame.draw.rect(self.screen, self.COLOR_BG_SECONDARY, (0, 0, self.width, header_height))
+        pygame.draw.rect(self.screen, self.COLOR_BG_SECONDARY, 
+                        (0, header_y_offset, self.width, header_height))
         line_thickness = max(int(4 * self.scale), 3)
-        pygame.draw.line(self.screen, self.COLOR_BORDER, (0, header_height), (self.width, header_height), line_thickness)
+        pygame.draw.line(self.screen, self.COLOR_BORDER, 
+                        (0, header_y_offset + header_height), 
+                        (self.width, header_y_offset + header_height), 
+                        line_thickness)
         
         # Logo BRIN (left)
         if self.logo_brin:
             logo_small_brin = pygame.transform.smoothscale(self.logo_brin, self.logo_size_small)
-            logo_y = (header_height - self.logo_size_small[1]) // 2
+            logo_y = header_y_offset + (header_height - self.logo_size_small[1]) // 2
             self.screen.blit(logo_small_brin, (left_margin, logo_y))
         
         # Title text (center) - Larger font
         header_title = self.font_title.render("SIMULATOR PLTN TIPE PWR BERBASIS MIKROKONTROLER", 
                                                  True, self.COLOR_TEXT)
-        header_title_rect = header_title.get_rect(center=(self.width//2, header_height//2))
+        header_title_rect = header_title.get_rect(center=(self.width//2, header_y_offset + header_height//2))
         self.screen.blit(header_title, header_title_rect)
         
         # Logo Poltek (right)
         if self.logo_poltek:
             logo_small_poltek = pygame.transform.smoothscale(self.logo_poltek, self.logo_size_small)
-            logo_y = (header_height - self.logo_size_small[1]) // 2
+            logo_y = header_y_offset + (header_height - self.logo_size_small[1]) // 2
             logo_x = self.width - self.logo_size_small[0] - right_margin
             self.screen.blit(logo_small_poltek, (logo_x, logo_y))
         
         # === MAIN CONTENT AREA === (more spacious layout)
-        content_y_start = header_height + int(80 * self.scale)  # More space from header
+        content_y_start = header_y_offset + header_height + int(80 * self.scale)  # More space from header
         
         # Current step instruction
         step_text = self.get_current_step_instruction(state)
@@ -609,12 +784,12 @@ class VideoDisplayApp:
         params_y_start = self.height - int(450 * self.scale)  # More space for parameters
         
         # Section title
-        params_title = self.font_subtitle.render("PARAMETER SISTEM", True, self.COLOR_PRIMARY_BRIGHT)
+        params_title = self.font_display.render("PARAMETER SISTEM", True, self.COLOR_PRIMARY_BRIGHT)  # Larger font
         params_title_rect = params_title.get_rect(center=(self.width//2, params_y_start - int(50 * self.scale)))
         self.screen.blit(params_title, params_title_rect)
         
-        # Decorative line under title
-        line_width = int(400 * self.scale)
+        # Decorative line under title - wider
+        line_width = int(1000 * self.scale)  # Increased from 400
         line_x = (self.width - line_width) // 2
         pygame.draw.line(self.screen, self.COLOR_BORDER,
                         (line_x, params_y_start - int(25 * self.scale)),
@@ -623,16 +798,6 @@ class VideoDisplayApp:
         
         # Draw progress bars (larger)
         self.draw_progress_bar_enhanced(state, params_y_start)
-        
-        # Test mode hint
-        if self.test_mode:
-            hint1 = self.font_body.render("TEST: I=IDLE | M=MANUAL | A=AUTO", True, self.COLOR_ERROR)
-            hint1_rect = hint1.get_rect(center=(self.width//2, self.height - int(100 * self.scale)))
-            self.screen.blit(hint1, hint1_rect)
-            
-            hint2 = self.font_body.render("UP/DOWN=Pressure | R=Rods | P=Pumps", True, self.COLOR_WARNING)
-            hint2_rect = hint2.get_rect(center=(self.width//2, self.height - int(60 * self.scale)))
-            self.screen.blit(hint2, hint2_rect)
         
         pygame.display.flip()
     
@@ -692,9 +857,9 @@ class VideoDisplayApp:
     
     def draw_progress_bar_enhanced(self, state: Dict, y_start: int):
         """Draw enhanced parameter progress bars for 4K display"""
-        bar_width = int(500 * self.scale)  # Wider bars
-        bar_height = int(50 * self.scale)  # Taller bars
-        bar_spacing = int(80 * self.scale)  # More spacing
+        bar_width = int(900 * self.scale)  # Much wider bars (from 500)
+        bar_height = int(60 * self.scale)  # Taller bars (from 50)
+        bar_spacing = int(85 * self.scale)  # More spacing
         
         # Get current pressure for color coding
         current_pressure = state.get("pressure", 0)
@@ -714,34 +879,24 @@ class VideoDisplayApp:
             ("Reg Rod", state.get("regulating_rod", 0), 100, "%", self.COLOR_INFO)
         ]
         
-        # Calculate centered layout
-        total_width = int(800 * self.scale)
+        # Calculate centered layout with more width
+        total_width = int(1400 * self.scale)  # Increased from 800 - use more screen
         left_margin = (self.width - total_width) // 2
         
         for i, (label, value, max_val, unit, color) in enumerate(params):
             y = y_start + i * bar_spacing
             x_label = left_margin
-            x_bar = left_margin + int(200 * self.scale)
+            x_bar = left_margin + int(280 * self.scale)  # More space for label
             
-            # Label (Larger font) - Add warning indicator for pressure
+            # Label (Larger font) - NO warning text on label, just normal label
             label_text = f"{label}:"
-            if i == 0:  # Pressure
-                if value > 180:
-                    label_text = f"⚠️ {label}: DANGER!"
-                    label_color = self.COLOR_ERROR
-                elif value > 160:
-                    label_text = f"⚠️ {label}: WARNING"
-                    label_color = self.COLOR_WARNING
-                else:
-                    label_color = self.COLOR_TEXT_TERTIARY
-            else:
-                label_color = self.COLOR_TEXT_TERTIARY
+            label_color = self.COLOR_TEXT_TERTIARY
             
-            text = self.font_medium.render(label_text, True, label_color)
-            self.screen.blit(text, (x_label, y + int(10 * self.scale)))
+            text = self.font_large.render(label_text, True, label_color)  # Larger font
+            self.screen.blit(text, (x_label, y + int(15 * self.scale)))
             
             # Bar background
-            border_radius = int(10 * self.scale)
+            border_radius = int(12 * self.scale)  # Slightly larger radius
             bg_rect = pygame.Rect(x_bar, y, bar_width, bar_height)
             pygame.draw.rect(self.screen, self.COLOR_BG_PANEL, bg_rect, border_radius=border_radius)
             
@@ -759,7 +914,7 @@ class VideoDisplayApp:
             pygame.draw.rect(self.screen, self.COLOR_BORDER, bg_rect, border_thickness, border_radius=border_radius)
             
             # Value text (inside bar, larger)
-            value_text = self.font_medium.render(f"{value:.0f}{unit}", True, self.COLOR_TEXT)
+            value_text = self.font_large.render(f"{value:.0f}{unit}", True, self.COLOR_TEXT)  # Larger font
             value_rect = value_text.get_rect(center=(x_bar + bar_width//2, y + bar_height//2))
             self.screen.blit(value_text, value_rect)
     
@@ -989,6 +1144,9 @@ class VideoDisplayApp:
                 # Test mode keyboard handling
                 self.handle_test_mode_keys(event)
             
+            # Check held keys (level detection for continuous actions)
+            self.check_held_keys()
+            
             # Update display
             self.update()
             
@@ -999,6 +1157,7 @@ class VideoDisplayApp:
         self.stop_video()
         pygame.quit()
         print("👋 Video Display App stopped")
+
 
 
 def main():
